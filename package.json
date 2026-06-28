@@ -1,0 +1,14 @@
+{
+  "name": "cookbook",
+  "version": "1.0.0",
+  "description": "Mobile-first recipe manager with schema.org/Recipe JSON-LD support",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": ["recipe", "cookbook", "schema.org", "json-ld", "pantry"],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}

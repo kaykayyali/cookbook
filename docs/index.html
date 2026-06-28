@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#1C1917">
+  <meta name="description" content="A mobile-first recipe manager that stores recipes as schema.org/Recipe JSON-LD.">
+  <title>Cookbook</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+
+<!-- ─────────────────────────────── Sidebar / Bottom nav -->
+<nav class="sidebar">
+  <div class="sidebar-brand">
+    <h1>Cookbook</h1>
+    <p>schema.org / Recipe</p>
+  </div>
+  <div class="sidebar-nav">
+    <p class="nav-label">Library</p>
+    <button class="nav-item active" data-panel="recipes">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2z"/><path d="M8 7h8M8 11h8M8 15h5"/></svg>
+      <span class="nav-tab-label">Recipes</span>
+    </button>
+    <button class="nav-item" data-panel="pantry">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M3 3h18v4H3zM6 7v13M18 7v13M3 13h18"/></svg>
+      <span class="nav-tab-label">Pantry</span>
+    </button>
+    <div class="nav-sep"></div>
+    <p class="nav-label">Tools</p>
+    <button class="nav-item" id="nav-import">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
+      <span class="nav-tab-label">Import</span>
+    </button>
+    <button class="nav-item" id="nav-export">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M17 8l-5-5-5 5M12 3v13"/></svg>
+      <span class="nav-tab-label">Export</span>
+    </button>
+  </div>
+  <div class="sidebar-footer">
+    Stored as <a href="https://schema.org/Recipe" target="_blank" rel="noopener">schema.org/Recipe</a> JSON-LD
+  </div>
+</nav>
+
+<!-- ─────────────────────────────── Main -->
+<div class="main">
+  <div class="topbar">
+    <div class="search-wrap">
+      <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="text" class="search-input" id="search-input" placeholder="Search by name, cuisine, or ingredient…">
+      <button class="search-clear" id="search-clear" aria-label="Clear search">
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="chips-scroll" id="category-chips">
+      <button class="chip active" data-cat="">All</button>
+      <button class="chip" data-cat="Breakfast">Breakfast</button>
+      <button class="chip" data-cat="Appetizer">Appetizer</button>
+      <button class="chip" data-cat="Entree">Entree</button>
+      <button class="chip" data-cat="Side Dish">Side Dish</button>
+      <button class="chip" data-cat="Dessert">Dessert</button>
+      <button class="chip" data-cat="Snack">Snack</button>
+      <button class="chip" data-cat="Beverage">Beverage</button>
+    </div>
+    <label class="toggle-eligible topbar-toggle">
+      <input type="checkbox" id="eligible-only"> Can make
+    </label>
+    <button class="btn btn-primary btn-new-topbar" id="new-recipe-btn">
+      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+      <span class="btn-new-label">New Recipe</span>
+    </button>
+  </div>
+
+  <!-- Recipes -->
+  <section class="panel active" id="panel-recipes">
+    <div class="panel-header">
+      <div>
+        <h2>My Recipes</h2>
+        <p id="recipe-count">0 recipes</p>
+      </div>
+    </div>
+    <div class="recipe-grid" id="recipe-grid"></div>
+  </section>
+
+  <!-- Pantry -->
+  <section class="panel" id="panel-pantry">
+    <div class="panel-header">
+      <div>
+        <h2>Pantry</h2>
+        <p>What you have on hand — used to show which recipes you can make</p>
+      </div>
+    </div>
+    <div class="pantry-add">
+      <input type="text" id="pantry-input" placeholder="Add ingredient, e.g. olive oil" list="pantry-suggestions" autocomplete="off">
+      <datalist id="pantry-suggestions"></datalist>
+      <button class="btn btn-primary" id="pantry-add-btn">Add</button>
+    </div>
+    <p class="pantry-hint">Matching is flexible — <em>olive oil</em> in your pantry matches <em>2 tablespoons olive oil</em> in a recipe.</p>
+    <div class="pantry-grid" id="pantry-grid"></div>
+  </section>
+</div>
+
+<!-- FAB (mobile) -->
+<button class="fab" id="fab-new" aria-label="New recipe">
+  <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+</button>
+
+<!-- ─────────────────────────────── Detail modal -->
+<div class="overlay" id="detail-overlay"></div>
+<div class="detail-modal" id="detail-modal" role="dialog" aria-label="Recipe detail">
+  <div class="detail-header">
+    <div class="detail-header-left">
+      <p class="detail-eyebrow" id="dm-eyebrow"></p>
+      <h2 class="detail-title" id="dm-title"></h2>
+      <div class="detail-meta-row" id="dm-meta"></div>
+    </div>
+    <button class="detail-close" id="detail-close-btn">
+      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      Close
+    </button>
+  </div>
+  <div class="detail-body">
+    <div class="detail-ingredients">
+      <p class="section-label">Ingredients</p>
+      <ul class="detail-ing-list" id="dm-ingredients"></ul>
+      <div class="detail-pantry-note" id="dm-pantry-note"></div>
+    </div>
+    <div class="detail-steps">
+      <p class="section-label">Method</p>
+      <div id="dm-steps"></div>
+      <div class="detail-nutrition" id="dm-nutrition" style="display:none">
+        <p class="section-label">Nutrition <span class="sub">per serving</span></p>
+        <div class="nutrition-grid" id="dm-nutrition-grid"></div>
+      </div>
+    </div>
+  </div>
+  <div class="detail-footer">
+    <button class="btn btn-ghost btn-sm" id="dm-schema-btn">View JSON-LD</button>
+    <button class="btn btn-ghost btn-sm" id="dm-edit-btn">
+      <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      Edit
+    </button>
+  </div>
+</div>
+
+<!-- ─────────────────────────────── Drawer (create/edit) -->
+<div class="overlay" id="drawer-overlay"></div>
+<aside class="drawer" id="recipe-drawer" role="dialog" aria-label="Recipe editor">
+  <div class="drawer-header">
+    <h3 id="drawer-title">New Recipe</h3>
+    <button class="drawer-close" id="drawer-close-btn" aria-label="Close">
+      <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div class="drawer-body">
+    <form id="recipe-form" autocomplete="off">
+      <p class="form-section-label">Identity</p>
+      <div class="form-group">
+        <label for="f-name">Recipe Name <span class="req">*</span></label>
+        <input type="text" id="f-name" required placeholder="e.g. Classic Shakshuka">
+      </div>
+      <div class="form-row">
+        <div class="form-col">
+          <label for="f-category">Category</label>
+          <select id="f-category">
+            <option value="">— choose —</option>
+            <option>Breakfast</option><option>Appetizer</option><option>Entree</option>
+            <option>Side Dish</option><option>Dessert</option><option>Snack</option><option>Beverage</option>
+          </select>
+        </div>
+        <div class="form-col">
+          <label for="f-cuisine">Cuisine</label>
+          <input type="text" id="f-cuisine" placeholder="e.g. Italian">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-col">
+          <label for="f-yield">Yield</label>
+          <input type="text" id="f-yield" placeholder="e.g. 4 servings">
+        </div>
+        <div class="form-col">
+          <label for="f-method">Cooking Method</label>
+          <select id="f-method">
+            <option value="">— choose —</option>
+            <option>Baking</option><option>Boiling</option><option>Frying</option><option>Grilling</option>
+            <option>Roasting</option><option>Steaming</option><option>Stir-Frying</option><option>Stovetop</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-col">
+          <label for="f-diet">Suitable For Diet</label>
+          <select id="f-diet">
+            <option value="">Any diet</option>
+            <option value="https://schema.org/GlutenFreeDiet">Gluten Free</option>
+            <option value="https://schema.org/DiabeticDiet">Diabetic</option>
+            <option value="https://schema.org/HalalDiet">Halal</option>
+            <option value="https://schema.org/KosherDiet">Kosher</option>
+            <option value="https://schema.org/LowCalorieDiet">Low Calorie</option>
+            <option value="https://schema.org/LowFatDiet">Low Fat</option>
+            <option value="https://schema.org/VeganDiet">Vegan</option>
+            <option value="https://schema.org/VegetarianDiet">Vegetarian</option>
+          </select>
+        </div>
+        <div class="form-col">
+          <label for="f-url">Source URL</label>
+          <input type="url" id="f-url" placeholder="https://…">
+        </div>
+      </div>
+
+      <p class="form-section-label">Timing <span style="font-weight:400;text-transform:none;letter-spacing:0">(ISO 8601)</span></p>
+      <div class="form-row">
+        <div class="form-col">
+          <label for="f-prep">Prep</label>
+          <input type="text" id="f-prep" placeholder="PT10M">
+        </div>
+        <div class="form-col">
+          <label for="f-cook">Cook</label>
+          <input type="text" id="f-cook" placeholder="PT20M">
+        </div>
+        <div class="form-col">
+          <label for="f-total">Total</label>
+          <input type="text" id="f-total" placeholder="PT30M">
+        </div>
+      </div>
+      <p class="form-hint">PT10M = 10 min · PT1H30M = 1 hr 30 min</p>
+
+      <p class="form-section-label">Ingredients <span class="req">*</span></p>
+      <div class="ing-editor" id="ing-editor"></div>
+      <div class="add-row">
+        <input type="text" id="ing-new-input" placeholder="e.g. 2 tablespoons olive oil">
+        <button type="button" class="btn btn-ghost btn-sm" id="ing-add-btn">+ Add</button>
+      </div>
+
+      <p class="form-section-label">Instructions <span class="req">*</span></p>
+      <div class="steps-list" id="steps-list"></div>
+      <button type="button" class="btn btn-ghost btn-sm" id="step-add-btn" style="margin-top:8px">+ Add Step</button>
+
+      <p class="form-section-label">Nutrition <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional, per serving)</span></p>
+      <div class="form-row">
+        <div class="form-col">
+          <label for="f-serving">Serving Size</label>
+          <input type="text" id="f-serving" placeholder="1 cup">
+        </div>
+        <div class="form-col">
+          <label for="f-calories">Calories</label>
+          <input type="text" id="f-calories" placeholder="320 kcal">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-col">
+          <label for="f-protein">Protein</label>
+          <input type="text" id="f-protein" placeholder="12 g">
+        </div>
+        <div class="form-col">
+          <label for="f-fat">Fat</label>
+          <input type="text" id="f-fat" placeholder="9 g">
+        </div>
+        <div class="form-col">
+          <label for="f-carbs">Carbs</label>
+          <input type="text" id="f-carbs" placeholder="40 g">
+        </div>
+      </div>
+      <input type="hidden" id="f-id">
+    </form>
+  </div>
+  <div class="drawer-footer">
+    <button class="btn btn-ghost" id="drawer-cancel-btn">Cancel</button>
+    <button class="btn btn-ghost btn-sm" id="view-schema-btn">View JSON-LD</button>
+    <button class="btn btn-primary" id="save-recipe-btn">Save Recipe</button>
+  </div>
+</aside>
+
+<!-- ─────────────────────────────── JSON-LD modal -->
+<div class="schema-overlay" id="schema-overlay">
+  <div class="schema-modal">
+    <div class="schema-modal-header">
+      <h4>JSON-LD · schema.org/Recipe</h4>
+      <div class="schema-actions">
+        <button class="schema-copy" id="schema-copy-btn">Copy</button>
+        <button id="schema-close-btn" aria-label="Close">
+          <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+    </div>
+    <pre id="schema-preview"></pre>
+  </div>
+</div>
+
+<input type="file" id="import-file" accept=".json,application/json" hidden>
+<div class="toast" id="toast"></div>
+
+
+<script type="module" src="./js/app.js"></script>
+</body>
+</html>

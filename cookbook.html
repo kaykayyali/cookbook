@@ -1090,7 +1090,7 @@ function allRecipeIngredients() {
       // Strip leading amount+unit, keep the rest as the canonical name
       const base = raw
         .replace(/^[\d¼½¾⅓⅔⅛⅜⅝⅞\s.,/-]+/, '')          // leading numbers/fractions
-        .replace(/^(tablespoons?|teaspoons?|cups?|oz|g|kg|ml|l|lbs?|pounds?|pinch|bunch|cloves?|medium|large|small|can|cans?)\s+/i, '')
+        .replace(/^(tablespoons?|tbsps?|tbs|teaspoons?|tsps?|cups?|oz|g|kg|ml|l|lbs?|pounds?|pinch|bunch|cloves?|medium|large|small|cans?)\s+/i, '')
         .trim()
         .toLowerCase();
       if (base && !seen.has(base)) seen.add(base);
