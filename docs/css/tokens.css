@@ -1,0 +1,187 @@
+/* ════════════════════════════════════════════════════════
+   tokens.css — @layer tokens
+   Every visual decision in the design system lives here.
+   No raw hex, no raw px font sizes anywhere else.
+   Spec: docs/superpowers/specs/2026-06-28-design-system-design.md §5
+════════════════════════════════════════════════════════ */
+
+@layer tokens {
+  :root {
+    /* color — light theme (§5.1) */
+    --color-bg:            #fbf7f1;
+    --color-bg-elevated:   #ffffff;
+    --color-bg-sunken:     #f1ebe0;
+    --color-fg:            #2a1f17;
+    --color-fg-muted:      #6b5a4a;
+    --color-fg-subtle:     #9b8a78;
+    --color-border:        #e8dfd0;
+    --color-border-strong: #d2c4ac;
+    --color-accent:        #b34a1c;
+    --color-accent-fg:     #ffffff;
+    --color-accent-soft:   #f4dcc8;
+    --color-success:       #5e7a3a;
+    --color-warning:       #b8861a;
+    --color-danger:        #9a2a2a;
+    --color-focus-ring:    #9a4a1a;
+
+    /* typography (§5.3) */
+    --font-display: "Source Serif 4", "Lora", "Iowan Old Style", Georgia, serif;
+    --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+    --text-xs: 0.75rem;
+    --text-sm: 0.875rem;
+    --text-md: 1rem;
+    --text-lg: 1.125rem;
+    --text-xl: 1.375rem;
+    --text-2xl: 1.75rem;
+    --text-3xl: 2.25rem;
+
+    --leading-tight: 1.15;
+    --leading-snug: 1.3;
+    --leading-normal: 1.5;
+    --leading-relaxed: 1.7;
+
+    --tracking-tight: -0.01em;
+    --tracking-normal: 0;
+    --tracking-wide: 0.04em;
+
+    /* spacing — 4px geometric base (§5.4) */
+    --space-0: 0;
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-6: 1.5rem;
+    --space-8: 2rem;
+    --space-10: 2.5rem;
+    --space-12: 3rem;
+    --space-16: 4rem;
+    --space-20: 5rem;
+    --space-24: 6rem;
+
+    /* radii (§5.5) */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 14px;
+    --radius-xl: 22px;
+    --radius-pill: 999px;
+
+    /* shadow (§5.6) */
+    --shadow-sm: 0 1px 2px rgba(42, 31, 23, 0.06);
+    --shadow-md: 0 2px 8px rgba(42, 31, 23, 0.08);
+    --shadow-lg: 0 12px 32px rgba(42, 31, 23, 0.12);
+
+    /* motion (§5.7) */
+    --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+    --dur-fast: 120ms;
+    --dur-base: 200ms;
+    --dur-slow: 320ms;
+
+    /* layout (§5.8) */
+    --container-narrow: 40rem;
+    --container-base: 60rem;
+    --container-wide: 80rem;
+    --bp-sm: 40rem;
+    --bp-md: 64rem;
+
+    /* z-index (§5.9) */
+    --z-base: 0;
+    --z-dropdown: 10;
+    --z-sticky: 20;
+    --z-overlay: 30;
+    --z-modal: 40;
+    --z-toast: 50;
+  }
+
+  /* Dark theme — automatic via OS preference (§9). */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-bg:            #1a140e;
+      --color-bg-elevated:   #221a13;
+      --color-bg-sunken:     #15100a;
+      --color-fg:            #f4ecdf;
+      --color-fg-muted:      #b8a48c;
+      --color-fg-subtle:     #7a6856;
+      --color-border:        #2f2519;
+      --color-border-strong: #4a3a28;
+      --color-accent:        #e07a4a;
+      --color-accent-fg:     #1a140e;
+      --color-accent-soft:   #3a2418;
+      --color-success:       #a8c47a;
+      --color-warning:       #d4a642;
+      --color-danger:        #d66060;
+      --color-focus-ring:    #c87a4a;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+      --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.40);
+      --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.52);
+    }
+  }
+
+  /* Dark theme — manual override via [data-theme="dark"] on <html> (§9).
+     This MUST come after the media query so explicit choice wins. */
+  :root[data-theme="dark"] {
+    --color-bg:            #1a140e;
+    --color-bg-elevated:   #221a13;
+    --color-bg-sunken:     #15100a;
+    --color-fg:            #f4ecdf;
+    --color-fg-muted:      #b8a48c;
+    --color-fg-subtle:     #7a6856;
+    --color-border:        #2f2519;
+    --color-border-strong: #4a3a28;
+    --color-accent:        #e07a4a;
+    --color-accent-fg:     #1a140e;
+    --color-accent-soft:   #3a2418;
+    --color-success:       #a8c47a;
+    --color-warning:       #d4a642;
+    --color-danger:        #d66060;
+    --color-focus-ring:    #c87a4a;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.40);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.52);
+  }
+
+  /* Light theme — manual override via [data-theme="light"] on <html>.
+     Same priority rule as above so explicit choice beats OS preference. */
+  :root[data-theme="light"] {
+    --color-bg:            #fbf7f1;
+    --color-bg-elevated:   #ffffff;
+    --color-bg-sunken:     #f1ebe0;
+    --color-fg:            #2a1f17;
+    --color-fg-muted:      #6b5a4a;
+    --color-fg-subtle:     #9b8a78;
+    --color-border:        #e8dfd0;
+    --color-border-strong: #d2c4ac;
+    --color-accent:        #b34a1c;
+    --color-accent-fg:     #ffffff;
+    --color-accent-soft:   #f4dcc8;
+    --color-success:       #5e7a3a;
+    --color-warning:       #b8861a;
+    --color-danger:        #9a2a2a;
+    --color-focus-ring:    #9a4a1a;
+    --shadow-sm: 0 1px 2px rgba(42, 31, 23, 0.06);
+    --shadow-md: 0 2px 8px rgba(42, 31, 23, 0.08);
+    --shadow-lg: 0 12px 32px rgba(42, 31, 23, 0.12);
+  }
+
+  /* Reduced motion (§10 / §5.7). */
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      --dur-fast: 0ms;
+      --dur-base: 0ms;
+      --dur-slow: 0ms;
+    }
+  }
+
+  /* Desktop type scale (§5.3). ≥1024px bumps --text-md/-lg/-xl/-2xl/-3xl. */
+  @media (min-width: 64rem) {
+    :root {
+      --text-md: 1.0625rem;
+      --text-lg: 1.25rem;
+      --text-xl: 1.5rem;
+      --text-2xl: 2rem;
+      --text-3xl: 2.75rem;
+    }
+  }
+}
