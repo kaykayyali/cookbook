@@ -111,3 +111,100 @@ export function parseLLMRecipe(output) {
   try { obj = JSON.parse(text.slice(start, end + 1)); } catch { return null; }
   return hasRequiredFields(obj) ? toSimpleRecipe(obj) : null;
 }
+
+const TEXT_CAP = 6000;
+const PRIVATE_IPV4 = /^(10\.|192\.168\.|169\.254\.|127\.|172\.(1[6-9]|2\d|3[01])\.)/;
+const PRIVATE_IPV6 = /^(::1|fc|fd|fe80:)/i;
+
+/**
+ * Heuristic SSRF guard. Blocks non-https, localhost, .localhost, and IP
+ * literals in private/loopback/link-local ranges. NOTE: this does not resolve
+ * DNS, so it cannot prevent DNS-rebinding to a private IP — a v1 limitation;
+ * for hardening, add a DNS-resolution check (Workers does not expose this
+ * directly; consider a proxy/DNS-over-HTTPS lookup) before shipping publicly.
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isBlockedUrl(url) {
+  let u;
+  try { u = new URL(url); } catch { return true; }
+  if (u.protocol !== 'https:') return true;
+  const host = u.hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (PRIVATE_IPV4.test(host)) return true;
+  if (host.includes(':') && PRIVATE_IPV6.test(host)) return true;
+  return false;
+}
+
+/**
+ * Strip non-content tags and collapse whitespace, capped to TEXT_CAP chars.
+ * @param {string} html
+ * @returns {string}
+ */
+export function cleanText(html) {
+  if (typeof html !== 'string') return '';
+  let t = html.replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<(nav|header|footer)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (t.length > TEXT_CAP) t = t.slice(0, TEXT_CAP);
+  return t;
+}
+
+/**
+ * Orchestrate extraction: JSON-LD first, LLM fallback (with a repair pass).
+ * deps are injected so tests use fixtures (no network, no Workers AI).
+ * @param {string} url
+ * @param {object} deps { fetchPage, runLLM }
+ * @returns {Promise<object>}
+ */
+export async function extractRecipe(url, deps) {
+  if (isBlockedUrl(url)) return { ok: false, status: 400, error: 'blocked_url' };
+  let page;
+  try { page = await deps.fetchPage(url); }
+  catch { return { ok: false, status: 502, error: 'fetch_failed' }; }
+  if (!page || !page.ok) return { ok: false, status: page?.status || 502, error: 'fetch_failed' };
+
+  const found = findRecipeInHtml(page.html || '');
+  if (found && hasRequiredFields(found)) {
+    return { ok: true, recipe: toSimpleRecipe(found) };
+  }
+
+  const text = cleanText(page.html || '');
+  if (!text) return { ok: false, status: 422, error: 'no_recipe' };
+
+  let output;
+  try { output = await deps.runLLM(buildExtractionPrompt(text)); }
+  catch { return { ok: false, status: 502, error: 'llm_failed' }; }
+
+  const parsed = parseLLMRecipe(output);
+  if (parsed) return { ok: true, recipe: parsed };
+
+  // repair pass: ask the model to return strictly valid JSON
+  let repaired;
+  try { repaired = await deps.runLLM([{ role: 'user', content: 'Return ONLY a valid schema.org/Recipe JSON object. No prose, no fences.' }]); }
+  catch { /* fall through */ }
+  const retry = parseLLMRecipe(repaired || '');
+  if (retry) return { ok: true, recipe: retry };
+
+  return { ok: false, status: 422, error: 'no_recipe' };
+}
+
+/**
+ * Handle POST /api/extract. Validates input, runs the pipeline, maps to a
+ * { status, body } envelope. body is { recipe } on 200, { error } otherwise.
+ * @param {{url?:string}} body
+ * @param {object} env (unused here; reserved for limits)
+ * @param {object} deps { fetchPage, runLLM }
+ * @returns {Promise<{status:number, body:object}>}
+ */
+export async function handleExtract(body, env, deps) {
+  const url = body && typeof body === 'object' ? body.url : undefined;
+  if (typeof url !== 'string' || !url.trim()) return { status: 400, body: { error: 'missing_url' } };
+  const res = await extractRecipe(url, deps);
+  if (res.ok) return { status: 200, body: { recipe: res.recipe } };
+  return { status: res.status, body: { error: res.error, partial: res.partial || undefined } };
+}
