@@ -6,6 +6,7 @@ import {
   eligibility,
   ingredientCounts,
   baseName,
+  parseIngredient,
   allRecipeIngredients,
   addToPantry,
   removeFromPantry,
@@ -57,6 +58,18 @@ test('baseName strips quantities and units', () => {
 
 test('baseName lowercases output', () => {
   assert.equal(baseName('2 cups FLOUR'), 'flour');
+});
+
+test('parseIngredient captures leading qty+unit and lowercases the name', () => {
+  assert.deepEqual(parseIngredient('2 tablespoons olive oil'), { qtyText: '2 tablespoons', name: 'olive oil' });
+  assert.deepEqual(parseIngredient('400g spaghetti'), { qtyText: '400g', name: 'spaghetti' });
+  assert.deepEqual(parseIngredient('6 large eggs'), { qtyText: '6 large', name: 'eggs' });
+  assert.deepEqual(parseIngredient('salt and pepper to taste'), { qtyText: '', name: 'salt and pepper to taste' });
+});
+
+test('parseIngredient tolerates non-strings', () => {
+  assert.deepEqual(parseIngredient(null), { qtyText: '', name: '' });
+  assert.deepEqual(parseIngredient(undefined), { qtyText: '', name: '' });
 });
 
 test('allRecipeIngredients dedupes and sorts base + full forms', () => {

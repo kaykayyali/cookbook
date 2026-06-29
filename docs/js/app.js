@@ -12,6 +12,8 @@ import {
   removeFromPantry,
 } from './lib/pantry.js';
 import { filterRecipes } from './lib/filters.js';
+import { addToCart, markBought, clearCart } from './lib/cart.js';
+import { cartGroupsHTML, emptyCartHTML } from './components/cart.js';
 import { state, save, init } from './lib/store.js';
 import { recipeCardHTML, emptyStateHTML } from './components/recipeCard.js';
 import {
@@ -80,6 +82,12 @@ function renderPantry() {
     .join('');
 }
 
+function renderCart() {
+  const grid = $('cart-grid');
+  if (!grid) return;
+  grid.innerHTML = state.cart.length ? cartGroupsHTML(state.cart) : emptyCartHTML();
+}
+
 // ── Detail sheet ───────────────────────────────────────────
 function refreshDetailIngredients() {
   const r = state.recipes.find((x) => x._id === state.detailId);
@@ -114,6 +122,22 @@ function openDetail(id) {
   }
 
   openSheet('detail');
+}
+
+function addRecipeToCart(mode) {
+  const r = state.recipes.find((x) => x._id === state.detailId);
+  if (!r) return;
+  const ings = r.recipeIngredient || [];
+  if (!ings.length) {
+    toast('This recipe has no ingredients');
+    return;
+  }
+  const { cart, addedCount } = addToCart(state.cart, r, state.pantry, mode);
+  state.cart = cart;
+  save();
+  renderCart();
+  if (mode === 'missing' && addedCount === 0) toast('Nothing missing — you have everything');
+  else toast(`Added ${pluralize(addedCount, 'item')} to cart`);
 }
 
 // ── Sheets (shared open/close) ─────────────────────────────
@@ -232,7 +256,10 @@ function showPanel(id) {
   els('.nav-item[data-panel]').forEach((n) =>
     n.classList.toggle('active', n.dataset.panel === id)
   );
-  if (id === 'pantry') renderPantry();
+  if (id === 'pantry') {
+    renderPantry();
+    renderCart();
+  }
 }
 
 // ── Pantry mutations ───────────────────────────────────────
@@ -293,6 +320,32 @@ function wire() {
     renderPantry();
     renderRecipes();
     toast(`Removed "${btn.dataset.item}"`);
+  });
+
+  // Shopping cart: tap a contribution to mark it bought; Clear cart empties it
+  $('cart-grid').addEventListener('click', (e) => {
+    const bought = e.target.closest('[data-action="bought"]');
+    if (bought) {
+      const { recipeId, line } = bought.dataset;
+      const res = markBought(state.cart, recipeId, line, state.pantry);
+      if (!res.removed) return;
+      state.cart = res.cart;
+      state.pantry = res.pantry;
+      save();
+      renderCart();
+      renderPantry();
+      renderRecipes();
+      toast(`Bought “${res.name}” — added to pantry`);
+      return;
+    }
+  });
+
+  $('cart-clear-btn').addEventListener('click', () => {
+    if (!state.cart.length) return;
+    state.cart = clearCart();
+    save();
+    renderCart();
+    toast('Cart cleared');
   });
 
   // Pantry add
@@ -395,6 +448,8 @@ function wire() {
   $('dm-schema-btn').addEventListener('click', () => {
     if (state.detailId) showSchema(state.detailId);
   });
+  $('dm-add-missing-btn').addEventListener('click', () => addRecipeToCart('missing'));
+  $('dm-add-all-btn').addEventListener('click', () => addRecipeToCart('all'));
 
   // Detail ingredient tap → toggle pantry
   $('dm-ingredients').addEventListener('click', (e) => {
@@ -443,3 +498,4 @@ init();
 wire();
 renderRecipes();
 renderPantry();
+renderCart();

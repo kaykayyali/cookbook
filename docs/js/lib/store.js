@@ -9,6 +9,7 @@ import { normalizePantry } from './pantry.js';
 export const state = {
   recipes: [],
   pantry: [],
+  cart: [],
   editingId: null,
   detailId: null,
   searchTerm: '',
@@ -19,6 +20,7 @@ export const state = {
 export function save() {
   localStorage.setItem(STORAGE_KEYS.recipes, JSON.stringify(state.recipes));
   localStorage.setItem(STORAGE_KEYS.pantry, JSON.stringify(state.pantry));
+  localStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(state.cart));
 }
 
 export function load() {
@@ -31,6 +33,13 @@ export function load() {
     state.pantry = normalizePantry(JSON.parse(localStorage.getItem(STORAGE_KEYS.pantry) || '[]'));
   } catch {
     state.pantry = [];
+  }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.cart);
+    const parsed = raw ? JSON.parse(raw) : [];
+    state.cart = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    state.cart = [];
   }
 }
 
