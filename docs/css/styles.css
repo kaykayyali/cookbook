@@ -590,3 +590,10 @@
 .cart-contrib { cursor: pointer; padding: .15rem .35rem; border-radius: 6px; border: 1px solid var(--border, #3a3531); }
 .cart-contrib:hover { background: var(--accent, #b91c1c); color: #fff; border-color: transparent; }
 .cart-empty { color: var(--ink-light, #a8a29e); font-size: .85rem; }
+
+/* ── Auth ── */
+.auth-area { margin-bottom: .5rem; }
+.auth-status { font-size: .75rem; }
+.auth-signed-in { display: flex; flex-direction: column; gap: .25rem; }
+.auth-email { font-size: .8rem; color: var(--ink, #fafaf9); word-break: break-all; }
+.auth-signout { font-size: .75rem; background: none; border: none; color: var(--ink-light, #a8a29e); cursor: pointer; text-decoration: underline; padding: 0; }
