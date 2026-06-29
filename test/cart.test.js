@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   makeCartItem,
   addToCart,
+  markBought,
   removeFromCart,
   clearRecipeFromCart,
   clearCart,
@@ -71,4 +72,55 @@ test('clearRecipeFromCart drops a recipe and clearCart empties everything', () =
   assert.equal(oneGone.filter((c) => c.recipeId === 'r1').length, 0);
   assert.equal(oneGone.length, 2);
   assert.deepEqual(clearCart(), []);
+});
+
+test('markBought removes the contribution and adds its name to the pantry', () => {
+  const cart = addToCart([], RECIPES.shakshuka, [], 'all').cart;
+  const pantry = ['olive oil'];
+  const res = markBought(cart, 'r1', '6 large eggs', pantry);
+  // contribution gone
+  assert.equal(res.cart.length, cart.length - 1);
+  assert.equal(res.cart.find((c) => c.line === '6 large eggs'), undefined);
+  // name added to pantry
+  assert.ok(res.pantry.includes('eggs'));
+  assert.equal(res.removed, true);
+  assert.equal(res.name, 'eggs');
+});
+
+test('markBought leaves other contributions untouched', () => {
+  const cart = [
+    ...addToCart([], RECIPES.shakshuka, [], 'all').cart,
+    ...addToCart([], RECIPES.alfredo, [], 'all').cart,
+  ];
+  const res = markBought(cart, 'r1', '6 large eggs', []);
+  // the other "eggs" contribution (from Alfredo) remains
+  assert.ok(res.cart.find((c) => c.recipeId === 'r2' && c.line === '3 eggs'));
+  assert.equal(res.pantry.includes('eggs'), true);
+});
+
+test('markBought is idempotent on the pantry when name already present', () => {
+  const cart = addToCart([], RECIPES.shakshuka, [], 'all').cart;
+  const res = markBought(cart, 'r1', '6 large eggs', ['eggs']);
+  // still removed from cart; pantry unchanged (no duplicate)
+  assert.equal(res.cart.length, cart.length - 1);
+  assert.deepEqual(res.pantry, ['eggs']);
+});
+
+test('markBought with no match returns inputs unchanged', () => {
+  const cart = addToCart([], RECIPES.shakshuka, [], 'all').cart;
+  const pantry = ['olive oil'];
+  const res = markBought(cart, 'r1', 'nope', pantry);
+  assert.equal(res.removed, false);
+  assert.deepEqual(res.cart, cart);
+  assert.deepEqual(res.pantry, pantry);
+});
+
+test('markBought does not mutate its inputs', () => {
+  const cart = addToCart([], RECIPES.shakshuka, [], 'all').cart;
+  const pantry = ['olive oil'];
+  const cartBefore = [...cart];
+  const pantryBefore = [...pantry];
+  markBought(cart, 'r1', '6 large eggs', pantry);
+  assert.deepEqual(cart, cartBefore);
+  assert.deepEqual(pantry, pantryBefore);
 });

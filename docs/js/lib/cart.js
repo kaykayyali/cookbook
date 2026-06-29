@@ -12,7 +12,7 @@
 // The only cart→pantry link is markBought (Task 3).
 // ════════════════════════════════════════════════════════
 
-import { parseIngredient, haveIngredient } from './pantry.js';
+import { parseIngredient, haveIngredient, addToPantry } from './pantry.js';
 
 /**
  * Build a cart item from a raw ingredient line and its recipe.
@@ -69,4 +69,23 @@ export function clearRecipeFromCart(cart, recipeId) {
 /** Empty cart. */
 export function clearCart() {
   return [];
+}
+
+/**
+ * Mark one contribution bought: remove it from the cart and add its base name
+ * to the pantry, in one step. Only that contribution is removed — others stay.
+ * The cart is otherwise decoupled from the pantry; this is the only link.
+ * Pure — does not mutate inputs.
+ * @param {object[]} cart
+ * @param {string} recipeId
+ * @param {string} line
+ * @param {string[]} pantry
+ * @returns {{cart:object[], pantry:string[], name:string, removed:boolean}}
+ */
+export function markBought(cart, recipeId, line, pantry) {
+  const item = cart.find((c) => c.recipeId === recipeId && c.line === line);
+  if (!item) return { cart, pantry, name: '', removed: false };
+  const nextCart = cart.filter((c) => c !== item);
+  const { pantry: nextPantry } = addToPantry(pantry, item.name);
+  return { cart: nextCart, pantry: nextPantry, name: item.name, removed: true };
 }
