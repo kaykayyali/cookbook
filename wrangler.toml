@@ -2,18 +2,21 @@ name = "cookbook"
 pages_build_output_dir = "docs"
 compatibility_date = "2025-09-01"
 
-# Non-secret config only. Secrets (SESSION_SECRET, GOOGLE_CLIENT_ID) are set
-# separately:
-#   local dev:  create a `.dev.vars` file with the entries listed below
-#   production: wrangler pages secret put SESSION_SECRET --project-name cookbook
-#               wrangler pages secret put GOOGLE_CLIENT_ID --project-name cookbook
-# GOOGLE_CLIENT_ID is intentionally NOT in [vars] — shipping the literal
-# placeholder as a non-secret would let every real sign-in fall through to 401.
+# Non-secret config. SESSION_SECRET is the only secret (set separately — see
+# the note at the bottom). GOOGLE_CLIENT_ID is committed here because:
+#   - It is public by design (it already ships in the frontend HTML).
+#   - Git-connected Pages deploys apply [vars] and DELETE any plain-text env
+#     var not listed here, so a dashboard-only GOOGLE_CLIENT_ID would be wiped
+#     on every deploy. Listing it in [vars] makes it durable across deploys.
+# functions/api/auth.js still rejects a literal "replace-me" client id as a
+# backstop, so a forgotten placeholder surfaces as 500 server_misconfigured
+# rather than silently 401-ing every sign-in.
 [vars]
+GOOGLE_CLIENT_ID = "143579664794-tv48jb659iadrqqfvb13621qkdfas03k.apps.googleusercontent.com"
 ALLOWED_EMAILS = "kaykayyali@gmail.com"
 SESSION_TTL = "604800"
 
-# Required secrets (set via `wrangler pages secret put`, NEVER committed):
+# Required secret (set via `wrangler pages secret put`, NEVER committed):
 #   SESSION_SECRET — >=32 char random string, e.g. `openssl rand -hex 32`
-#   GOOGLE_CLIENT_ID — OAuth client id from Google Cloud Console
-#                    (https://console.cloud.google.com/apis/credentials)
+#     local dev: put it in a `.dev.vars` file as SESSION_SECRET="..."
+#     production: wrangler pages secret put SESSION_SECRET --project-name cookbook
