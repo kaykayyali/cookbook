@@ -5,6 +5,13 @@
    Spec: docs/superpowers/specs/2026-06-28-design-system-design.md §5
 ════════════════════════════════════════════════════════ */
 
+/* Lock the cascade order for ALL layers in one place. Without this,
+   each .css file's @layer declaration order would define the cascade —
+   and app.css (loaded last) would still register @layer app before any
+   reference to @layer components anywhere else, so app-shell rules
+   would lose to DS primitives at equal specificity. */
+@layer tokens, base, layout, components, app;
+
 @layer tokens {
   :root {
     /* color — light theme (§5.1) */

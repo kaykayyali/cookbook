@@ -37,7 +37,6 @@
     <p>schema.org / Recipe</p>
   </div>
   <div class="sidebar-nav">
-    <p class="nav-label">Library</p>
     <button class="nav-item active" data-panel="recipes">
       <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2z"/><path d="M8 7h8M8 11h8M8 15h5"/></svg>
       <span class="nav-tab-label">Recipes</span>
@@ -46,19 +45,13 @@
       <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M3 3h18v4H3zM6 7v13M18 7v13M3 13h18"/></svg>
       <span class="nav-tab-label">Pantry</span>
     </button>
-    <div class="nav-sep"></div>
-    <p class="nav-label">Tools</p>
-    <button class="nav-item" id="nav-import">
-      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
-      <span class="nav-tab-label">Import</span>
+    <button class="nav-item" data-panel="cart">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2 6h13"/><circle cx="9" cy="20" r="1.5"/><circle cx="17" cy="20" r="1.5"/></svg>
+      <span class="nav-tab-label">Shopping</span>
     </button>
-    <button class="nav-item" id="nav-import-url">
-      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
-      <span class="nav-tab-label">From URL</span>
-    </button>
-    <button class="nav-item" id="nav-export">
-      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M17 8l-5-5-5 5M12 3v13"/></svg>
-      <span class="nav-tab-label">Export</span>
+    <button class="nav-item" data-panel="settings">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
+      <span class="nav-tab-label">Settings</span>
     </button>
   </div>
   <div class="sidebar-footer">
@@ -66,47 +59,30 @@
   </div>
 </nav>
 
-<!-- ─────────────────────────────── Auth bar (mobile-visible) -->
-<div class="auth-bar" id="auth-bar">
-  <div class="auth-area" id="auth-area"></div>
-</div>
-
 <!-- ─────────────────────────────── Main -->
 <div class="main">
   <div class="topbar">
     <div class="search-wrap">
-      <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <span class="search-icon" aria-hidden="true">
+        <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      </span>
       <input type="text" class="input" id="search-input" placeholder="Search by name, cuisine, or ingredient…">
-      <button class="icon-btn" id="search-clear" aria-label="Clear search">
+      <button class="icon-btn search-clear" id="search-clear" aria-label="Clear search">
         <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
     </div>
-    <div class="chips-scroll" id="category-chips">
-      <button class="chip is-active" data-cat="">All</button>
-      <button class="chip" data-cat="Breakfast">Breakfast</button>
-      <button class="chip" data-cat="Appetizer">Appetizer</button>
-      <button class="chip" data-cat="Entree">Entree</button>
-      <button class="chip" data-cat="Side Dish">Side Dish</button>
-      <button class="chip" data-cat="Dessert">Dessert</button>
-      <button class="chip" data-cat="Snack">Snack</button>
-      <button class="chip" data-cat="Beverage">Beverage</button>
-    </div>
-    <label class="topbar-toggle">
-      <input type="checkbox" class="checkbox" id="eligible-only"> Can make
-    </label>
-    <button class="btn btn-primary" id="new-recipe-btn">
-      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-      <span>New Recipe</span>
-    </button>
   </div>
 
   <!-- Recipes -->
-  <section class="panel is-active" id="panel-recipes">
+  <section class="panel" id="panel-recipes">
     <div class="panel-header">
       <div>
         <h2>My Recipes</h2>
         <p id="recipe-count">0 recipes</p>
       </div>
+      <label class="ready-toggle">
+        <input type="checkbox" class="checkbox" id="eligible-only"> filter by ready to make
+      </label>
     </div>
     <div class="recipe-grid" id="recipe-grid"></div>
   </section>
@@ -126,23 +102,61 @@
     </div>
     <p class="pantry-hint">Matching is flexible — <em>olive oil</em> in your pantry matches <em>2 tablespoons olive oil</em> in a recipe.</p>
     <div class="pantry-grid" id="pantry-grid"></div>
-    <div class="cart-section">
-      <div class="panel-header" style="margin-top:1.5rem">
-        <div>
-          <h2>Shopping cart</h2>
-          <p>Tap an item to mark it bought — it leaves the cart and lands in your pantry.</p>
-        </div>
-        <button class="btn btn-ghost btn-sm" id="cart-clear-btn">Clear cart</button>
+  </section>
+
+  <!-- Shopping list -->
+  <section class="panel" id="panel-cart">
+    <div class="panel-header">
+      <div>
+        <h2>Shopping list</h2>
+        <p>Tap an item to mark it bought — it leaves the list and lands in your pantry.</p>
       </div>
-      <div class="cart-grid" id="cart-grid"></div>
+      <button class="btn btn-ghost btn-sm" id="cart-clear-btn">Clear list</button>
+    </div>
+    <div class="cart-grid" id="cart-grid"></div>
+  </section>
+
+  <!-- Settings -->
+  <section class="panel" id="panel-settings">
+    <div class="panel-header">
+      <div>
+        <h2>Settings</h2>
+        <p>Account and data management</p>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <p class="settings-section-label">Account</p>
+      <div id="settings-auth-zone"></div>
+    </div>
+
+    <div class="settings-section">
+      <p class="settings-section-label">Data</p>
+      <div class="settings-row">
+        <button class="btn btn-ghost" id="settings-import-btn">Import from file</button>
+        <button class="btn btn-ghost" id="settings-export-btn">Export all recipes</button>
+      </div>
+      <input type="file" id="import-file" accept=".json,application/json" hidden>
+    </div>
+
+    <div class="settings-section">
+      <p class="settings-section-label">About</p>
+      <p class="settings-hint">Stored locally as JSON-LD, synced only when signed in.</p>
     </div>
   </section>
 </div>
 
-<!-- FAB (mobile) -->
-<button class="fab" id="fab-new" aria-label="New recipe">
-  <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-</button>
+<!-- FAB -->
+<div class="fab-stack">
+  <div class="fab-dropdown" id="fab-dropdown" hidden role="menu">
+    <button class="fab-dropdown-item" data-fab-action="manual" role="menuitem">Enter Manually</button>
+    <span class="fab-dropdown-divider" aria-hidden="true"></span>
+    <button class="fab-dropdown-item" data-fab-action="url" role="menuitem">Extract from URL</button>
+  </div>
+  <button class="fab" id="fab-new" aria-label="New recipe" aria-haspopup="menu" aria-expanded="false">
+    <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+</div>
 
 <!-- ─────────────────────────────── Detail modal -->
 <div class="overlay" id="detail-overlay"></div>
@@ -350,7 +364,6 @@
   </div>
 </div>
 
-<input type="file" id="import-file" accept=".json,application/json" hidden>
 <div id="aria-live" class="aria-live" aria-live="polite" aria-atomic="true"></div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 

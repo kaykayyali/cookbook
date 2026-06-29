@@ -90,35 +90,127 @@ function renderCart() {
 }
 
 function renderAuth() {
-  const area = $('auth-area');
-  if (!area) return;
+  const zone = $('settings-auth-zone');
+  if (!zone) return;
   const { token, email } = loadAuth();
   if (token) {
-    area.innerHTML =
+    zone.innerHTML =
       `<div class="auth-signed-in">
          <span class="auth-email">Signed in as ${esc(email)}</span>
          <button class="auth-signout" data-action="signout">Sign out</button>
        </div>`;
   } else {
-    area.innerHTML = `<div id="g-signin-btn"></div>`;
+    zone.innerHTML = `<div id="g-signin-btn"></div>`;
     initGoogleSignIn({
       buttonEl: $('g-signin-btn'),
       clientId: window.COOKBOOK_GOOGLE_CLIENT_ID,
-      onSignedIn: (em) => { renderAuth(); toast(`Signed in as ${em}`); },
+      onSignedIn: (em) => {
+        renderAuth();
+        toast(`Signed in as ${em}`);
+        if (state.pendingOpenUrlModal) {
+          state.pendingOpenUrlModal = false;
+          openUrlModal();
+        }
+      },
       onError: (msg) => toast(`Sign-in failed: ${msg}`),
     });
   }
 }
 
-// Delegated handler: sign-out click anywhere inside #auth-area. The signed-in
-// branch re-renders the area after clearAuth(); the delegated listener keeps
-// working without re-binding.
-function handleAuthAreaClick(e) {
+// Delegated handler: sign-out click anywhere inside #settings-auth-zone.
+// The signed-in branch re-renders the zone after clearAuth(); the delegated
+// listener keeps working without re-binding.
+function handleAuthClick(e) {
   if (!e.target.closest('[data-action="signout"]')) return;
   clearAuth().then(() => {
     renderAuth();
     toast('Signed out');
   });
+}
+
+// Settings: render happens on first panel show + on auth state change.
+// Import / export buttons live in the Settings panel — renderSettings mounts
+// their click handlers once, then they're stable (no re-binding needed).
+let settingsRendered = false;
+function renderSettings() {
+  if (settingsRendered) return;
+  $('settings-import-btn')?.addEventListener('click', () => $('import-file').click());
+  $('settings-export-btn')?.addEventListener('click', exportRecipes);
+  settingsRendered = true;
+}
+
+// ── FAB dropdown ──────────────────────────────────────────
+// FAB no longer immediately opens the drawer. It toggles a 2-item menu:
+// "Enter Manually" → open the drawer as before
+// "Paste a link"   → if signed in, open URL modal; if not, mount GIS into
+//                    the FAB dropdown item so the user signs in without
+//                    leaving the page, then open URL modal.
+// Close the dropdown on outside-click and on Escape.
+function isFabOpen() {
+  const dd = $('fab-dropdown');
+  return dd && !dd.hasAttribute('hidden');
+}
+
+function openFab() {
+  const dd = $('fab-dropdown');
+  const btn = $('fab-new');
+  if (!dd || !btn) return;
+  dd.removeAttribute('hidden');
+  btn.setAttribute('aria-expanded', 'true');
+  document.addEventListener('click', closeFabOutside, { capture: true });
+}
+
+function closeFab() {
+  const dd = $('fab-dropdown');
+  const btn = $('fab-new');
+  if (!dd || !btn) return;
+  dd.setAttribute('hidden', '');
+  btn.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('click', closeFabOutside, { capture: true });
+}
+
+function closeFabOutside(e) {
+  const stack = $('fab-stack');
+  if (stack && stack.contains(e.target)) return;
+  closeFab();
+}
+
+function toggleFab(e) {
+  e?.stopPropagation();
+  if (isFabOpen()) closeFab();
+  else openFab();
+}
+
+// "Extract from URL" handler: route to either open the URL modal directly
+// (signed in) or trigger the sign-in flow programmatically (signed out).
+// The sign-in button is mounted in the Settings panel via renderAuth(); we
+// click it on the user's behalf, then a one-shot flag opens the URL modal
+// after the onSignedIn callback fires.
+async function handleFabAction(action, e) {
+  e.stopPropagation();
+  if (action !== 'url') {
+    if (action === 'manual') {
+      closeFab();
+      openDrawer(null);
+    }
+    return;
+  }
+  closeFab();
+  if (getToken()) {
+    openUrlModal();
+    return;
+  }
+  // Signed out: render auth into Settings (so the GIS button exists), then
+  // click it. Open Settings panel + auto-open URL modal on success.
+  showPanel('settings');
+  state.pendingOpenUrlModal = true;
+  // Wait one tick for renderAuth() to mount the GIS button.
+  setTimeout(() => {
+    const host = $('g-signin-btn');
+    const clickable = host?.querySelector('[role="button"], button') || host?.firstElementChild;
+    if (clickable) clickable.click();
+    else { toast('Sign-in not ready — open Settings to sign in'); state.pendingOpenUrlModal = false; }
+  }, 50);
 }
 
 // ── Detail sheet ───────────────────────────────────────────
@@ -239,12 +331,18 @@ function saveRecipe() {
     return;
   }
   const idx = state.editingId ? state.recipes.findIndex((x) => x._id === state.editingId) : -1;
-  if (idx > -1) state.recipes[idx] = r;
-  else state.recipes.unshift(r);
+  const isNew = idx === -1;
+  if (isNew) state.recipes.unshift(r);
+  else state.recipes[idx] = r;
   save();
   closeSheet('drawer');
   renderRecipes();
-  toast(state.editingId ? 'Recipe updated' : 'Recipe saved');
+  toast(isNew ? 'Recipe saved' : 'Recipe updated');
+  // Extract flow: jump to detail view of the new recipe.
+  if (isNew && state.pendingOpenAfterSave) {
+    state.pendingOpenAfterSave = false;
+    openDetail(r._id);
+  }
 }
 
 function deleteRecipe(id) {
@@ -338,6 +436,7 @@ async function extractFromUrl() {
       if (data.partial) {
         const [recipe] = parseImport([data.partial]);
         if (recipe) {
+          state.pendingOpenAfterSave = true;
           closeUrlModal();
           openDrawerPrefilled(recipe);
         }
@@ -346,6 +445,8 @@ async function extractFromUrl() {
     }
     const [recipe] = parseImport([data.recipe]);
     if (!recipe) { $('url-status').textContent = 'no recipe found'; return; }
+    // After Save, jump straight into the recipe detail view.
+    state.pendingOpenAfterSave = true;
     closeUrlModal();
     openDrawerPrefilled(recipe);
     toast('Recipe extracted — review and save');
@@ -357,15 +458,24 @@ async function extractFromUrl() {
 }
 
 // ── Panels ─────────────────────────────────────────────────
+
+// ── Panels ─────────────────────────────────────────────────
 function showPanel(id) {
-  els('.panel').forEach((p) => p.classList.toggle('active', p.id === `panel-${id}`));
+  // Strip both .active (set by showPanel) and .is-active (seeded in HTML
+  // for first paint) so a click can't leave a previous panel visible.
+  els('.panel').forEach((p) => {
+    p.classList.toggle('active', p.id === `panel-${id}`);
+    p.classList.remove('is-active');
+  });
   els('.nav-item[data-panel]').forEach((n) =>
     n.classList.toggle('active', n.dataset.panel === id)
   );
-  if (id === 'pantry') {
-    renderPantry();
-    renderCart();
-  }
+  // Mirror active panel on body so the topbar's recipe-only controls
+  // (search/chips/eligible-only) can hide via CSS attribute selector.
+  document.body.dataset.panel = id;
+  if (id === 'pantry') renderPantry();
+  else if (id === 'cart') renderCart();
+  else if (id === 'settings') { renderAuth(); renderSettings(); }
 }
 
 // ── Pantry mutations ───────────────────────────────────────
@@ -395,9 +505,6 @@ function wire() {
   els('.nav-item[data-panel]').forEach((btn) =>
     btn.addEventListener('click', () => showPanel(btn.dataset.panel))
   );
-  $('nav-import').addEventListener('click', () => $('import-file').click());
-  $('nav-export').addEventListener('click', exportRecipes);
-  $('nav-import-url').addEventListener('click', openUrlModal);
   $('url-close-btn').addEventListener('click', closeUrlModal);
   $('url-overlay').addEventListener('click', (e) => { if (e.target === $('url-overlay')) closeUrlModal(); });
   $('url-extract-btn').addEventListener('click', extractFromUrl);
@@ -415,11 +522,15 @@ function wire() {
   });
 
   // Auth (delegated — works across the sign-in/sign-out swap)
-  $('auth-area').addEventListener('click', handleAuthAreaClick);
+  $('settings-auth-zone').addEventListener('click', handleAuthClick);
 
-  // New recipe
-  $('new-recipe-btn').addEventListener('click', () => openDrawer(null));
-  $('fab-new').addEventListener('click', () => openDrawer(null));
+  // FAB: click toggles dropdown; items delegate via data-fab-action
+  $('fab-new').addEventListener('click', toggleFab);
+  $('fab-dropdown').addEventListener('click', (e) => {
+    const item = e.target.closest('[data-fab-action]');
+    if (!item) return;
+    handleFabAction(item.dataset.fabAction, e);
+  });
 
   // Recipe grid (card tap + action buttons)
   $('recipe-grid').addEventListener('click', (e) => {
@@ -497,19 +608,9 @@ function wire() {
     searchInput.focus();
   });
 
-  // Eligible toggle
+  // Ready-to-make toggle (in recipe panel header)
   $('eligible-only').addEventListener('change', (e) => {
     state.eligibleOnly = e.target.checked;
-    renderRecipes();
-  });
-
-  // Category chips
-  $('category-chips').addEventListener('click', (e) => {
-    const chip = e.target.closest('.chip');
-    if (!chip) return;
-    els('.chip').forEach((c) => c.classList.remove('active'));
-    chip.classList.add('active');
-    state.categoryFilter = chip.dataset.cat;
     renderRecipes();
   });
 
@@ -612,7 +713,8 @@ function wire() {
   // Esc closes whatever is open
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if ($('url-overlay').classList.contains('open')) closeUrlModal();
+    if (isFabOpen()) closeFab();
+    else if ($('url-overlay').classList.contains('open')) closeUrlModal();
     else if ($('schema-overlay').classList.contains('open')) $('schema-overlay').classList.remove('open');
     else if ($('recipe-drawer').classList.contains('open')) closeSheet('drawer');
     else if ($('detail-modal').classList.contains('open')) closeSheet('detail');
@@ -626,3 +728,6 @@ renderRecipes();
 renderPantry();
 renderCart();
 renderAuth();
+// Seed the active panel + nav-item for first paint. showPanel() also calls
+// the per-panel renderers for pantry/cart/settings.
+showPanel('recipes');

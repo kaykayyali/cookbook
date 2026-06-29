@@ -11,7 +11,7 @@
    ponytail: gaps marked inline; the close ones are flagged.
 ════════════════════════════════════════════════════════ */
 
-@layer components {
+@layer app {
 
   /* ════════════════════════════════════════════════════════
      APP SHELL — SIDEBAR (desktop) → BOTTOM TAB BAR (mobile)
@@ -52,14 +52,6 @@
     margin-top: 5px;
   }
   .sidebar-nav { padding: 22px 12px; flex: 1; }
-  .nav-label {
-    font-size: var(--text-xs);
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
-    color: var(--color-fg-subtle);
-    padding: 0 12px;
-    margin-bottom: 8px;
-  }
   .nav-item {
     display: flex; align-items: center; gap: 11px;
     padding: 11px 12px; border-radius: var(--radius-md);
@@ -122,61 +114,63 @@
     z-index: 40;
     /* ponytail: topbar z not in DS token set; 40 < 50 sidebar — fine. */
   }
-  .search-wrap { position: relative; flex: 0 1 320px; min-width: 0; }
-  .search-wrap > svg {
-    position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
-    color: var(--color-fg-subtle); pointer-events: none;
+  /* Topbar is recipe-page only. On pantry/cart/settings the search bar,
+     category chips, and "Can make" toggle are useless — hide them all. */
+  body:not([data-panel="recipes"]) .topbar { display: none; }
+  /* Search bar = a flex row that LOOKS like a single input box. The wrap
+     carries the border/background; the inner input is transparent and
+     fills the remaining space. Icons sit naturally in the row, not
+     absolute-positioned — no cascade-layer gymnastics required. */
+  .search-wrap {
+    display: flex; align-items: center;
+    flex: 0 1 360px; min-width: 0;
+    border: 1px solid var(--color-border-strong);
+    background: var(--color-bg-elevated);
+    border-radius: var(--radius-md);
+    min-height: 44px;
+    transition: border-color var(--dur-fast) var(--ease-out);
+  }
+  .search-wrap:focus-within { border-color: var(--color-accent); }
+  .search-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px;
+    color: var(--color-fg-subtle);
+    flex-shrink: 0;
   }
   .search-clear {
-    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
-    background: none; border: none; cursor: pointer;
+    flex-shrink: 0;
+    width: 36px; height: 36px;
+    display: none;        /* shown when input has a value */
+    align-items: center; justify-content: center;
     color: var(--color-fg-subtle);
-    padding: 6px; display: none; border-radius: var(--radius-pill);
-  }
-  .search-clear.show { display: flex; }
-  .search-clear:hover { color: var(--color-fg); }
-
-  .chips-scroll {
-    display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none;
-    -webkit-overflow-scrolling: touch; flex: 1; min-width: 0;
-  }
-  .chips-scroll::-webkit-scrollbar { display: none; }
-  .chip {
-    padding: 6px 13px;
+    background: none; border: none; cursor: pointer;
     border-radius: var(--radius-pill);
-    font-size: var(--text-xs);
-    font-weight: 500;
-    cursor: pointer;
-    border: 1px solid var(--color-border);
-    background: var(--color-bg-elevated);
-    color: var(--color-fg-muted);
-    transition: all var(--dur-fast) var(--ease-out);
-    white-space: nowrap; flex-shrink: 0;
-    font-family: inherit;
+    padding: 0;
   }
-  .chip:hover {
-    border-color: var(--color-accent);
-    color: var(--color-accent);
+  .search-clear.show { display: inline-flex; }
+  .search-clear:hover { color: var(--color-fg); }
+  /* The actual input is plain — strip its own border/bg/radius since the
+     wrap already provides the visual frame. */
+  .search-wrap > .input {
+    flex: 1; min-width: 0;
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    min-height: 0;
+    padding: var(--space-2) var(--space-2) var(--space-2) 0;
   }
-  /* ponytail: app.js (line 421-422) uses classList.add('active') on chips,
-     so .active is the live selector. We also accept .is-active so the
-     initial HTML seed lights up before any click. */
-  .chip.active,
-  .chip.is-active {
-    background: var(--color-accent);
-    border-color: var(--color-accent);
-    color: var(--color-accent-fg);
-  }
+  .search-wrap > .input:focus-visible { outline: none; }
 
-  .topbar-toggle {
-    display: flex; align-items: center; gap: 7px; cursor: pointer;
-    font-size: var(--text-sm);
-    color: var(--color-fg-muted);
+  /* Ready-to-make checkbox lives in the recipe panel header.
+     Inline with title block on desktop, wraps below on narrow. */
+  .ready-toggle {
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+    font-size: var(--text-sm); color: var(--color-fg-muted);
     white-space: nowrap; user-select: none;
+    align-self: center;
   }
-  .topbar-toggle input { width: auto; accent-color: var(--color-accent); }
-
-  .btn-new-topbar { display: inline; }
+  .ready-toggle input { width: auto; accent-color: var(--color-accent); }
 
   /* ════════════════════════════════════════════════════════
      PANELS
@@ -738,7 +732,57 @@
   /* ponytail: original had unique positioning; DS rule owns the visual.
      Kept here only to add the mobile-up shift in the media query below. */
 
-  .fab { display: none; }   /* shown on mobile only */
+  .fab { display: none; }
+
+  .fab-stack {
+    position: fixed; right: 16px; bottom: 24px; z-index: 60;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+  }
+  .fab-stack .fab { display: flex; }   /* show on every viewport now */
+
+  .fab-dropdown {
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    padding: 4px;
+    display: flex; flex-direction: column; gap: 2px;
+    min-width: 180px;
+  }
+  .fab-dropdown[hidden] { display: none; }
+  .fab-dropdown-item {
+    background: none; border: none; cursor: pointer; text-align: left;
+    padding: 10px 14px; border-radius: var(--radius-sm);
+    font-size: var(--text-sm); color: var(--color-fg);
+    min-height: 44px;
+    font-family: inherit;
+  }
+  .fab-dropdown-divider { height: 1px; background: var(--color-border); margin: 4px 6px; }
+  .fab-dropdown-item:hover { background: var(--color-bg-sunken); }
+  .fab-dropdown-item:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
+
+  /* Settings panel */
+  .auth-signed-in { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: var(--text-sm); color: var(--color-fg-muted); }
+  .auth-email { color: var(--color-fg); }
+  .auth-signout {
+    background: none; border: 1px solid var(--color-border); cursor: pointer;
+    padding: 8px 14px; border-radius: var(--radius-md);
+    font-size: var(--text-sm); color: var(--color-fg); font-family: inherit;
+    min-height: 36px;
+  }
+  .auth-signout:hover { background: var(--color-bg-sunken); }
+  .settings-section { margin-bottom: 32px; }
+  .settings-section-label {
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--color-fg-muted);
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .settings-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .settings-hint { font-size: var(--text-xs); color: var(--color-fg-subtle); }
+  #settings-auth-zone { display: flex; align-items: center; min-height: 44px; }
 
   /* ════════════════════════════════════════════════════════
      MOBILE  ≤  760px
@@ -752,7 +796,7 @@
       border-top: 1px solid color-mix(in oklab, var(--color-bg-elevated) 12%, transparent);
       justify-content: space-around;
     }
-    .sidebar-brand, .nav-label, .nav-sep, .sidebar-footer { display: none; }
+    .sidebar-brand, .sidebar-footer { display: none; }
     .sidebar-nav { display: flex; padding: 0; flex: 1; justify-content: space-around; gap: 2px; }
     .nav-item {
       flex-direction: column; gap: 3px;
@@ -772,16 +816,8 @@
 
     .main { margin-left: 0; padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
 
-    .topbar {
-      flex-wrap: wrap;
-      padding: 10px 14px;
-      gap: 10px;
-      padding-top: max(10px, env(safe-area-inset-top, 0px));
-    }
-    .search-wrap { max-width: none; flex: 1 1 100%; order: 1; }
-    .chips-scroll { order: 3; flex: 1 1 100%; padding-bottom: 2px; }
-    .topbar-toggle { order: 2; }
-    .btn-new-topbar { display: none; }    /* replaced by FAB */
+    .topbar { padding: 10px 14px; padding-top: max(10px, env(safe-area-inset-top, 0px)); }
+    .search-wrap { flex: 1 1 auto; }
 
     .panel { padding: 18px 14px; }
     .panel-header h2 { font-size: var(--text-xl); }
@@ -808,20 +844,20 @@
 
     .drawer { width: 100vw; }
 
-    .fab {
-      display: flex;
-      position: fixed; right: 16px;
+    .fab-stack {
+      right: 16px;
       bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    }
+    .fab-stack .fab {
       width: 56px; height: 56px;
       border-radius: var(--radius-pill);
       background: var(--color-accent);
       color: var(--color-accent-fg);
       border: none; cursor: pointer;
       align-items: center; justify-content: center;
-      z-index: 40;
       box-shadow: 0 4px 16px color-mix(in oklab, var(--color-accent) 45%, transparent);
     }
-    .fab:active { transform: scale(.94); }
+    .fab-stack .fab:active { transform: scale(.94); }
 
     /* Lift the toast above the bottom tab bar. DS .toast has
        bottom: var(--space-6); override for mobile-stacked UI. */
