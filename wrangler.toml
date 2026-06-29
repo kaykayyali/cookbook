@@ -10,7 +10,7 @@ compatibility_date = "2025-09-01"
 # GOOGLE_CLIENT_ID is intentionally NOT in [vars] — shipping the literal
 # placeholder as a non-secret would let every real sign-in fall through to 401.
 [vars]
-ALLOWED_EMAILS = "you@example.com"
+ALLOWED_EMAILS = "kaykayyali@gmail.com"
 SESSION_TTL = "604800"
 
 # Required secrets (set via `wrangler pages secret put`, NEVER committed):
