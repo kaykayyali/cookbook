@@ -39,9 +39,9 @@ const REQUIRED_TOKEN_NAMES = [
   '--z-toast',
 ];
 
-test('docs/css/ contains tokens.css, base.css, layout.css, components.css (and no styles.css)', () => {
+test('docs/css/ contains tokens.css, base.css, layout.css, components.css, app.css (and no styles.css)', () => {
   const files = readdirSync(join(DOCS, 'css')).sort();
-  assert.deepEqual(files, ['base.css', 'components.css', 'layout.css', 'tokens.css']);
+  assert.deepEqual(files, ['app.css', 'base.css', 'components.css', 'layout.css', 'tokens.css']);
 });
 
 test('tokens.css defines every required custom property', () => {
