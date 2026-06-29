@@ -48,13 +48,34 @@ export function ingredientCounts(recipe, pantry) {
 }
 
 /**
+ * Parse a raw ingredient line into its leading quantity/unit snippet and the
+ * remaining base name. Reuses the same LEADING_QTY / LEADING_UNIT regexes as
+ * the previous baseName, but captures the stripped run instead of discarding
+ * it. "2 tablespoons olive oil" → { qtyText: "2 tablespoons", name: "olive oil" }.
+ * "6 large eggs" → { qtyText: "6 large", name: "eggs" } (large is a unit here).
+ * @param {string} raw
+ * @returns {{qtyText:string, name:string}} name is lowercase; non-strings yield empty strings
+ */
+export function parseIngredient(raw) {
+  if (typeof raw !== 'string') return { qtyText: '', name: '' };
+  let s = raw;
+  let qtyText = '';
+  const m1 = s.match(LEADING_QTY);
+  if (m1) { qtyText += m1[0]; s = s.slice(m1[0].length); }
+  const m2 = s.match(LEADING_UNIT);
+  if (m2) { qtyText += m2[0]; s = s.slice(m2[0].length); }
+  return { qtyText: qtyText.trim(), name: s.trim().toLowerCase() };
+}
+
+/**
  * Reduce a raw ingredient line to its base noun by stripping leading
  * quantity and unit. "2 tablespoons olive oil" → "olive oil".
+ * Thin wrapper over parseIngredient so cart and pantry share one parser.
  * @param {string} raw
  * @returns {string} lowercase base name
  */
 export function baseName(raw) {
-  return raw.replace(LEADING_QTY, '').replace(LEADING_UNIT, '').trim().toLowerCase();
+  return parseIngredient(raw).name;
 }
 
 /**
