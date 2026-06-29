@@ -19,6 +19,9 @@ const deps = {
 
 export async function onRequestPost(context) {
   const { request, env } = context;
+  if (typeof env.SESSION_SECRET !== 'string' || env.SESSION_SECRET.length < 16) {
+    return json(500, { error: 'server_misconfigured' });
+  }
   let body;
   try {
     body = await request.json();

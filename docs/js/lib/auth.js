@@ -124,6 +124,7 @@ export async function initGoogleSignIn({ buttonEl, clientId, onSignedIn, onError
             });
             const data = await res.json();
             if (!res.ok) { onError?.(data.error || 'auth_failed'); return; }
+            if (!data || !data.token) { onError?.('auth_failed'); return; }
             saveAuth(data.token, data.email);
             onSignedIn?.(data.email);
           } catch (e) {
