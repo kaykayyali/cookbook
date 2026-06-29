@@ -88,8 +88,9 @@ Fits the existing layering exactly:
   - `qtyText` = the leading run matched by the existing `LEADING_QTY` + `LEADING_UNIT` regexes,
     captured rather than discarded (the current `baseName` discards it). Examples:
     `"2 tablespoons olive oil"` → `{ qtyText: "2 tablespoons", name: "olive oil" }`;
-    `"6 large eggs"` → `{ qtyText: "6", name: "large eggs" }` ("large" is not a unit, so it stays in
-    the name — consistent with today's `baseName`);
+    `"6 large eggs"` → `{ qtyText: "6 large", name: "eggs" }` (the existing `LEADING_UNIT` regex
+    treats `large`/`medium`/`small` as units, so they land in `qtyText`, not the name — consistent
+    with today's `baseName`, which returns `eggs`);
     `"salt and pepper to taste"` → `{ qtyText: "", name: "salt and pepper to taste" }`.
 - `baseName(raw)` is reimplemented as `parseIngredient(raw).name` so behaviour is unchanged for
   pantry autocomplete.
