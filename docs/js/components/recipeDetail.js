@@ -1,36 +1,34 @@
 // ════════════════════════════════════════════════════════
-// components/recipeDetail.js — recipe detail sheet markup
+// components/recipeDetail.js — recipe detail sheet (design-system v1)
 // ════════════════════════════════════════════════════════
 
 import { esc, formatDuration } from '../lib/format.js';
-import { ICON } from '../lib/icons.js';
+import { Icon } from '../lib/ui.js';
 import { haveIngredient, ingredientCounts } from '../lib/pantry.js';
 
 /**
- * Ingredient checklist markup for the detail sheet. Each row carries a
- * data-ing attribute so a delegated handler can toggle pantry membership.
+ * Ingredient checklist markup for the detail sheet.
  * @param {string[]} ings
  * @param {string[]} pantry
  * @returns {string}
  */
 export function ingredientListHTML(ings, pantry) {
-  return ings
-    .map((i) => {
-      const has = haveIngredient(i, pantry);
-      return `<li class="detail-ing-item ${has ? '' : 'missing-item'}" data-ing="${esc(i)}" title="${
-        has ? 'Tap to remove from pantry' : 'Tap to add to pantry'
-      }">
-      <span class="detail-ing-check ${has ? 'have' : 'missing'}">${has ? ICON.check : ''}</span>
+  return `<ul class="detail-ing-list">${ings.map((i) => {
+    const has = haveIngredient(i, pantry);
+    const cls = has ? 'detail-ing-item' : 'detail-ing-item missing-item';
+    const checkCls = has ? 'detail-ing-check have' : 'detail-ing-check';
+    const title = has ? 'Tap to remove from pantry' : 'Tap to add to pantry';
+    return `<li class="${cls}" data-ing="${esc(i)}" title="${esc(title)}">
+      <span class="${checkCls}">${has ? Icon({ name: 'check' }) : ''}</span>
       <span class="detail-ing-text">${esc(i)}</span></li>`;
-    })
-    .join('');
+  }).join('')}</ul>`;
 }
 
 /**
  * Pantry summary note shown beneath the ingredient list.
  * @param {string[]} ings
  * @param {string[]} pantry
- * @returns {string} empty string when there are no ingredients
+ * @returns {string}
  */
 export function pantryNoteHTML(ings, pantry) {
   if (!ings.length) return '';
@@ -42,7 +40,7 @@ export function pantryNoteHTML(ings, pantry) {
 }
 
 /**
- * Meta pills (prep/cook/total/serves/method) for the detail header.
+ * Meta pills for the detail header.
  * @param {object} r
  * @returns {string}
  */
@@ -54,12 +52,10 @@ export function metaRowHTML(r) {
     r.recipeYield && ['Serves', r.recipeYield],
     r.cookingMethod && ['Method', r.cookingMethod],
   ].filter(Boolean);
-  return meta
-    .map(
-      ([k, v]) =>
-        `<div class="detail-meta-item"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`
-    )
-    .join('');
+  if (!meta.length) return '';
+  return `<div class="detail-meta">${meta.map(
+    ([k, v]) => `<div class="detail-meta-item"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`
+  ).join('')}</div>`;
 }
 
 /**
@@ -69,14 +65,13 @@ export function metaRowHTML(r) {
  */
 export function stepsHTML(steps) {
   const filtered = (steps || []).filter(Boolean);
-  return filtered.length
-    ? filtered
-        .map(
-          (s, i) =>
-            `<div class="detail-step"><span class="step-num">${i + 1}</span><p class="step-text">${esc(s)}</p></div>`
-        )
-        .join('')
-    : '<p style="color:var(--ink-light);font-size:.85rem">No instructions added yet.</p>';
+  if (!filtered.length) {
+    return '<p class="ingredients-label">No instructions added yet.</p>';
+  }
+  return filtered.map((s, i) => {
+    const num = i + 1;
+    return `<div class="detail-step"><span class="step-num">${num}</span><p class="step-text">${esc(s)}</p></div>`;
+  }).join('');
 }
 
 /**
@@ -93,10 +88,7 @@ export function nutritionHTML(nutrition) {
     ['Carbs', n.carbohydrateContent],
   ].filter((c) => c[1]);
   if (!cells.length) return null;
-  return cells
-    .map(
-      ([k, v]) =>
-        `<div class="nutrition-cell"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`
-    )
-    .join('');
+  return `<div class="detail-nutrition">${cells.map(
+    ([k, v]) => `<div class="nutrition-cell"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`
+  ).join('')}</div>`;
 }
