@@ -17,27 +17,26 @@ const REQUIRED_TOKEN_NAMES = [
   '--color-success', '--color-warning', '--color-danger',
   '--color-focus-ring',
   // typography — §5.3
-  '--font-display', '--font-body', '--font-mono',
+  '--font-display', '--font-body',
   '--text-xs', '--text-sm', '--text-md', '--text-lg',
   '--text-xl', '--text-2xl', '--text-3xl',
   '--leading-tight', '--leading-snug', '--leading-normal', '--leading-relaxed',
-  '--tracking-tight', '--tracking-normal', '--tracking-wide',
+  '--tracking-tight', '--tracking-wide',
   // spacing — §5.4
-  '--space-0', '--space-1', '--space-2', '--space-3', '--space-4',
+  '--space-1', '--space-2', '--space-3', '--space-4',
   '--space-6', '--space-8', '--space-10', '--space-12',
-  '--space-16', '--space-20', '--space-24',
+  '--space-16',
   // radii — §5.5
-  '--radius-sm', '--radius-md', '--radius-lg', '--radius-xl', '--radius-pill',
+  '--radius-sm', '--radius-md', '--radius-lg', '--radius-pill',
   // shadow — §5.6
-  '--shadow-sm', '--shadow-md', '--shadow-lg',
+  '--shadow-sm', '--shadow-lg',
   // motion — §5.7
-  '--ease-out', '--ease-in-out',
-  '--dur-fast', '--dur-base', '--dur-slow',
+  '--ease-out',
+  '--dur-fast', '--dur-base',
   // layout — §5.8
   '--container-narrow', '--container-base', '--container-wide',
-  '--bp-sm', '--bp-md',
   // z-index — §5.9
-  '--z-base', '--z-dropdown', '--z-sticky', '--z-overlay', '--z-modal', '--z-toast',
+  '--z-toast',
 ];
 
 test('docs/css/ contains tokens.css, base.css, layout.css, components.css (and no styles.css)', () => {
@@ -63,22 +62,18 @@ test('tokens.css defines an automatic dark mode via prefers-color-scheme', () =>
 
 // ─── Spec §11 — design system contract ────────────────────────
 
-test('every token referenced in docs/css is defined in tokens.css (no missing tokens)', () => {
-  // ponytail: brief asks for "no orphans" (every defined token is used).
-  // Spec §6.2 explicitly defines a wider API surface than current usage
-  // (YAGNI for future primitives), so an inverse contract is more useful:
-  // every token currently consumed is defined. Catches accidental removal.
+test('every defined token in tokens.css is referenced at least once (no orphan tokens)', () => {
   const tokens = readFileSync(join(DOCS, 'css', 'tokens.css'), 'utf8');
   const cssDir = join(DOCS, 'css');
   const cssFiles = readdirSync(cssDir)
     .filter((f) => f.endsWith('.css') && f !== 'tokens.css')
     .map((f) => readFileSync(join(cssDir, f), 'utf8'))
     .join('\n');
-  // Pull every --token-name: that's referenced via var(--name) in consumers.
-  const used = [...cssFiles.matchAll(/var\(\s*(--[a-z0-9-]+)\s*[),]/g)].map((m) => m[1]);
-  const uniq = [...new Set(used)];
-  const missing = uniq.filter((n) => !tokens.includes(`${n}:`));
-  assert.deepEqual(missing, [], `Referenced but undefined token(s): ${missing.join(', ')}`);
+  // Pull every --token-name: defined in tokens.css.
+  const defined = [...tokens.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]);
+  const uniq = [...new Set(defined)];
+  const orphans = uniq.filter((n) => !cssFiles.includes(`var(${n}`));
+  assert.deepEqual(orphans, [], `Orphan token(s) defined but never used: ${orphans.join(', ')}`);
 });
 
 test('every primitive class appears at least once in docs (no dead primitives)', () => {

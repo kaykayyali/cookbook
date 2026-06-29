@@ -27,7 +27,6 @@
     /* typography (§5.3) */
     --font-display: "Source Serif 4", "Lora", "Iowan Old Style", Georgia, serif;
     --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
     --text-xs: 0.75rem;
     --text-sm: 0.875rem;
@@ -43,11 +42,9 @@
     --leading-relaxed: 1.7;
 
     --tracking-tight: -0.01em;
-    --tracking-normal: 0;
     --tracking-wide: 0.04em;
 
     /* spacing — 4px geometric base (§5.4) */
-    --space-0: 0;
     --space-1: 0.25rem;
     --space-2: 0.5rem;
     --space-3: 0.75rem;
@@ -57,41 +54,28 @@
     --space-10: 2.5rem;
     --space-12: 3rem;
     --space-16: 4rem;
-    --space-20: 5rem;
-    --space-24: 6rem;
 
     /* radii (§5.5) */
     --radius-sm: 4px;
     --radius-md: 8px;
     --radius-lg: 14px;
-    --radius-xl: 22px;
     --radius-pill: 999px;
 
     /* shadow (§5.6) */
     --shadow-sm: 0 1px 2px rgba(42, 31, 23, 0.06);
-    --shadow-md: 0 2px 8px rgba(42, 31, 23, 0.08);
     --shadow-lg: 0 12px 32px rgba(42, 31, 23, 0.12);
 
     /* motion (§5.7) */
     --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
-    --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
     --dur-fast: 120ms;
     --dur-base: 200ms;
-    --dur-slow: 320ms;
 
     /* layout (§5.8) */
     --container-narrow: 40rem;
     --container-base: 60rem;
     --container-wide: 80rem;
-    --bp-sm: 40rem;
-    --bp-md: 64rem;
 
     /* z-index (§5.9) */
-    --z-base: 0;
-    --z-dropdown: 10;
-    --z-sticky: 20;
-    --z-overlay: 30;
-    --z-modal: 40;
     --z-toast: 50;
   }
 
@@ -114,7 +98,6 @@
       --color-danger:        #d66060;
       --color-focus-ring:    #c87a4a;
       --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
-      --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.40);
       --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.52);
     }
   }
@@ -138,7 +121,6 @@
     --color-danger:        #d66060;
     --color-focus-ring:    #c87a4a;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
-    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.40);
     --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.52);
   }
 
@@ -161,7 +143,6 @@
     --color-danger:        #9a2a2a;
     --color-focus-ring:    #9a4a1a;
     --shadow-sm: 0 1px 2px rgba(42, 31, 23, 0.06);
-    --shadow-md: 0 2px 8px rgba(42, 31, 23, 0.08);
     --shadow-lg: 0 12px 32px rgba(42, 31, 23, 0.12);
   }
 
@@ -170,7 +151,6 @@
     :root {
       --dur-fast: 0ms;
       --dur-base: 0ms;
-      --dur-slow: 0ms;
     }
   }
 
