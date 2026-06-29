@@ -190,9 +190,7 @@ function closeSheet(which) {
   const [panel, overlay] = SHEETS[which];
   $(panel).classList.remove('open');
   $(overlay).classList.remove('open');
-  if (!$('detail-modal').classList.contains('open') && !$('recipe-drawer').classList.contains('open')) {
-    document.body.style.overflow = '';
-  }
+  restoreBodyScroll();
   if (which === 'detail') state.detailId = null;
 }
 
