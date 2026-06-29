@@ -33,8 +33,9 @@ export function Button({ label, variant = 'primary', size = 'md', type = 'button
  * @param {string} opts.icon                        Icon name from ICON. REQUIRED.
  * @param {boolean} [opts.danger]
  * @param {'sm'|'md'} [opts.size='md']
+ * @param {Record<string,string>} [opts.data]       data-* attrs (data-id, data-action, etc.)
  */
-export function IconButton({ label, icon, danger, size = 'md' }) {
+export function IconButton({ label, icon, danger, size = 'md', data = {} }) {
   if (typeof label !== 'string' || !label) {
     throw new Error('IconButton requires a non-empty aria-label (spec §10 #2)');
   }
@@ -42,7 +43,8 @@ export function IconButton({ label, icon, danger, size = 'md' }) {
     throw new Error(`IconButton requires a valid icon name; got ${JSON.stringify(icon)}`);
   }
   const cls = ['icon-btn', danger ? 'danger' : '', size === 'sm' ? 'icon-btn-sm' : ''].filter(Boolean).join(' ');
-  return `<button type="button" class="${cls}" aria-label="${esc(label)}" title="${esc(label)}">${ICON[icon]}</button>`;
+  const dataAttrs = Object.entries(data).map(([k, v]) => ` data-${k}="${esc(String(v))}"`).join('');
+  return `<button type="button" class="${cls}" aria-label="${esc(label)}" title="${esc(label)}"${dataAttrs}>${ICON[icon]}</button>`;
 }
 
 /**

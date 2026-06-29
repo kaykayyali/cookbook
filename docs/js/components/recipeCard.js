@@ -56,9 +56,9 @@ export function recipeCardHTML(r, pantry) {
       <div class="card-footer">
         <span class="card-status"><span class="status-dot"></span>${esc(statusText)}</span>
         <div class="card-actions">
-          ${IconButton({ label: 'Edit',     icon: 'edit',   size: 'sm', danger: false })}
-          ${IconButton({ label: 'JSON-LD',  icon: 'code',   size: 'sm', danger: false })}
-          ${IconButton({ label: 'Delete',   icon: 'trash',  size: 'sm', danger: true })}
+          ${IconButton({ label: 'Edit',     icon: 'edit',   size: 'sm', danger: false, data: { action: 'edit',   id: r._id } })}
+          ${IconButton({ label: 'JSON-LD',  icon: 'code',   size: 'sm', danger: false, data: { action: 'schema',  id: r._id } })}
+          ${IconButton({ label: 'Delete',   icon: 'trash',  size: 'sm', danger: true,  data: { action: 'delete',  id: r._id } })}
         </div>
       </div>
     </article>`;
