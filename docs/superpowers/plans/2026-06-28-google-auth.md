@@ -65,28 +65,33 @@ Production environment (manual / MCP, not code):
 
 - [ ] **Step 1: Add the dependency + dev script to the root package**
 
-Modify `package.json` (keep the existing `"test": "node --test"`; add deps/scripts):
+Modify `package.json` **additively** — preserve every existing field (`version`, `description`, `keywords`, `license`, `engines`, `type`). Add a `"dev"` script alongside the existing `"test"`, and add `dependencies` + `devDependencies` blocks (the file currently has no `dependencies`/`devDependencies`). Resulting file:
 
 ```json
 {
   "name": "cookbook",
-  "private": true,
+  "version": "1.0.0",
+  "description": "Mobile-first recipe manager with schema.org/Recipe JSON-LD support",
   "type": "module",
   "scripts": {
     "test": "node --test",
     "dev": "wrangler pages dev docs"
   },
+  "keywords": ["recipe", "cookbook", "schema.org", "json-ld", "pantry"],
+  "license": "MIT",
   "dependencies": {
     "jose": "^5.9.6"
   },
   "devDependencies": {
     "wrangler": "^3.90.0"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }
 ```
 
-Then install: `npm install`
+Then install: `npm install` (creates `package-lock.json` and `node_modules/`; `node_modules/` is gitignored — commit `package-lock.json` alongside `package.json`).
 
 - [ ] **Step 2: Write the failing test**
 
