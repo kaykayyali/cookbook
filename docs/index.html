@@ -10,7 +10,22 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./css/styles.css">
+  <link rel="stylesheet" href="./css/tokens.css">
+  <link rel="stylesheet" href="./css/base.css">
+  <link rel="stylesheet" href="./css/layout.css">
+  <link rel="stylesheet" href="./css/components.css">
+  <script>
+    // Pre-paint theme application — runs before <body> is parsed so dark mode
+    // has no flash of light theme. Mirrors docs/js/lib/theme.js (which is too
+    // late: modules are deferred by default and would paint first).
+    (function () {
+      try {
+        var v = localStorage.getItem('cb_theme');
+        if (v !== 'light' && v !== 'dark') return;
+        document.documentElement.setAttribute('data-theme', v);
+      } catch (e) { /* private mode etc. — fall through to OS default */ }
+    })();
+  </script>
 </head>
 <body>
 
@@ -335,7 +350,8 @@
 </div>
 
 <input type="file" id="import-file" accept=".json,application/json" hidden>
-<div class="toast" id="toast"></div>
+<div id="aria-live" class="aria-live" aria-live="polite" aria-atomic="true"></div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 
 <script type="module" src="./js/app.js"></script>
