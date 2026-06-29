@@ -1,0 +1,11 @@
+name = "cookbook"
+pages_build_output_dir = "docs"
+compatibility_date = "2025-09-01"
+
+# Non-secret config. Set SESSION_SECRET separately:
+#   local dev:  create a `.dev.vars` file with `SESSION_SECRET="<32+ char random>"`
+#   production: wrangler pages secret put SESSION_SECRET --project-name cookbook
+[vars]
+GOOGLE_CLIENT_ID = "replace-me.apps.googleusercontent.com"
+ALLOWED_EMAILS = "you@example.com"
+SESSION_TTL = "604800"
