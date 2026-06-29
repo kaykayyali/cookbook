@@ -4,10 +4,17 @@
   "description": "Mobile-first recipe manager with schema.org/Recipe JSON-LD support",
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "dev": "wrangler pages dev docs"
   },
   "keywords": ["recipe", "cookbook", "schema.org", "json-ld", "pantry"],
   "license": "MIT",
+  "dependencies": {
+    "jose": "^5.9.6"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  },
   "engines": {
     "node": ">=18"
   }

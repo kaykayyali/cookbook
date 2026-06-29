@@ -13,6 +13,7 @@ import {
 } from './lib/pantry.js';
 import { filterRecipes } from './lib/filters.js';
 import { addToCart, markBought, clearCart } from './lib/cart.js';
+import { loadAuth, initGoogleSignIn, clearAuth } from './lib/auth.js';
 import { cartGroupsHTML, emptyCartHTML } from './components/cart.js';
 import { state, save, init } from './lib/store.js';
 import { recipeCardHTML, emptyStateHTML } from './components/recipeCard.js';
@@ -86,6 +87,38 @@ function renderCart() {
   const grid = $('cart-grid');
   if (!grid) return;
   grid.innerHTML = state.cart.length ? cartGroupsHTML(state.cart) : emptyCartHTML();
+}
+
+function renderAuth() {
+  const area = $('auth-area');
+  if (!area) return;
+  const { token, email } = loadAuth();
+  if (token) {
+    area.innerHTML =
+      `<div class="auth-signed-in">
+         <span class="auth-email">Signed in as ${esc(email)}</span>
+         <button class="auth-signout" data-action="signout">Sign out</button>
+       </div>`;
+  } else {
+    area.innerHTML = `<div id="g-signin-btn"></div>`;
+    initGoogleSignIn({
+      buttonEl: $('g-signin-btn'),
+      clientId: window.COOKBOOK_GOOGLE_CLIENT_ID,
+      onSignedIn: (em) => { renderAuth(); toast(`Signed in as ${em}`); },
+      onError: (msg) => toast(`Sign-in failed: ${msg}`),
+    });
+  }
+}
+
+// Delegated handler: sign-out click anywhere inside #auth-area. The signed-in
+// branch re-renders the area after clearAuth(); the delegated listener keeps
+// working without re-binding.
+function handleAuthAreaClick(e) {
+  if (!e.target.closest('[data-action="signout"]')) return;
+  clearAuth().then(() => {
+    renderAuth();
+    toast('Signed out');
+  });
 }
 
 // ── Detail sheet ───────────────────────────────────────────
@@ -291,6 +324,9 @@ function wire() {
   );
   $('nav-import').addEventListener('click', () => $('import-file').click());
   $('nav-export').addEventListener('click', exportRecipes);
+
+  // Auth (delegated — works across the sign-in/sign-out swap)
+  $('auth-area').addEventListener('click', handleAuthAreaClick);
 
   // New recipe
   $('new-recipe-btn').addEventListener('click', () => openDrawer(null));
@@ -499,3 +535,4 @@ wire();
 renderRecipes();
 renderPantry();
 renderCart();
+renderAuth();

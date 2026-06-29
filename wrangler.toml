@@ -1,0 +1,19 @@
+name = "cookbook"
+pages_build_output_dir = "docs"
+compatibility_date = "2025-09-01"
+
+# Non-secret config only. Secrets (SESSION_SECRET, GOOGLE_CLIENT_ID) are set
+# separately:
+#   local dev:  create a `.dev.vars` file with the entries listed below
+#   production: wrangler pages secret put SESSION_SECRET --project-name cookbook
+#               wrangler pages secret put GOOGLE_CLIENT_ID --project-name cookbook
+# GOOGLE_CLIENT_ID is intentionally NOT in [vars] — shipping the literal
+# placeholder as a non-secret would let every real sign-in fall through to 401.
+[vars]
+ALLOWED_EMAILS = "kaykayyali@gmail.com"
+SESSION_TTL = "604800"
+
+# Required secrets (set via `wrangler pages secret put`, NEVER committed):
+#   SESSION_SECRET — >=32 char random string, e.g. `openssl rand -hex 32`
+#   GOOGLE_CLIENT_ID — OAuth client id from Google Cloud Console
+#                    (https://console.cloud.google.com/apis/credentials)
