@@ -18,7 +18,10 @@ export async function handleAuth(body, env, deps) {
     return { status: 400, body: { error: 'missing_id_token' } };
   }
   const claims = await deps.verifyIdToken(idToken, env.GOOGLE_CLIENT_ID);
-  if (!claims || claims.email_verified !== true) {
+  // verifyIdToken already enforces email_verified === true and returns null
+  // otherwise — so the only way we reach this branch with a null claims is
+  // a verification failure. Whitelist is the next gate.
+  if (!claims) {
     return { status: 401, body: { error: 'invalid_id_token' } };
   }
   if (!deps.isAllowed(claims.email, env.ALLOWED_EMAILS)) {
