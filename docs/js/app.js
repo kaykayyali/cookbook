@@ -13,7 +13,7 @@ import {
 } from './lib/pantry.js';
 import { filterRecipes } from './lib/filters.js';
 import { addToCart, markBought, clearCart } from './lib/cart.js';
-import { loadAuth, initGoogleSignIn, clearAuth } from './lib/auth.js';
+import { loadAuth, initGoogleSignIn, clearAuth, authFetch, getToken } from './lib/auth.js';
 import { cartGroupsHTML, emptyCartHTML } from './components/cart.js';
 import { state, save, init } from './lib/store.js';
 import { recipeCardHTML, emptyStateHTML } from './components/recipeCard.js';
@@ -197,12 +197,10 @@ function closeSheet(which) {
 }
 
 // ── Drawer (create/edit) ───────────────────────────────────
-function openDrawer(id) {
-  const r = id ? state.recipes.find((x) => x._id === id) : null;
-  state.editingId = id || null;
-  $('drawer-title').textContent = r ? 'Edit Recipe' : 'New Recipe';
-  $('f-id').value = id || '';
-
+function fillDrawerFromRecipe(r) {
+  state.editingId = (r && r._id) || null;
+  $('drawer-title').textContent = state.editingId ? 'Edit Recipe' : 'New Recipe';
+  $('f-id').value = state.editingId || '';
   Object.entries(FIELD_MAP).forEach(([elId, key]) => {
     $(elId).value = r ? r[key] || '' : '';
   });
@@ -210,12 +208,22 @@ function openDrawer(id) {
   Object.entries(NUTRI_MAP).forEach(([elId, key]) => {
     $(elId).value = n[key] || '';
   });
-
   formBuffers.ingredients = r ? [...(r.recipeIngredient || [])] : [];
   formBuffers.steps = r ? [...(r.recipeInstructions || [''])] : [''];
   rebuildIngEditor();
   rebuildStepsList();
+}
 
+function openDrawer(id) {
+  const r = id ? state.recipes.find((x) => x._id === id) : null;
+  fillDrawerFromRecipe(r);
+  openSheet('drawer');
+  setTimeout(() => $('f-name').focus(), 80);
+}
+
+/** Open the drawer pre-filled with an unsaved recipe (no _id) for review. */
+function openDrawerPrefilled(recipe) {
+  fillDrawerFromRecipe(recipe);
   openSheet('drawer');
   setTimeout(() => $('f-name').focus(), 80);
 }
@@ -283,6 +291,52 @@ function importRecipes(file) {
   reader.readAsText(file);
 }
 
+// ── Import from URL ────────────────────────────────────────
+function openUrlModal() {
+  const signedOut = !getToken();
+  $('url-signedout').style.display = signedOut ? '' : 'none';
+  $('url-signedin').style.display = signedOut ? 'none' : '';
+  $('url-input').value = '';
+  $('url-status').textContent = '';
+  $('url-overlay').classList.add('open');
+}
+
+async function extractFromUrl() {
+  const url = $('url-input').value.trim();
+  if (!url) return;
+  $('url-status').textContent = 'Extracting…';
+  $('url-extract-btn').disabled = true;
+  try {
+    // authFetch prepends API_BASE ('/api'), so '/extract' -> '/api/extract'.
+    const res = await authFetch('/extract', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      $('url-status').textContent = data.error || 'failed';
+      if (data.partial) {
+        const [recipe] = parseImport([data.partial]);
+        if (recipe) {
+          $('url-overlay').classList.remove('open');
+          openDrawerPrefilled(recipe);
+        }
+      }
+      return;
+    }
+    const [recipe] = parseImport([data.recipe]);
+    if (!recipe) { $('url-status').textContent = 'no recipe found'; return; }
+    $('url-overlay').classList.remove('open');
+    openDrawerPrefilled(recipe);
+    toast('Recipe extracted — review and save');
+  } catch (e) {
+    $('url-status').textContent = e.message || 'network';
+  } finally {
+    $('url-extract-btn').disabled = false;
+  }
+}
+
 // ── Panels ─────────────────────────────────────────────────
 function showPanel(id) {
   els('.panel').forEach((p) => p.classList.toggle('active', p.id === `panel-${id}`));
@@ -324,6 +378,12 @@ function wire() {
   );
   $('nav-import').addEventListener('click', () => $('import-file').click());
   $('nav-export').addEventListener('click', exportRecipes);
+  $('nav-import-url').addEventListener('click', openUrlModal);
+  $('url-close-btn').addEventListener('click', () => $('url-overlay').classList.remove('open'));
+  $('url-overlay').addEventListener('click', (e) => { if (e.target === $('url-overlay')) $('url-overlay').classList.remove('open'); });
+  $('url-extract-btn').addEventListener('click', extractFromUrl);
+  $('url-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); extractFromUrl(); } });
+  $('url-signin-hint-btn').addEventListener('click', openUrlModal); // reminder to sign in first
 
   // Auth (delegated — works across the sign-in/sign-out swap)
   $('auth-area').addEventListener('click', handleAuthAreaClick);
@@ -523,7 +583,8 @@ function wire() {
   // Esc closes whatever is open
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if ($('schema-overlay').classList.contains('open')) $('schema-overlay').classList.remove('open');
+    if ($('url-overlay').classList.contains('open')) $('url-overlay').classList.remove('open');
+    else if ($('schema-overlay').classList.contains('open')) $('schema-overlay').classList.remove('open');
     else if ($('recipe-drawer').classList.contains('open')) closeSheet('drawer');
     else if ($('detail-modal').classList.contains('open')) closeSheet('detail');
   });
