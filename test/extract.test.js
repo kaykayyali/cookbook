@@ -88,6 +88,17 @@ test('isBlockedUrl rejects non-https, localhost, and private IPs', () => {
   assert.equal(isBlockedUrl('https://8.8.8.8'), false);
 });
 
+test('isBlockedUrl catches IPv4-mapped IPv6 private literals', () => {
+  // ::ffff:127.0.0.1 and ::ffff:10.0.0.1 embed private IPv4 quads and must be
+  // blocked; ::ffff:8.8.8.8 embeds a public IPv4 and must not be blocked.
+  assert.equal(isBlockedUrl('https://[::ffff:127.0.0.1]'), true);
+  assert.equal(isBlockedUrl('https://[::ffff:10.0.0.1]'), true);
+  assert.equal(isBlockedUrl('https://[::ffff:8.8.8.8]'), false);
+  // The native private IPv6 forms still work.
+  assert.equal(isBlockedUrl('https://[::1]'), true);
+  assert.equal(isBlockedUrl('https://[fe80::1]'), true);
+});
+
 test('cleanText strips scripts/nav and collapses whitespace', () => {
   const html = '<nav>menu</nav><p>Hello   world</p><script>alert(1)</script>';
   const t = cleanText(html);
@@ -152,4 +163,79 @@ test('handleExtract returns 200 with recipe on success', async () => {
   const res = await handleExtract({ url: 'https://example.com/t' }, {}, deps);
   assert.equal(res.status, 200);
   assert.equal(res.body.recipe.name, 'T');
+});
+
+// ── #1: repair pass must repair-in-place (send the failed output as context) ──
+test('extractRecipe repair pass re-sends the failed first output as context', async () => {
+  const firstOutput = '{ "name": "T", "recipeIngredient": ["a"]'; // broken JSON
+  const repairedOutput = JSON.stringify({ '@type': 'Recipe', name: 'T', recipeIngredient: ['a'], recipeInstructions: ['b'] });
+  const calls = [];
+  const deps = {
+    fetchPage: async () => ({ ok: true, status: 200, html: '<p>mix and bake</p>' }),
+    runLLM: async (messages) => {
+      calls.push(messages);
+      return calls.length === 1 ? firstOutput : repairedOutput;
+    },
+  };
+  const res = await extractRecipe('https://example.com/x', deps);
+  // The second runLLM call (repair) must include the failed first output as
+  // context — proving the model repairs the real JSON instead of inventing
+  // a new recipe from a context-free prompt.
+  assert.equal(calls.length, 2);
+  const repairContent = calls[1][0].content;
+  assert.ok(repairContent.includes(firstOutput), 'repair message must embed the failed first output');
+  // And the repaired JSON must yield the recipe.
+  assert.equal(res.ok, true);
+  assert.equal(res.recipe.name, 'T');
+});
+
+test('extractRecipe repair pass returning invalid JSON falls back to 422 (no fabrication)', async () => {
+  const deps = {
+    fetchPage: async () => ({ ok: true, status: 200, html: '<p>mix and bake</p>' }),
+    runLLM: async () => 'totally not a recipe',
+  };
+  const res = await extractRecipe('https://example.com/x', deps);
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+});
+
+// ── #5: partial recovery when JSON-LD has name but is missing required fields ──
+test('extractRecipe returns a partial when JSON-LD has a name but missing instructions and LLM fails', async () => {
+  // JSON-LD with name + ingredients but NO instructions → fails hasRequiredFields.
+  const html = '<script type="application/ld+json">{"@type":"Recipe","name":"HalfBaked","recipeIngredient":["flour","water"]}</script>';
+  const deps = {
+    fetchPage: async () => ({ ok: true, status: 200, html }),
+    runLLM: async () => 'sorry, no recipe here',
+  };
+  const res = await extractRecipe('https://example.com/half', deps);
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.ok(res.partial, 'partial must be present');
+  assert.equal(res.partial.name, 'HalfBaked');
+});
+
+test('extractRecipe omits partial when there is no JSON-LD name', async () => {
+  const deps = {
+    fetchPage: async () => ({ ok: true, status: 200, html: '<p>plain page, no recipe</p>' }),
+    runLLM: async () => 'no recipe',
+  };
+  const res = await extractRecipe('https://example.com/plain', deps);
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 422);
+  assert.equal(res.partial, undefined);
+});
+
+// ── #6: handleExtract missing_url branch (400) for empty/whitespace/non-string/absent url ──
+test('handleExtract returns 400 missing_url for empty/whitespace/non-string/absent url', async () => {
+  const cases = [
+    { url: '' },
+    { url: '   ' },
+    { url: 123 },
+    {},
+  ];
+  for (const body of cases) {
+    const res = await handleExtract(body, {}, {});
+    assert.equal(res.status, 400, `expected 400 for ${JSON.stringify(body)}`);
+    assert.equal(res.body.error, 'missing_url');
+  }
 });

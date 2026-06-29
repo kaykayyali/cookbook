@@ -117,6 +117,25 @@ const PRIVATE_IPV4 = /^(10\.|192\.168\.|169\.254\.|127\.|172\.(1[6-9]|2\d|3[01])
 const PRIVATE_IPV6 = /^(::1|fc|fd|fe80:)/i;
 
 /**
+ * Decode an IPv4-mapped IPv6 literal to its dotted-quad form, or null.
+ * The URL parser normalizes `::ffff:127.0.0.1` to the hex form
+ * `::ffff:7f00:1`, so we detect the `:ffff:` marker and convert the last
+ * two 16-bit hex groups back into the IPv4 dotted-quad.
+ * @param {string} host (brackets already stripped)
+ * @returns {string|null}
+ */
+function ipv4FromMappedV6(host) {
+  if (!/:ffff:/i.test(host)) return null;
+  const parts = host.split(':');
+  const last2 = parts.slice(-2);
+  if (last2.length !== 2) return null;
+  const g1 = parseInt(last2[0], 16);
+  const g2 = parseInt(last2[1], 16);
+  if (Number.isNaN(g1) || Number.isNaN(g2)) return null;
+  return `${(g1 >> 8) & 0xff}.${g1 & 0xff}.${(g2 >> 8) & 0xff}.${g2 & 0xff}`;
+}
+
+/**
  * Heuristic SSRF guard. Blocks non-https, localhost, .localhost, and IP
  * literals in private/loopback/link-local ranges. NOTE: this does not resolve
  * DNS, so it cannot prevent DNS-rebinding to a private IP — a v1 limitation;
@@ -129,10 +148,21 @@ export function isBlockedUrl(url) {
   let u;
   try { u = new URL(url); } catch { return true; }
   if (u.protocol !== 'https:') return true;
-  const host = u.hostname.toLowerCase();
+  // u.hostname wraps IPv6 literals in brackets ([::1]); strip them so the
+  // prefix regexes and :ffff: detection work on the bare address.
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host.endsWith('.localhost')) return true;
   if (PRIVATE_IPV4.test(host)) return true;
-  if (host.includes(':') && PRIVATE_IPV6.test(host)) return true;
+  if (host.includes(':')) {
+    // IPv6 literal. Catch the well-known private IPv6 prefixes (::1, fc/fd
+    // ULAs, fe80: link-local), then guard against IPv4-mapped IPv6 bypass
+    // (e.g. ::ffff:127.0.0.1, normalized to ::ffff:7f00:1): decode the
+    // embedded IPv4 and test it against the IPv4 private ranges so the
+    // guard's contract — block private IP literals in any form — holds.
+    if (PRIVATE_IPV6.test(host)) return true;
+    const mapped = ipv4FromMappedV6(host);
+    if (mapped && PRIVATE_IPV4.test(mapped)) return true;
+  }
   return false;
 }
 
@@ -173,8 +203,14 @@ export async function extractRecipe(url, deps) {
     return { ok: true, recipe: toSimpleRecipe(found) };
   }
 
+  // Partial recovery: if JSON-LD had a name but was missing required fields
+  // (e.g. had ingredients but no instructions), capture it as a partial so
+  // the frontend can pre-fill the drawer for manual completion instead of
+  // dropping the incomplete recipe entirely.
+  const partial = found && found.name ? toSimpleRecipe(found) : undefined;
+
   const text = cleanText(page.html || '');
-  if (!text) return { ok: false, status: 422, error: 'no_recipe' };
+  if (!text) return { ok: false, status: 422, error: 'no_recipe', partial };
 
   let output;
   try { output = await deps.runLLM(buildExtractionPrompt(text)); }
@@ -183,14 +219,16 @@ export async function extractRecipe(url, deps) {
   const parsed = parseLLMRecipe(output);
   if (parsed) return { ok: true, recipe: parsed };
 
-  // repair pass: ask the model to return strictly valid JSON
+  // Repair pass: re-send the FAILED first output so the model fixes its own
+  // (real) JSON rather than fabricating an unrelated recipe from nothing.
+  // `output` is the first LLM attempt already in scope here.
   let repaired;
-  try { repaired = await deps.runLLM([{ role: 'user', content: 'Return ONLY a valid schema.org/Recipe JSON object. No prose, no fences.' }]); }
+  try { repaired = await deps.runLLM([{ role: 'user', content: 'This is a schema.org/Recipe with JSON formatting errors. Return ONLY the corrected single JSON object — no prose, no code fences:\n\n' + output }]); }
   catch { /* fall through */ }
   const retry = parseLLMRecipe(repaired || '');
   if (retry) return { ok: true, recipe: retry };
 
-  return { ok: false, status: 422, error: 'no_recipe' };
+  return { ok: false, status: 422, error: 'no_recipe', partial };
 }
 
 /**

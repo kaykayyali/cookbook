@@ -2,7 +2,7 @@
 // extract.js — POST /api/extract: URL → schema.org/Recipe
 // Auth-gated by functions/api/_middleware.js (request.auth = { sub, email }).
 // ════════════════════════════════════════════════════════
-import { json } from '../_lib/http.js';
+import { json, misconfigured } from '../_lib/http.js';
 import { handleExtract } from '../_lib/extract.js';
 
 const AI_MODEL = '@cf/meta/llama-3.1-8b-instruct';
@@ -16,6 +16,14 @@ function rateLimited(email, perMin) {
   const now = Date.now();
   const b = rateBuckets.get(email);
   if (!b || now - b.windowStart > 60_000) {
+    // Opportunistic GC: when a fresh bucket is created for a caller, sweep the
+    // map and drop any entry whose 60s window has elapsed. Keeps the map
+    // bounded over time without iterating on every call.
+    if (rateBuckets.size > 0) {
+      for (const [k, v] of rateBuckets) {
+        if (now - v.windowStart > 60_000) rateBuckets.delete(k);
+      }
+    }
     rateBuckets.set(email, { windowStart: now, count: 1 });
     return false;
   }
@@ -45,15 +53,18 @@ function realDeps(env) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let received = 0;
-        let html = '';
+        // Accumulate decoded chunks in an array and join once at the end —
+        // string concatenation in the read loop is O(n^2) for ~2MB pages.
+        const chunks = [];
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
           received += value.byteLength;
           if (received > max) { ctrl.abort(); break; }
-          html += decoder.decode(value, { stream: true });
+          chunks.push(decoder.decode(value, { stream: true }));
         }
-        html += decoder.decode(); // flush
+        chunks.push(decoder.decode()); // flush any trailing bytes
+        const html = chunks.join('');
         return { ok: res.ok, status: res.status, html };
       } catch {
         return { ok: false, status: 502, html: '' };
@@ -82,9 +93,9 @@ export async function onRequestPost(context) {
     return json(401, { error: 'invalid_token' });
   }
 
-  // Guard the AI binding (mirrors auth.js's misconfigured pattern).
+  // Guard the AI binding (shared misconfigured() helper from http.js).
   if (!env.AI || typeof env.AI.run !== 'function') {
-    return json(500, { error: 'server_misconfigured', reason: 'ai_binding' });
+    return misconfigured('ai_binding');
   }
 
   const perMin = Number(env.EXTRACT_RATE_PER_MIN) || 10;

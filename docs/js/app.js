@@ -223,6 +223,10 @@ function openDrawer(id) {
 
 /** Open the drawer pre-filled with an unsaved recipe (no _id) for review. */
 function openDrawerPrefilled(recipe) {
+  // An extracted recipe is always a NEW recipe — strip any _id that
+  // parseImport/fromSchema minted so the drawer opens as "New Recipe" with
+  // editingId = null (no "Recipe updated" toast, no dateModified stamp).
+  if (recipe) delete recipe._id;
   fillDrawerFromRecipe(recipe);
   openSheet('drawer');
   setTimeout(() => $('f-name').focus(), 80);
@@ -292,6 +296,22 @@ function importRecipes(file) {
 }
 
 // ── Import from URL ────────────────────────────────────────
+// Restore body scroll only if nothing else (sheet or modal) is still open —
+// mirrors closeSheet's guard so one close handler doesn't unlock scroll
+// while the drawer/detail sheet remains open behind it.
+function restoreBodyScroll() {
+  if (!$('detail-modal').classList.contains('open') &&
+      !$('recipe-drawer').classList.contains('open') &&
+      !$('url-overlay').classList.contains('open')) {
+    document.body.style.overflow = '';
+  }
+}
+
+function closeUrlModal() {
+  $('url-overlay').classList.remove('open');
+  restoreBodyScroll();
+}
+
 function openUrlModal() {
   const signedOut = !getToken();
   $('url-signedout').style.display = signedOut ? '' : 'none';
@@ -299,6 +319,7 @@ function openUrlModal() {
   $('url-input').value = '';
   $('url-status').textContent = '';
   $('url-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
 }
 
 async function extractFromUrl() {
@@ -319,7 +340,7 @@ async function extractFromUrl() {
       if (data.partial) {
         const [recipe] = parseImport([data.partial]);
         if (recipe) {
-          $('url-overlay').classList.remove('open');
+          closeUrlModal();
           openDrawerPrefilled(recipe);
         }
       }
@@ -327,7 +348,7 @@ async function extractFromUrl() {
     }
     const [recipe] = parseImport([data.recipe]);
     if (!recipe) { $('url-status').textContent = 'no recipe found'; return; }
-    $('url-overlay').classList.remove('open');
+    closeUrlModal();
     openDrawerPrefilled(recipe);
     toast('Recipe extracted — review and save');
   } catch (e) {
@@ -379,11 +400,21 @@ function wire() {
   $('nav-import').addEventListener('click', () => $('import-file').click());
   $('nav-export').addEventListener('click', exportRecipes);
   $('nav-import-url').addEventListener('click', openUrlModal);
-  $('url-close-btn').addEventListener('click', () => $('url-overlay').classList.remove('open'));
-  $('url-overlay').addEventListener('click', (e) => { if (e.target === $('url-overlay')) $('url-overlay').classList.remove('open'); });
+  $('url-close-btn').addEventListener('click', closeUrlModal);
+  $('url-overlay').addEventListener('click', (e) => { if (e.target === $('url-overlay')) closeUrlModal(); });
   $('url-extract-btn').addEventListener('click', extractFromUrl);
   $('url-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); extractFromUrl(); } });
-  $('url-signin-hint-btn').addEventListener('click', openUrlModal); // reminder to sign in first
+  // The sign-in hint button (shown in the URL modal when signed out) used to
+  // just re-render the same signed-out modal — a dead end. Wire it to close
+  // the URL modal and trigger the REAL Google sign-in by clicking the same
+  // GIS-rendered button that renderAuth() places in the auth area. This
+  // reuses the existing sign-in entrypoint instead of duplicating GIS init.
+  $('url-signin-hint-btn').addEventListener('click', () => {
+    closeUrlModal();
+    const host = $('g-signin-btn');
+    const clickable = host?.querySelector('[role="button"], button') || host?.firstElementChild;
+    if (clickable) clickable.click();
+  });
 
   // Auth (delegated — works across the sign-in/sign-out swap)
   $('auth-area').addEventListener('click', handleAuthAreaClick);
@@ -583,7 +614,7 @@ function wire() {
   // Esc closes whatever is open
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if ($('url-overlay').classList.contains('open')) $('url-overlay').classList.remove('open');
+    if ($('url-overlay').classList.contains('open')) closeUrlModal();
     else if ($('schema-overlay').classList.contains('open')) $('schema-overlay').classList.remove('open');
     else if ($('recipe-drawer').classList.contains('open')) closeSheet('drawer');
     else if ($('detail-modal').classList.contains('open')) closeSheet('detail');
