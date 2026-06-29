@@ -97,14 +97,8 @@ function renderAuth() {
     area.innerHTML =
       `<div class="auth-signed-in">
          <span class="auth-email">Signed in as ${esc(email)}</span>
-         <button class="auth-signout" id="auth-signout-btn">Sign out</button>
+         <button class="auth-signout" data-action="signout">Sign out</button>
        </div>`;
-    $('auth-signout-btn').addEventListener('click', () => {
-      clearAuth();
-      renderAuth();
-      renderRecipes();
-      toast('Signed out');
-    });
   } else {
     area.innerHTML = `<div id="g-signin-btn"></div>`;
     initGoogleSignIn({
@@ -114,6 +108,17 @@ function renderAuth() {
       onError: (msg) => toast(`Sign-in failed: ${msg}`),
     });
   }
+}
+
+// Delegated handler: sign-out click anywhere inside #auth-area. The signed-in
+// branch re-renders the area after clearAuth(); the delegated listener keeps
+// working without re-binding.
+function handleAuthAreaClick(e) {
+  if (!e.target.closest('[data-action="signout"]')) return;
+  clearAuth().then(() => {
+    renderAuth();
+    toast('Signed out');
+  });
 }
 
 // ── Detail sheet ───────────────────────────────────────────
@@ -319,6 +324,9 @@ function wire() {
   );
   $('nav-import').addEventListener('click', () => $('import-file').click());
   $('nav-export').addEventListener('click', exportRecipes);
+
+  // Auth (delegated — works across the sign-in/sign-out swap)
+  $('auth-area').addEventListener('click', handleAuthAreaClick);
 
   // New recipe
   $('new-recipe-btn').addEventListener('click', () => openDrawer(null));
