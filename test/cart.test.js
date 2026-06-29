@@ -8,6 +8,9 @@ import {
   removeFromCart,
   clearRecipeFromCart,
   clearCart,
+  parseQty,
+  groupCart,
+  sumIfHomogeneous,
 } from '../docs/js/lib/cart.js';
 
 const RECIPES = {
@@ -123,4 +126,50 @@ test('markBought does not mutate its inputs', () => {
   markBought(cart, 'r1', '6 large eggs', pantry);
   assert.deepEqual(cart, cartBefore);
   assert.deepEqual(pantry, pantryBefore);
+});
+test('parseQty handles integers, decimals, fractions, and units', () => {
+  assert.deepEqual(parseQty('2'), { n: 2, unit: '' });
+  assert.deepEqual(parseQty('3'), { n: 3, unit: '' });
+  assert.deepEqual(parseQty('2 tablespoons'), { n: 2, unit: 'tablespoons' });
+  assert.deepEqual(parseQty('1/2 cup'), { n: 0.5, unit: 'cup' });
+  assert.deepEqual(parseQty('½'), { n: 0.5, unit: '' });
+  assert.deepEqual(parseQty('6 large'), { n: 6, unit: 'large' });
+});
+
+test('parseQty returns null for empty or unparseable', () => {
+  assert.equal(parseQty(''), null);
+  assert.equal(parseQty('to taste'), null);
+});
+
+test('groupCart groups by name preserving insertion order', () => {
+  const cart = addToCart([], RECIPES.shakshuka, [], 'all').cart;
+  const g = groupCart(cart);
+  assert.ok(g instanceof Map);
+  // first-added name comes first
+  const names = [...g.keys()];
+  assert.equal(names[0], 'olive oil');
+  assert.ok(g.has('eggs'));
+});
+
+test('sumIfHomogeneous sums matching-unit integer totals', () => {
+  // 2 eggs + 3 eggs -> both unit "" -> total "5"
+  const items = [
+    { name: 'eggs', qtyText: '2', recipeId: 'r1', recipeName: 'Shakshuka' },
+    { name: 'eggs', qtyText: '3', recipeId: 'r2', recipeName: 'Alfredo Sauce' },
+  ];
+  assert.deepEqual(sumIfHomogeneous(items), { total: '5', unit: '' });
+});
+
+test('sumIfHomogeneous returns null on unit mismatch or unquantified', () => {
+  const mismatch = [
+    { name: 'eggs', qtyText: '6 large', recipeId: 'r1', recipeName: 'Shakshuka' },
+    { name: 'eggs', qtyText: '3', recipeId: 'r2', recipeName: 'Alfredo Sauce' },
+  ];
+  assert.deepEqual(sumIfHomogeneous(mismatch), { total: null, unit: null });
+
+  const unquantified = [
+    { name: 'salt', qtyText: '', recipeId: 'r1', recipeName: 'Shakshuka' },
+    { name: 'salt', qtyText: '1 tsp', recipeId: 'r2', recipeName: 'Alfredo Sauce' },
+  ];
+  assert.deepEqual(sumIfHomogeneous(unquantified), { total: null, unit: null });
 });
