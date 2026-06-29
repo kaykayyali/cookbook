@@ -580,3 +580,13 @@
     @media (max-width: 380px) {
       .card-actions .btn-icon:first-child { display: none; } /* drop edit on tiny screens; use detail sheet */
     }
+
+/* ── Shopping cart ── */
+.cart-section { margin-top: 1.5rem; }
+.cart-grid { display: flex; flex-direction: column; gap: .5rem; }
+.cart-row { display: flex; flex-wrap: wrap; gap: .35rem; align-items: baseline; padding: .5rem .6rem; background: var(--surface, #26221e); border-radius: 8px; font-size: .9rem; }
+.cart-name { font-weight: 600; }
+.cart-total { color: var(--ink-light, #a8a29e); font-size: .8rem; }
+.cart-contrib { cursor: pointer; padding: .15rem .35rem; border-radius: 6px; border: 1px solid var(--border, #3a3531); }
+.cart-contrib:hover { background: var(--accent, #b91c1c); color: #fff; border-color: transparent; }
+.cart-empty { color: var(--ink-light, #a8a29e); font-size: .85rem; }
