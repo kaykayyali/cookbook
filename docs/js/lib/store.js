@@ -36,7 +36,8 @@ export function load() {
   }
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.cart);
-    state.cart = Array.isArray(raw ? JSON.parse(raw) : []) ? JSON.parse(raw) : [];
+    const parsed = raw ? JSON.parse(raw) : [];
+    state.cart = Array.isArray(parsed) ? parsed : [];
   } catch {
     state.cart = [];
   }

@@ -141,6 +141,11 @@ test('parseQty returns null for empty or unparseable', () => {
   assert.equal(parseQty('to taste'), null);
 });
 
+test('parseQty parses decimals and unicode-fraction-with-unit', () => {
+  assert.deepEqual(parseQty('1.5'), { n: 1.5, unit: '' });
+  assert.deepEqual(parseQty('½ cup'), { n: 0.5, unit: 'cup' });
+});
+
 test('groupCart groups by name preserving insertion order', () => {
   const cart = addToCart([], RECIPES.shakshuka, [], 'all').cart;
   const g = groupCart(cart);
@@ -172,4 +177,13 @@ test('sumIfHomogeneous returns null on unit mismatch or unquantified', () => {
     { name: 'salt', qtyText: '1 tsp', recipeId: 'r2', recipeName: 'Alfredo Sauce' },
   ];
   assert.deepEqual(sumIfHomogeneous(unquantified), { total: null, unit: null });
+});
+
+test('sumIfHomogeneous returns null when the total is not a whole number', () => {
+  // ½ + ¼ = 0.75 — parses, units match (""), but total is not whole.
+  const items = [
+    { name: 'milk', qtyText: '½', recipeId: 'r1', recipeName: 'A' },
+    { name: 'milk', qtyText: '¼', recipeId: 'r2', recipeName: 'B' },
+  ];
+  assert.deepEqual(sumIfHomogeneous(items), { total: null, unit: null });
 });

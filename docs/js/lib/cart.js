@@ -81,6 +81,8 @@ export function clearCart() {
  * @param {string} line
  * @param {string[]} pantry
  * @returns {{cart:object[], pantry:string[], name:string, removed:boolean}}
+ *   `name` is the matched item's base name when `removed` is true; it is `''`
+ *   (empty string) when `removed` is false (no matching contribution found).
  */
 export function markBought(cart, recipeId, line, pantry) {
   const item = cart.find((c) => c.recipeId === recipeId && c.line === line);
