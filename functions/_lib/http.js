@@ -14,3 +14,14 @@ export function json(status, body) {
     headers: { 'content-type': 'application/json' },
   });
 }
+
+/**
+ * 500 server-misconfigured envelope. `reason` distinguishes which binding
+ * is missing (e.g. 'ai_binding', 'google_client_id', 'session_secret') so
+ * operators can tell the states apart. Shared by auth.js and extract.js.
+ * @param {string} reason
+ * @returns {Response}
+ */
+export function misconfigured(reason) {
+  return json(500, { error: 'server_misconfigured', reason });
+}

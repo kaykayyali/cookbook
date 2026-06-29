@@ -6,7 +6,7 @@ import { handleAuth } from '../_lib/handler.js';
 import { verifyIdToken, makeJwksResolver } from '../_lib/google.js';
 import { signSession } from '../_lib/session.js';
 import { isAllowed } from '../_lib/whitelist.js';
-import { json } from '../_lib/http.js';
+import { json, misconfigured } from '../_lib/http.js';
 
 // Production JWKS resolver — a cached JWKS-backed getKey. Built once per
 // isolate. jose handles `kid` lookup and JWKS refresh internally.
@@ -17,12 +17,6 @@ const deps = {
   signSession,
   isAllowed,
 };
-
-function misconfigured(reason) {
-  // Distinguishing codes so operators can tell which binding is missing
-  // (the previous generic 'server_misconfigured' conflated 4 distinct states).
-  return json(500, { error: 'server_misconfigured', reason });
-}
 
 export async function onRequestPost(context) {
   const { request, env } = context;

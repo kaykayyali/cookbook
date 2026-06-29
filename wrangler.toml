@@ -15,6 +15,15 @@ compatibility_date = "2025-09-01"
 GOOGLE_CLIENT_ID = "143579664794-tv48jb659iadrqqfvb13621qkdfas03k.apps.googleusercontent.com"
 ALLOWED_EMAILS = "kaykayyali@gmail.com,gloriakayyali@gmail.com"
 SESSION_TTL = "604800"
+EXTRACT_MAX_BYTES = "2000000"
+EXTRACT_TIMEOUT_MS = "15000"
+EXTRACT_RATE_PER_MIN = "10"
+
+# Workers AI binding — accessible in Pages Functions as env.AI. Configured
+# here (not the dashboard) because git-connected deploys apply wrangler.toml
+# bindings, same as [vars]. Limited to one AI binding per Pages project.
+[ai]
+binding = "AI"
 
 # Required secret (set via `wrangler pages secret put`, NEVER committed):
 #   SESSION_SECRET — >=32 char random string, e.g. `openssl rand -hex 32`
