@@ -8,7 +8,7 @@
     "build": "node scripts/build.js",
     "build:watch": "node scripts/build.js --watch",
     "dev": "npm run build && wrangler pages dev docs",
-    "test:e2e": "playwright test"
+    "test:e2e": "node --test test/e2e-smoke.test.js"
   },
   "keywords": [
     "recipe",
