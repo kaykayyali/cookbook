@@ -15,10 +15,13 @@
     // Pre-paint theme application — runs before <body> is parsed so dark mode
     // has no flash of light theme. Mirrors docs/js/lib/theme.js (which is too
     // late: modules are deferred by default and would paint first).
+    // Reads through STORAGE_KEYS.theme; the key was bumped to cb_theme_v2
+    // (was cb_theme) when the 5-theme picker shipped, so existing dark-mode
+    // users fell back to OS auto on first load after that deploy.
     (function () {
       try {
-        var v = localStorage.getItem('cb_theme');
-        if (v !== 'light' && v !== 'dark') return;
+        var v = localStorage.getItem('cb_theme_v2');
+        if (v !== 'light' && v !== 'dark' && v !== 'sepia' && v !== 'forest' && v !== 'ocean') return;
         document.documentElement.setAttribute('data-theme', v);
       } catch (e) { /* private mode etc. — fall through to OS default */ }
     })();

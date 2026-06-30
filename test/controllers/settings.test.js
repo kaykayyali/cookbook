@@ -249,3 +249,70 @@ test('clicking a swatch calls theme.set + theme.apply + toggles aria-checked', (
   assert.equal(setName, 'sepia');
   assert.equal(applied, 'sepia');
 });
+
+test('keyboard nav: arrow keys move focus, Enter activates', () => {
+  if (!mod.initSettings) return;
+  const { document, elements } = makePickerDom();
+  let applied = null;
+  const ctrl = mod.initSettings({
+    document,
+    getStoredTheme: () => 'light',
+    theme: {
+      getStored: () => 'light',
+      set: () => {},
+      apply: (n) => { applied = n; },
+    },
+  });
+  ctrl.renderThemePicker();
+  const zone = elements['settings-theme-zone'];
+  const keyListeners = zone.listeners.keydown || [];
+  assert.ok(keyListeners.length > 0, 'picker should have a keydown listener');
+
+  // Build a fake radiogroup with 5 swatches, each with a .focus() and a
+  // .click() method that the keyboard handler can call.
+  const swatches = ['light', 'dark', 'sepia', 'forest', 'ocean'].map((name) => {
+    const el = {
+      dataset: { theme: name },
+      focus() { this.focused = true; },
+      click() { this.clicked = true; },
+      closest: () => null,
+    };
+    return el;
+  });
+  // Group with a querySelectorAll that returns all 5.
+  const group = {
+    querySelectorAll: () => swatches,
+    closest: () => null,
+  };
+
+  // Right-arrow on the light swatch should focus dark.
+  const fakeEvent = {
+    key: 'ArrowRight',
+    target: swatches[0],
+    preventDefault() {},
+  };
+  // Patch swatches[0].closest so the handler can find the group and self.
+  swatches[0].closest = (sel) => {
+    if (sel === '[role="radiogroup"]') return group;
+    if (sel === '.theme-swatch') return swatches[0];
+    return null;
+  };
+  for (const fn of keyListeners) fn(fakeEvent);
+  assert.equal(swatches[1].focused, true, 'ArrowRight from light should focus dark');
+
+  // Enter on the sepia swatch should call .click().
+  const enterEvent = {
+    key: 'Enter',
+    target: swatches[2],
+    preventDefault() {},
+  };
+  // Patch swatches[2].closest similarly so handleThemeKey's .closest('.theme-swatch')
+  // returns swatches[2] (so indexOf can find it).
+  swatches[2].closest = (sel) => {
+    if (sel === '[role="radiogroup"]') return group;
+    if (sel === '.theme-swatch') return swatches[2];
+    return null;
+  };
+  for (const fn of keyListeners) fn(enterEvent);
+  assert.equal(swatches[2].clicked, true, 'Enter on focused swatch should call .click()');
+});

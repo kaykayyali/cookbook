@@ -51,3 +51,20 @@ for (const name of NEW_THEMES) {
     assert.deepEqual(missing, [], `${name} block missing token(s): ${missing.join(', ')}`);
   });
 }
+
+test('all 5 theme blocks (light/dark/sepia/forest/ocean) define the same token set', () => {
+  const src = readTokens();
+  const ALL_THEMES = ['light', 'dark', 'sepia', 'forest', 'ocean'];
+  // Capture the token count from the first theme as the canonical count.
+  const counts = {};
+  for (const name of ALL_THEMES) {
+    const re = new RegExp(`:root\\[data-theme=(?:"${name}"|${name})\\]\\s*\\{([^}]*)\\}`);
+    const block = src.match(re);
+    assert.ok(block, `block for ${name} not found`);
+    const defined = REQUIRED_TOKENS.filter((tok) => block[1].includes(`${tok}:`));
+    counts[name] = defined.length;
+  }
+  const unique = [...new Set(Object.values(counts))];
+  assert.equal(unique.length, 1,
+    `all 5 themes should define the same number of tokens; got ${JSON.stringify(counts)}`);
+});
