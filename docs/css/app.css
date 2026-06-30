@@ -541,18 +541,26 @@
     padding-top: 4px;
   }
 
-  .detail-nutrition { margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--color-border); }
-  /* Grid auto-fit guarantees the 4 cells share a single row when there's
-     room, with each cell claiming an equal 1fr. flex-wrap was unreliable
-     here — a long value (e.g. "650 kcal") could push a single cell to
-     occupy its own row. */
-  .nutrition-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); }
-  .nutrition-cell {
+  .detail-nutrition {
+    flex-shrink: 0;
+    padding: 20px 32px;
+    border-top: 1px solid var(--color-border);
     background: var(--color-bg);
+  }
+  .detail-nutrition-inner {
+    display: grid;
+    grid-template-columns: minmax(160px, max-content) 1fr;
+    align-items: center;
+    gap: 24px;
+  }
+  /* Spans full modal width as a single row of 4 equal cells. */
+  .nutrition-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, 1fr); }
+  .nutrition-cell {
+    background: var(--color-bg-elevated);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     padding: 12px 14px;
-    min-width: 0;          /* lets grid track shrink below content */
+    min-width: 0;
     text-align: center;
   }
   .nutrition-cell .k {
@@ -887,6 +895,7 @@
 
     .detail-modal { left: 0; }
     .detail-body { grid-template-columns: 1fr; }
+    .detail-nutrition-inner { grid-template-columns: 1fr; gap: 14px; }
     .nutrition-grid { grid-template-columns: repeat(2, 1fr); }  /* 2x2 on phone */
     .detail-ingredients {
       border-right: none;
