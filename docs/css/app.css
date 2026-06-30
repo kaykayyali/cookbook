@@ -541,12 +541,11 @@
     padding-top: 4px;
   }
 
-  /* Override DS primitive: .detail-nutrition is a block container (label
-     on top, grid below) — the DS version is `display: grid; repeat(auto-fit)`,
-     which would lay out the label and the grid as two columns side-by-side. */
-  .detail-nutrition { display: block; margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--color-border); }
+  /* Nutrition — full-width row of 4 cells, sits between .detail-body
+     and .detail-footer so it spans the whole modal (not the ~340px
+     right column of .detail-body). */
+  .detail-nutrition { padding: 24px 32px 28px; border-top: 1px solid var(--color-border); background: var(--color-bg-elevated); flex-shrink: 0; }
   .detail-nutrition .section-label { margin-bottom: 14px; }
-  /* Single row of 4 equal cells inside the steps column. */
   .nutrition-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, 1fr); }
   .nutrition-cell {
     background: var(--color-bg-elevated);
@@ -888,7 +887,6 @@
 
     .detail-modal { left: 0; }
     .detail-body { grid-template-columns: 1fr; }
-    .detail-nutrition-inner { grid-template-columns: 1fr; gap: 14px; }
     .nutrition-grid { grid-template-columns: repeat(2, 1fr); }  /* 2x2 on phone */
     .detail-ingredients {
       border-right: none;
