@@ -4,7 +4,7 @@
 
 import { STORAGE_KEYS } from './constants.js';
 
-const VALID = new Set(['light', 'dark']);
+const VALID = new Set(['light', 'dark', 'sepia', 'forest', 'ocean']);
 
 /**
  * Build a theme helper bound to a storage + document pair. Testable without
