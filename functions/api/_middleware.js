@@ -24,8 +24,9 @@ export async function onRequest(context) {
   if (!auth.ok) return json(auth.status, auth.body);
   // Propagate verified claims to downstream handlers via `context.data` —
   // the documented Pages Functions middleware→handler channel. Do NOT use
-  // `request.auth` (a Request expando property): expando properties do not
-  // survive next() in the Workers runtime, so handlers would see undefined.
+  // `request.auth`: arbitrary (expando) properties on Request do not
+  // reliably survive next() in the Workers runtime, so the route handler
+  // would see `undefined` and reject every authenticated request.
   if (!context.data) context.data = {};
   context.data.auth = auth.claims;
   return next();

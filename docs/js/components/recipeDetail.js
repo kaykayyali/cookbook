@@ -90,7 +90,7 @@ export function nutritionHTML(nutrition) {
     ['Carbs', n.carbohydrateContent],
   ].filter((c) => c[1]);
   if (!cells.length) return null;
-  return `<div class="detail-nutrition">${cells.map(
+  return cells.map(
     ([k, v]) => `<div class="nutrition-cell"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`
-  ).join('')}</div>`;
+  ).join('');
 }
