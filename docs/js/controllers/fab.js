@@ -91,5 +91,18 @@ export function initFab({
     }, 50);
   }
 
+  function wireFab() {
+    const btn = document.getElementById('fab-new');
+    if (btn) btn.addEventListener('click', toggle);
+    const dd = document.getElementById('fab-dropdown');
+    if (dd) {
+      dd.addEventListener('click', (e) => {
+        const item = e.target.closest('[data-fab-action]');
+        if (item) handleAction(item.dataset.fabAction, e);
+      });
+    }
+  }
+
+  wireFab();
   return { toggle, open, close, handleAction };
 }

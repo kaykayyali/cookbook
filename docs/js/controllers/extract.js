@@ -86,6 +86,31 @@ export function initExtract({
     }
   }
 
+  function wireExtract() {
+    const closeBtn = document.getElementById('url-close-btn');
+    if (closeBtn) closeBtn.addEventListener('click', close);
+    const overlay = document.getElementById('url-overlay');
+    if (overlay) overlay.addEventListener('click', (e) => { if (e.target.id === 'url-overlay') close(); });
+    const extractBtn = document.getElementById('url-extract-btn');
+    if (extractBtn) extractBtn.addEventListener('click', () => submit());
+    const input = document.getElementById('url-input');
+    if (input) {
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); submit(); }
+      });
+    }
+    const hintBtn = document.getElementById('url-signin-hint-btn');
+    if (hintBtn) {
+      hintBtn.addEventListener('click', () => {
+        close();
+        const host = document.getElementById('g-signin-btn');
+        const clickable = host?.querySelector?.('[role="button"], button') || host?.firstElementChild;
+        if (clickable) clickable.click();
+      });
+    }
+  }
+
+  wireExtract();
   return { open, close, submit };
 }
 

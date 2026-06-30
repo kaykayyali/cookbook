@@ -4,29 +4,33 @@
 
 import { loadAuth, clearAuth, initGoogleSignIn } from '../lib/auth.js';
 import { toast } from '../lib/dom.js';
-import { esc } from '../lib/format.js';
+import { esc, pluralize } from '../lib/format.js';
+import { toSchema, parseImport } from '../lib/schema.js';
+import { save as persist } from '../lib/store.js';
 
 /**
- * Settings panel controller. Renders the auth zone (sign-in button when
- * signed out, email + sign-out when signed in), wires the import/export
- * buttons, and handles delegated sign-out clicks in the auth zone.
+ * Settings panel controller.
  *
  * @param {object} deps
+ * @param {object} deps.state
  * @param {Document} [deps.document]
- * @param {() => {token: ?string, email: ?string}} [deps.loadAuth]
+ * @param {() => {token, email}} [deps.loadAuth]
  * @param {() => Promise<void>} [deps.clearAuth]
- * @param {(opts: object) => void} [deps.initGoogleSignIn]
- * @param {(msg: string) => void} [deps.toast]
+ * @param {(opts) => void} [deps.initGoogleSignIn]
+ * @param {(msg) => void} [deps.toast]
  * @param {() => void} [deps.exportRecipes]
- * @returns {{ renderAuth: () => void, renderSettings: () => void, handleAuthClick: (e: Event) => Promise<void> }}
+ * @param {() => void} [deps.onChange] - re-render after import
+ * @returns {{ renderAuth, renderSettings, handleAuthClick }}
  */
 export function initSettings({
+  state,
   document = globalThis.document,
   loadAuth: loadAuthDep = loadAuth,
   clearAuth: clearAuthDep = clearAuth,
   initGoogleSignIn: initGoogleSignInDep = initGoogleSignIn,
   toast: toastDep = toast,
-  exportRecipes = null,
+  exportRecipes: exportRecipesDep = defaultExportRecipes,
+  onChange = null,
 } = {}) {
   let settingsRendered = false;
 
@@ -58,14 +62,44 @@ export function initSettings({
     toastDep('Signed out');
   }
 
+  function importRecipes(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const imported = parseImport(JSON.parse(e.target.result));
+        if (!imported.length) { toastDep('No valid recipes found in file'); return; }
+        state.recipes = [...imported, ...state.recipes];
+        persist();
+        if (onChange) onChange();
+        toastDep(`Imported ${pluralize(imported.length, 'recipe')}`);
+      } catch { toastDep('Could not read file — expected JSON-LD'); }
+    };
+    reader.readAsText(file);
+  }
+
   function renderSettings() {
     if (settingsRendered) return;
     const importBtn = document.getElementById('settings-import-btn');
     if (importBtn) importBtn.addEventListener('click', () => document.getElementById('import-file')?.click());
     const exportBtn = document.getElementById('settings-export-btn');
-    if (exportBtn && exportRecipes) exportBtn.addEventListener('click', exportRecipes);
+    if (exportBtn) exportBtn.addEventListener('click', exportRecipesDep);
+    const fileInput = document.getElementById('import-file');
+    if (fileInput) {
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files[0]) importRecipes(e.target.files[0]);
+        e.target.value = '';
+      });
+    }
+    const authZone = document.getElementById('settings-auth-zone');
+    if (authZone) authZone.addEventListener('click', handleAuthClick);
     settingsRendered = true;
   }
 
-  return { renderAuth, renderSettings, handleAuthClick };
+  return { renderAuth, renderSettings, handleAuthClick, _importRecipes: importRecipes };
+}
+
+function defaultExportRecipes() {
+  // Lazy reference — settings is initialised with the bound fn via dep, so
+  // this only fires if exportRecipes is never overridden (tests).
+  throw new Error('settings: exportRecipes dep not provided');
 }

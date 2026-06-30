@@ -104,7 +104,7 @@ test('clicking a category chip sets state.categoryFilter to chip.dataset.cat', (
   const document2 = {
     getElementById: (sel) => {
       if (sel === 'category-chips') {
-        return { querySelectorAll: () => fakeChips };
+        return { querySelectorAll: () => fakeChips, addEventListener: () => {} };
       }
       return makeDom().elements[sel] || null;
     },

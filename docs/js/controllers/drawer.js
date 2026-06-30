@@ -13,7 +13,6 @@ import {
   collectForm,
   validateRecipe,
 } from '../components/recipeForm.js';
-import { pluralize } from '../lib/format.js';
 
 /**
  * Drawer (create/edit) controller. Owns the recipe-drawer DOM, form state,
@@ -21,13 +20,20 @@ import { pluralize } from '../lib/format.js';
  * components/recipeForm.js.
  *
  * @param {object} deps
- * @param {object} deps.state - { recipes, editingId, pendingOpenAfterSave, detailId? }
+ * @param {object} deps.state
  * @param {Document} [deps.document]
- * @param {() => void} [deps.onSaved] - fires after a successful save (so recipes panel can re-render)
- * @param {(id: string) => void} [deps.onOpenDetail] - fires when saveRecipe opens the detail modal (extract flow)
- * @returns {{ open: (id: string|null) => void, openPrefilled: (recipe: object) => void, close: () => void, save: () => object }}
+ * @param {() => void} [deps.onSaved]
+ * @param {(id: string) => void} [deps.onOpenDetail]
+ * @param {() => void} [deps.onSchema] - fires when user clicks "View schema" in the drawer
+ * @returns {{ open, openPrefilled, close, save }}
  */
-export function initDrawer({ state, document = globalThis.document, onSaved = null, onOpenDetail = null }) {
+export function initDrawer({
+  state,
+  document = globalThis.document,
+  onSaved = null,
+  onOpenDetail = null,
+  onSchema = null,
+}) {
   function openSheet() {
     const drawer = document.getElementById('recipe-drawer');
     const overlay = document.getElementById('drawer-overlay');
@@ -101,6 +107,71 @@ export function initDrawer({ state, document = globalThis.document, onSaved = nu
     return { ok: true, recipe: r, isNew };
   }
 
+  function wireDrawer() {
+    const closeBtn = document.getElementById('drawer-close-btn');
+    if (closeBtn) closeBtn.addEventListener('click', closeSheet);
+    const cancelBtn = document.getElementById('drawer-cancel-btn');
+    if (cancelBtn) cancelBtn.addEventListener('click', closeSheet);
+    const overlay = document.getElementById('drawer-overlay');
+    if (overlay) overlay.addEventListener('click', closeSheet);
+    const saveBtn = document.getElementById('save-recipe-btn');
+    if (saveBtn) saveBtn.addEventListener('click', () => save());
+    const schemaBtn = document.getElementById('view-schema-btn');
+    if (schemaBtn) schemaBtn.addEventListener('click', () => onSchema && onSchema(null));
+
+    const ingEditor = document.getElementById('ing-editor');
+    if (ingEditor) {
+      ingEditor.addEventListener('input', (e) => {
+        if (e.target.matches('input')) formBuffers.ingredients[+e.target.dataset.index] = e.target.value;
+      });
+      ingEditor.addEventListener('click', (e) => {
+        const btn = e.target.closest('.row-remove');
+        if (!btn) return;
+        formBuffers.ingredients.splice(+btn.dataset.index, 1);
+        rebuildIngEditor();
+      });
+    }
+    const ingAdd = document.getElementById('ing-add-btn');
+    if (ingAdd) {
+      ingAdd.addEventListener('click', () => {
+        const inp = document.getElementById('ing-new-input');
+        if (!inp.value.trim()) return;
+        formBuffers.ingredients.push(inp.value.trim());
+        inp.value = '';
+        rebuildIngEditor();
+        inp.focus();
+      });
+    }
+    const ingNew = document.getElementById('ing-new-input');
+    if (ingNew) {
+      ingNew.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); document.getElementById('ing-add-btn')?.click(); }
+      });
+    }
+    const stepsList = document.getElementById('steps-list');
+    if (stepsList) {
+      stepsList.addEventListener('input', (e) => {
+        if (e.target.matches('textarea')) formBuffers.steps[+e.target.dataset.index] = e.target.value;
+      });
+      stepsList.addEventListener('click', (e) => {
+        const btn = e.target.closest('.row-remove');
+        if (!btn) return;
+        formBuffers.steps.splice(+btn.dataset.index, 1);
+        rebuildStepsList();
+      });
+    }
+    const stepAdd = document.getElementById('step-add-btn');
+    if (stepAdd) {
+      stepAdd.addEventListener('click', () => {
+        formBuffers.steps.push('');
+        rebuildStepsList();
+        const tas = document.getElementById('steps-list').querySelectorAll('textarea');
+        tas[tas.length - 1]?.focus();
+      });
+    }
+  }
+
+  wireDrawer();
   return { open, openPrefilled, close: closeSheet, save };
 }
 

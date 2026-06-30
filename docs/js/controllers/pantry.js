@@ -3,18 +3,19 @@
 // ════════════════════════════════════════════════════════
 
 import { esc } from '../lib/format.js';
-import { addToPantry, removeFromPantry, normalizePantry } from '../lib/pantry.js';
+import { addToPantry, removeFromPantry } from '../lib/pantry.js';
+import { save as persist } from '../lib/store.js';
+import { toast } from '../lib/dom.js';
 
 /**
  * Pantry controller. Owns the pantry grid, add/remove handlers, and the
- * suggestions datalist refresh. Pure logic delegates to lib/pantry.js;
- * this file is just DOM + state wiring.
+ * suggestions datalist refresh.
  *
  * @param {object} deps
- * @param {object} deps.state - { pantry: string[], recipes: object[] }
+ * @param {object} deps.state - { pantry, recipes }
  * @param {Document} [deps.document]
- * @param {(pantry: string[]) => void} [deps.onChange] - called after add/remove so other panels can re-render
- * @returns {{ render: () => void, add: (raw: string) => string|null, remove: (item: string) => void }}
+ * @param {() => void} [deps.onChange] - called after add/remove
+ * @returns {{ render: () => void, add: (raw) => string|null, remove: (item) => void }}
  */
 export function initPantry({ state, document = globalThis.document, onChange = null }) {
   function render() {
@@ -36,16 +37,50 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     if (!name) return null;
     if (!added) return null;
     state.pantry = pantry;
-    if (onChange) onChange(state.pantry);
+    persist();
+    render();
+    if (onChange) onChange();
+    toast(`Added "${name}"`);
     return name;
+  }
+
+  function addFromInput() {
+    const inp = document.getElementById('pantry-input');
+    if (!inp) return;
+    add(inp.value);
+    inp.value = '';
+    inp.focus();
   }
 
   function remove(item) {
     state.pantry = removeFromPantry(state.pantry, item);
-    if (onChange) onChange(state.pantry);
+    persist();
+    render();
+    if (onChange) onChange();
+    toast(`Removed "${item}"`);
   }
 
-  return { render, add, remove };
+  function wireGrid() {
+    const grid = document.getElementById('pantry-grid');
+    if (grid) {
+      grid.addEventListener('click', (e) => {
+        const btn = e.target.closest('.pantry-remove');
+        if (!btn) return;
+        remove(btn.dataset.item);
+      });
+    }
+    const addBtn = document.getElementById('pantry-add-btn');
+    if (addBtn) addBtn.addEventListener('click', addFromInput);
+    const inp = document.getElementById('pantry-input');
+    if (inp) {
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); addFromInput(); }
+      });
+    }
+  }
+
+  wireGrid();
+  return { render, add, addFromInput, remove };
 }
 
 function pantryTagHTML(item) {

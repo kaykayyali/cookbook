@@ -2,6 +2,11 @@
 // controllers/detail.js — recipe detail sheet open/close + render
 // ════════════════════════════════════════════════════════
 
+import { toast } from '../lib/dom.js';
+import { save as persist } from '../lib/store.js';
+import { togglePantry } from '../lib/pantry.js';
+import { addToCart } from '../lib/cart.js';
+import { pluralize } from '../lib/format.js';
 import {
   ingredientListHTML,
   pantryNoteHTML,
@@ -11,16 +16,23 @@ import {
 } from '../components/recipeDetail.js';
 
 /**
- * Detail modal controller. Opens the recipe detail sheet, renders the
- * recipe's ingredients / steps / nutrition / meta. Pure rendering is in
- * components/recipeDetail.js; this file is DOM + state wiring.
+ * Detail modal controller.
  *
  * @param {object} deps
- * @param {object} deps.state - { recipes, pantry, detailId }
+ * @param {object} deps.state
  * @param {Document} [deps.document]
- * @returns {{ open: (id: string) => void, close: () => void }}
+ * @param {(id: string) => void} [deps.onEdit] - fires when user clicks "Edit"
+ * @param {(id: string) => void} [deps.onSchema] - fires when user clicks "Schema"
+ * @param {() => void} [deps.onChange] - fires when pantry changes via ingredient tap (re-render recipes)
+ * @returns {{ open: (id) => void, close: () => void, _renderIngredients: () => void }}
  */
-export function initDetail({ state, document = globalThis.document }) {
+export function initDetail({
+  state,
+  document = globalThis.document,
+  onEdit = null,
+  onSchema = null,
+  onChange = null,
+}) {
   function open(id) {
     const r = state.recipes.find((x) => x._id === id);
     if (!r) return;
@@ -81,6 +93,51 @@ export function initDetail({ state, document = globalThis.document }) {
     state.detailId = null;
   }
 
+  function addToCartHandler(mode) {
+    const r = state.recipes.find((x) => x._id === state.detailId);
+    if (!r) return;
+    const ings = r.recipeIngredient || [];
+    if (!ings.length) { toast('This recipe has no ingredients'); return; }
+    const { cart, addedCount } = addToCart(state.cart, r, state.pantry, mode);
+    state.cart = cart;
+    persist();
+    if (mode === 'missing' && addedCount === 0) toast('Nothing missing — you have everything');
+    else toast(`Added ${pluralize(addedCount, 'item')} to cart`);
+  }
+
+  function wireDetail() {
+    const closeBtn = document.getElementById('detail-close-btn');
+    if (closeBtn) closeBtn.addEventListener('click', closeSheet);
+    const overlay = document.getElementById('detail-overlay');
+    if (overlay) overlay.addEventListener('click', closeSheet);
+    const editBtn = document.getElementById('dm-edit-btn');
+    if (editBtn) editBtn.addEventListener('click', () => {
+      const id = state.detailId;
+      closeSheet();
+      if (onEdit) onEdit(id);
+    });
+    const schemaBtn = document.getElementById('dm-schema-btn');
+    if (schemaBtn) schemaBtn.addEventListener('click', () => { if (state.detailId && onSchema) onSchema(state.detailId); });
+    const missingBtn = document.getElementById('dm-add-missing-btn');
+    if (missingBtn) missingBtn.addEventListener('click', () => addToCartHandler('missing'));
+    const allBtn = document.getElementById('dm-add-all-btn');
+    if (allBtn) allBtn.addEventListener('click', () => addToCartHandler('all'));
+    const ings = document.getElementById('dm-ingredients');
+    if (ings) {
+      ings.addEventListener('click', (e) => {
+        const item = e.target.closest('.detail-ing-item');
+        if (!item || !item.dataset.ing) return;
+        const { pantry, added, name } = togglePantry(state.pantry, item.dataset.ing.toLowerCase());
+        state.pantry = pantry;
+        persist();
+        renderIngredients();
+        if (onChange) onChange();
+        toast(added ? `Added "${name}" to pantry` : `Removed "${name}" from pantry`);
+      });
+    }
+  }
+
+  wireDetail();
   return { open, close: closeSheet, _renderIngredients: renderIngredients };
 }
 

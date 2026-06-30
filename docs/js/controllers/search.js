@@ -88,6 +88,18 @@ export function initSearch({
     fire();
   }
 
+  function wireSearch() {
+    const input = document.getElementById('search-input');
+    if (input) input.addEventListener('input', _onSearchInput);
+    const clear = document.getElementById('search-clear');
+    if (clear) clear.addEventListener('click', () => setQuery(''));
+    const eligible = document.getElementById('eligible-only');
+    if (eligible) eligible.addEventListener('change', _onEligibleChange);
+    const chips = document.getElementById('category-chips');
+    if (chips) chips.addEventListener('click', _onCategoryClick);
+  }
+
+  wireSearch();
   return {
     setQuery, setCategory, setEligibleOnly,
     _onSearchInput, _onEligibleChange, _onCategoryClick,

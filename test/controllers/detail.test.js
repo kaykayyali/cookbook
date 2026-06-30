@@ -13,7 +13,11 @@ function makeDom() {
   ];
   const elements = {};
   for (const id of ids) {
-    elements[id] = { textContent: '', innerHTML: '', style: { display: '' }, classList: { _set: new Set(), add(c){this._set.add(c)}, remove(c){this._set.delete(c)}, contains(c){return this._set.has(c)}, toggle(c,on){on??=!this._set.has(c);on?this._set.add(c):this._set.delete(c);return on;}, } };
+    elements[id] = {
+      textContent: '', innerHTML: '', style: { display: '' },
+      addEventListener: () => {},
+      classList: { _set: new Set(), add(c){this._set.add(c)}, remove(c){this._set.delete(c)}, contains(c){return this._set.has(c)}, toggle(c,on){on??=!this._set.has(c);on?this._set.add(c):this._set.delete(c);return on;}, },
+    };
   }
   const document = {
     getElementById: (sel) => elements[sel] || null,

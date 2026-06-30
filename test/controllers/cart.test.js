@@ -3,12 +3,30 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+if (typeof globalThis.localStorage === 'undefined') {
+  globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+}
+if (typeof globalThis.document === 'undefined') {
+  globalThis.document = {
+    getElementById: (sel) => sel === 'toast' ? { innerHTML: '', textContent: '', classList: { add() {}, remove() {} } } : null,
+  };
+}
+
 let mod;
 try { mod = await import('../../docs/js/controllers/cart.js'); } catch (e) { mod = {}; }
 
 function makeDom() {
-  const grid = { innerHTML: '' };
-  const document = { getElementById: (sel) => (sel === 'cart-grid' ? grid : null) };
+  const grid = { innerHTML: '', addEventListener: () => {} };
+  const clearBtn = { addEventListener: () => {} };
+  const toastEl = { innerHTML: '', classList: { add() {}, remove() {} } };
+  const document = {
+    getElementById: (sel) => {
+      if (sel === 'cart-grid') return grid;
+      if (sel === 'cart-clear-btn') return clearBtn;
+      if (sel === 'toast') return toastEl;
+      return null;
+    },
+  };
   return { grid, document };
 }
 

@@ -29,6 +29,7 @@ function makeElement(id, classes = [], dataAttrs = {}) {
       },
     },
     dataset: { ...dataAttrs },
+    addEventListener: () => {},
   };
   return el;
 }

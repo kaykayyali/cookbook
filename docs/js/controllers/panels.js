@@ -39,5 +39,12 @@ export function initPanels({ state, document = globalThis.document }) {
     if (current && renderers.has(current)) renderers.get(current)();
   }
 
+  function wireNav() {
+    document.querySelectorAll('.nav-item[data-panel]').forEach((btn) => {
+      btn.addEventListener('click', () => showPanel(btn.dataset.panel));
+    });
+  }
+
+  wireNav();
   return { showPanel, register, renderActive, _current: () => current };
 }

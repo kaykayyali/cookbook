@@ -3,18 +3,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+if (typeof globalThis.localStorage === 'undefined') {
+  globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+}
+if (typeof globalThis.document === 'undefined') {
+  globalThis.document = {
+    getElementById: (sel) => sel === 'toast' ? { innerHTML: '', textContent: '', classList: { add() {}, remove() {} } } : null,
+  };
+}
+
 let mod;
 try { mod = await import('../../docs/js/controllers/pantry.js'); } catch (e) { mod = {}; }
 
 function makeDom() {
-  const grid = { innerHTML: '' };
-  const input = { value: '', focus() {}, addEventListener() {} };
+  const grid = { innerHTML: '', addEventListener: () => {} };
+  const input = { value: '', focus() {}, addEventListener: () => {} };
   const suggestions = { innerHTML: '' };
+  const addBtn = { addEventListener: () => {} };
   const document = {
     getElementById(sel) {
       if (sel === 'pantry-grid') return grid;
       if (sel === 'pantry-input') return input;
       if (sel === 'pantry-suggestions') return suggestions;
+      if (sel === 'pantry-add-btn') return addBtn;
       return null;
     },
   };

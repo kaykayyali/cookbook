@@ -11,7 +11,7 @@ try {
 // Minimal DOM stub: the grid container + a fake document with
 // querySelector returning a single element, plus a click log.
 function makeDom() {
-  const grid = { innerHTML: '', children: [] };
+  const grid = { innerHTML: '', children: [], addEventListener: () => {} };
   const count = { textContent: '' };
   const el = (sel) => {
     if (sel === 'recipe-grid') return grid;
