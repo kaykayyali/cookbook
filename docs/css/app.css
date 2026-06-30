@@ -1279,6 +1279,40 @@
 		font-size: var(--text-xs);
 		color: var(--color-fg-subtle);
 	}
+	.theme-picker {
+		display: flex;
+		gap: var(--space-3);
+		flex-wrap: wrap;
+		align-items: center;
+	}
+	.theme-swatch {
+		width: 40px;
+		height: 40px;
+		border-radius: 50%;
+		background: var(--swatch-bg);
+		border: 1px solid var(--swatch-border);
+		box-shadow: inset 0 0 0 4px var(--swatch-accent);
+		cursor: pointer;
+		padding: 0;
+		transition: transform var(--dur-fast) var(--ease-out);
+	}
+	.theme-swatch:hover {
+		transform: scale(1.06);
+	}
+	.theme-swatch.is-active {
+		box-shadow:
+			inset 0 0 0 4px var(--swatch-accent),
+			0 0 0 2px var(--color-accent);
+	}
+	.theme-swatch:focus-visible {
+		outline: 2px solid var(--color-focus-ring);
+		outline-offset: 3px;
+	}
+	.theme-picker-hint {
+		margin-top: var(--space-3);
+		font-size: var(--text-sm);
+		color: var(--color-fg-muted);
+	}
 	#settings-auth-zone {
 		display: flex;
 		align-items: center;
