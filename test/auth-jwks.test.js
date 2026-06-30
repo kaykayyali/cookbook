@@ -58,7 +58,7 @@ test('verifyIdToken resolves the correct kid via the production JWKS resolver', 
       .sign(priv);
 
     const claims = await verifyIdToken(token, 'prod-client', getKey);
-    assert.deepEqual(claims, { sub: 'g-real', email: 'you@example.com', email_verified: true });
+    assert.deepEqual(claims, { sub: 'g-real', email: 'you@example.com', email_verified: true, name: 'you', picture: null });
   } finally {
     server.close();
   }

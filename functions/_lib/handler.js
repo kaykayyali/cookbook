@@ -28,7 +28,11 @@ export async function handleAuth(body, env, deps) {
     return { status: 403, body: { error: 'not_allowed' } };
   }
   const ttl = Number(env.SESSION_TTL) || DEFAULT_TTL;
-  const token = await deps.signSession({ sub: claims.sub, email: claims.email }, env.SESSION_SECRET, ttl);
+  const token = await deps.signSession(
+    { sub: claims.sub, email: claims.email, name: claims.name, picture: claims.picture },
+    env.SESSION_SECRET,
+    ttl,
+  );
   const expiresAt = Math.floor(Date.now() / 1000) + ttl;
   return { status: 200, body: { token, email: claims.email, expiresAt } };
 }
