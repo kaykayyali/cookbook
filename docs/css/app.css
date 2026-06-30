@@ -541,7 +541,11 @@
     padding-top: 4px;
   }
 
-  .detail-nutrition { margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--color-border); }
+  /* Override DS primitive: .detail-nutrition is a block container (label
+     on top, grid below) — the DS version is `display: grid; repeat(auto-fit)`,
+     which would lay out the label and the grid as two columns side-by-side. */
+  .detail-nutrition { display: block; margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--color-border); }
+  .detail-nutrition .section-label { margin-bottom: 14px; }
   /* Single row of 4 equal cells inside the steps column. */
   .nutrition-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, 1fr); }
   .nutrition-cell {
