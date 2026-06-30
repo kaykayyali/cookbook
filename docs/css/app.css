@@ -397,7 +397,12 @@
     font-weight: 700;
     line-height: var(--leading-tight);
   }
-  .detail-meta-row { display: flex; gap: 14px 32px; flex-wrap: wrap; margin-top: 18px; }
+  .detail-meta-row {
+    display: flex; gap: 14px 32px; flex-wrap: wrap;
+    align-items: baseline;
+    margin-top: 18px;
+    flex: 1 1 auto;          /* fill header-left width; pills flow in a row */
+  }
   .detail-meta-item {
     display: flex; align-items: baseline; gap: 8px;
     flex: 0 0 auto;          /* horizontal pill — k + v inline */

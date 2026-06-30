@@ -53,9 +53,11 @@ export function metaRowHTML(r) {
     r.cookingMethod && ['Method', r.cookingMethod],
   ].filter(Boolean);
   if (!meta.length) return '';
-  return `<div class="detail-meta">${meta.map(
+  // Items land directly inside the existing .detail-meta-row container
+  // (#dm-meta in index.html) so the row expands to header width.
+  return meta.map(
     ([k, v]) => `<div class="detail-meta-item"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`
-  ).join('')}</div>`;
+  ).join('');
 }
 
 /**
