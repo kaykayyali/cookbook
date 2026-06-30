@@ -5,3 +5,14 @@ coverage/
 .worktrees/
 .dev.vars
 .wrangler/
+
+# Build artifacts
+docs/js/bundle.js
+docs/js/bundle.js.map
+docs/css/bundle.css
+docs/css/bundle.css.map
+scripts/.css-entry.css
+
+# Playwright
+playwright-report/
+test-results/

@@ -40,7 +40,10 @@ const REQUIRED_TOKEN_NAMES = [
 ];
 
 test('docs/css/ contains tokens.css, base.css, layout.css, components.css, app.css (and no styles.css)', () => {
-  const files = readdirSync(join(DOCS, 'css')).sort();
+  // Source CSS files only. bundle.css is a build artifact.
+  const files = readdirSync(join(DOCS, 'css'))
+    .filter((f) => f !== 'bundle.css')
+    .sort();
   assert.deepEqual(files, ['app.css', 'base.css', 'components.css', 'layout.css', 'tokens.css']);
 });
 
