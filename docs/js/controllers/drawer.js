@@ -51,6 +51,11 @@ export function initDrawer({
     if (drawer) drawer.classList.remove('open');
     if (overlay) overlay.classList.remove('open');
     if (!isAnyOpen(document)) document.body.style.overflow = '';
+    // A cancel (overlay/close button) must not leave a stale community edit
+    // target — otherwise a later local-recipe save takes the community branch
+    // and PUTs to the wrong id. (The save() community branch also deletes this
+    // after a successful save, so this is idempotent.)
+    delete state.communityEdit;
   }
 
   function fillFromRecipe(r) {
@@ -77,12 +82,14 @@ export function initDrawer({
   function open(id) {
     const r = id ? state.recipes.find((x) => x._id === id) : null;
     fillFromRecipe(r);
+    delete state.communityEdit;
     openSheet();
   }
 
   function openPrefilled(recipe) {
     if (recipe) delete recipe._id;
     fillFromRecipe(recipe);
+    delete state.communityEdit;
     openSheet();
   }
 
@@ -90,6 +97,14 @@ export function initDrawer({
   function openCommunityEdit(item) {
     state.communityEdit = { id: item.id, author: item.author };
     fillFromRecipe(item.recipe); // already internal (fromSchema'd in openCommunity)
+    // fillFromRecipe set state.editingId to item.recipe._id (the community
+    // server id). collectForm looks up state.recipes by editingId for the
+    // prior dateCreated — community ids aren't in state.recipes, so it would
+    // miss and reset dateCreated to now(). Clear editingId so collectForm
+    // skips that lookup, and stash the original dateCreated on communityEdit
+    // for save() to restore.
+    state.editingId = null;
+    state.communityEdit.dateCreated = item.recipe.dateCreated;
     document.getElementById('drawer-title').textContent = 'Edit Community Recipe';
     openSheet();
   }
@@ -103,6 +118,9 @@ export function initDrawer({
       return { ok: false, error: err };
     }
     if (state.communityEdit) {
+      // Restore the original creation date that collectForm could not recover
+      // from state.recipes (community ids aren't in the local library).
+      r.dateCreated = state.communityEdit.dateCreated;
       const res = onCommunitySave ? await onCommunitySave(state.communityEdit.id, r) : { ok: false, error: 'no_handler' };
       if (!res.ok) { toast(res.error || 'Could not save community recipe'); return { ok: false, error: res.error }; }
       delete state.communityEdit;

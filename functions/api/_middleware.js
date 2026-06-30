@@ -22,9 +22,11 @@ export async function onRequest(context) {
   }
   const auth = await authorize(request, env, deps);
   if (!auth.ok) return json(auth.status, auth.body);
-  // Propagate verified claims to downstream handlers. The Pages Functions
-  // runtime forwards the same `request` object, so attaching claims here
-  // lets /api/* handlers read them via `request.auth` without re-decoding.
-  request.auth = auth.claims;
+  // Propagate verified claims to downstream handlers via `context.data` —
+  // the documented Pages Functions middleware→handler channel. Do NOT use
+  // `request.auth` (a Request expando property): expando properties do not
+  // survive next() in the Workers runtime, so handlers would see undefined.
+  if (!context.data) context.data = {};
+  context.data.auth = auth.claims;
   return next();
 }

@@ -1,6 +1,6 @@
 // ════════════════════════════════════════════════════════
 // extract.js — POST /api/extract: URL → schema.org/Recipe
-// Auth-gated by functions/api/_middleware.js (request.auth = { sub, email }).
+// Auth-gated by functions/api/_middleware.js (context.data.auth = { sub, email }).
 // ════════════════════════════════════════════════════════
 import { json, misconfigured } from '../_lib/http.js';
 import { handleExtract } from '../_lib/extract.js';
@@ -81,14 +81,14 @@ function realDeps(env) {
 
 /**
  * POST /api/extract  { url } -> { recipe } | { error }
- * Protected by _middleware.js (request.auth attached). Per-email rate limited.
+ * Protected by _middleware.js (context.data.auth attached). Per-email rate limited.
  */
 export async function onRequestPost(context) {
-  const { request, env } = context;
+  const { request, env, data } = context;
 
-  // The middleware already authorized and attached request.auth; if it is
+  // The middleware already authorized and attached context.data.auth; if it is
   // somehow absent, refuse rather than proceeding anonymous.
-  const email = request.auth && request.auth.email;
+  const email = data && data.auth && data.auth.email;
   if (typeof email !== 'string' || !email) {
     return json(401, { error: 'invalid_token' });
   }

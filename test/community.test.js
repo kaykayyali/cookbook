@@ -142,12 +142,20 @@ test('shareRecipe 400 bad_recipe when name missing', async () => {
   assert.equal(res.body.error, 'bad_recipe');
 });
 
-test('editRecipe 200 for the author', async () => {
+test('editRecipe 200 for the author and updates author_name/author_picture', async () => {
   const ok = stubDb({ first: [{ author_sub: 's1', created_at: 1000 }] });
   const r1 = await editRecipe(ok.db, { id: 'r1', recipe: { name: 'Pie2' }, author: { sub: 's1', name: 'You', picture: null } });
   assert.equal(r1.status, 200);
   assert.equal(r1.body.recipe.name, 'Pie2');
   assert.equal(r1.body.createdAt, 1000);
+  const upd = ok.sqls.find((s) => s.op === 'run' && s.sql.includes('UPDATE'));
+  assert.ok(upd, 'UPDATE ran');
+  assert.ok(upd.sql.includes('author_name = ?'), 'UPDATE sets author_name');
+  assert.ok(upd.sql.includes('author_picture = ?'), 'UPDATE sets author_picture');
+  // bind order: recipe_json, author_name, author_picture, updated_at, id
+  assert.equal(upd.vals[1], 'You', 'UPDATE binds author_name');
+  assert.equal(upd.vals[2], null, 'UPDATE binds author_picture (null when absent)');
+  assert.equal(upd.vals[4], 'r1', 'UPDATE binds id');
 });
 
 test('editRecipe 403 not_author for a non-author', async () => {

@@ -1,7 +1,7 @@
 // app.js — orchestration: wires pure logic + controllers to the DOM
 import { $ } from './lib/dom.js';
 import { state, init } from './lib/store.js';
-import { loadAuth } from './lib/auth.js';
+import { loadAuth, getToken } from './lib/auth.js';
 import { editCommunityRecipe } from './lib/community.js';
 import { initPanels } from './controllers/panels.js';
 import { initRecipes } from './controllers/recipes.js';
@@ -39,7 +39,8 @@ initRecipes({ state, onOpenDetail: (id) => detail.open(id), onEdit: (id) => draw
 initPantry({ state });
 initCart({ state });
 const extract = initExtract({ state, openPrefilled: (r) => drawer.openPrefilled(r) });
-initSettings({ state, exportRecipes: () => exportRecipesToFile(state) });
+// Mid-session sign-in refreshes state.auth.sub (set once at init) + loads the feed; sign-out resets it.
+initSettings({ state, exportRecipes: () => exportRecipesToFile(state), onSignedIn: (email) => { state.auth = { sub: readSub(getToken()), email }; if (community) community.loadFirst(); }, onSignedOut: () => { state.auth = { sub: null, email: '' }; } });
 initFab({ state, openDrawer: (id) => drawer.open(id), extract, showPanel: panels.showPanel });
 initSearch({ state });
 community = initCommunity({ state, panels, onRefreshLibrary: () => panels.renderActive(),

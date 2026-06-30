@@ -4,7 +4,7 @@
 import { authFetch } from './auth.js';
 import { toSchema, fromSchema, uuid } from './schema.js';
 
-export const communityState = { recipes: [], nextCursor: null, loading: false, hasMore: true, error: null };
+export const communityState = { recipes: [], nextCursor: null, loading: false, hasMore: true, error: null, loaded: false };
 
 /** Internal recipe -> canonical JSON-LD for the wire (POST/PUT body). */
 export function toShareable(recipe) {

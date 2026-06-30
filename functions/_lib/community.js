@@ -208,7 +208,9 @@ export async function editRecipe(db, { id, recipe, author }) {
   if (!row) return { status: 404, body: { error: 'not_found' } };
   if (row.author_sub !== author.sub) return { status: 403, body: { error: 'not_author' } };
   const now = Date.now();
-  await db.prepare(`UPDATE community_recipes SET recipe_json = ?, updated_at = ? WHERE id = ?`).bind(JSON.stringify(recipe), now, id).run();
+  await db.prepare(
+    `UPDATE community_recipes SET recipe_json = ?, author_name = ?, author_picture = ?, updated_at = ? WHERE id = ?`,
+  ).bind(JSON.stringify(recipe), author.name, author.picture || null, now, id).run();
   return {
     status: 200,
     body: { id, recipe, author: { sub: author.sub, name: author.name, picture: author.picture || null }, createdAt: row.created_at, updatedAt: now },

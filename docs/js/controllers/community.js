@@ -5,6 +5,8 @@ import { toast } from '../lib/dom.js';
 import { getToken } from '../lib/auth.js';
 import { fetchCommunity, communityState, toLocalCopy, saveCommunityRecipe, deleteCommunityRecipe, shareRecipe as shareToCommunity } from '../lib/community.js';
 import { communityCardHTML, communityEmptyHTML } from '../components/communityCard.js';
+import { save as persist } from '../lib/store.js';
+import { esc } from '../lib/format.js';
 
 /**
  * Community panel controller. Owns #community-grid: lists shared recipes with
@@ -31,7 +33,7 @@ export function initCommunity({ state, panels, onOpenCommunityDetail = null, onS
       return;
     }
     if (state.community.error) {
-      grid.innerHTML = `<div class="empty-state"><strong>Community needs a connection</strong><p>${state.community.error}</p></div>`;
+      grid.innerHTML = `<div class="empty-state"><strong>Community needs a connection</strong><p>${esc(state.community.error)}</p></div>`;
       return;
     }
     if (!state.community.recipes.length && !state.community.loading) {
@@ -53,6 +55,7 @@ export function initCommunity({ state, panels, onOpenCommunityDetail = null, onS
     state.community.recipes = res.recipes;
     state.community.nextCursor = res.nextCursor;
     state.community.hasMore = !!res.nextCursor;
+    state.community.loaded = true;
     render();
   }
 
@@ -76,6 +79,7 @@ export function initCommunity({ state, panels, onOpenCommunityDetail = null, onS
     if (!res.ok) { toast(res.error || 'Could not save'); return { ok: false, error: res.error }; }
     const copy = toLocalCopy(res.recipe);
     state.recipes.unshift(copy);
+    persist();
     if (onRefreshLibrary) onRefreshLibrary();
     toast('Saved to your library');
     return { ok: true };
@@ -112,7 +116,12 @@ export function initCommunity({ state, panels, onOpenCommunityDetail = null, onS
     if (more) more.addEventListener('click', loadMore);
   }
 
-  panels.register('community', render);
+  panels.register('community', () => {
+    // First show (signed in) fetches the feed; subsequent shows render from
+    // state. Signed-out shows the sign-in empty state via render().
+    if (!state.community.loaded && getToken()) loadFirst();
+    else render();
+  });
   wireGrid();
   return { render, loadFirst, loadMore, refresh, saveToLocal, deleteShared, share };
 }
