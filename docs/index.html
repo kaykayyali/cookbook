@@ -184,7 +184,10 @@
   </div>
   <div class="detail-body">
     <div class="detail-ingredients">
-      <p class="section-label">Ingredients</p>
+      <div class="section-label-row">
+        <p class="section-label">Ingredients</p>
+        <button class="btn btn-ghost btn-sm" id="dm-add-missing-btn">Add missing to cart</button>
+      </div>
       <ul class="detail-ing-list" id="dm-ingredients"></ul>
       <div class="detail-pantry-note" id="dm-pantry-note"></div>
     </div>
@@ -198,7 +201,6 @@
     </div>
   </div>
   <div class="detail-footer">
-    <button class="btn btn-ghost btn-sm" id="dm-add-missing-btn">Add missing items to cart</button>
     <button class="btn btn-ghost btn-sm" id="dm-add-all-btn">Add all items to cart</button>
     <button class="btn btn-ghost btn-sm" id="dm-schema-btn">View JSON-LD</button>
     <button class="btn btn-ghost btn-sm" id="dm-edit-btn">
