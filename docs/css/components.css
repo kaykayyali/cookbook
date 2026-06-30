@@ -1,0 +1,281 @@
+/* ════════════════════════════════════════════════════════
+   components.css — @layer components
+   Primitives + composite shells. Composites are linked to
+   docs/js/components/* markup via shared classes (.recipe-card,
+   .recipe-detail, .recipe-form, .cart-row, etc.).
+   Spec §6, §7, §10.
+════════════════════════════════════════════════════════ */
+
+@layer components {
+  /* ─── Button ─────────────────────────────────────────────────── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: 44px;             /* spec §10.6 touch target */
+    padding-inline: var(--space-4);
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    font-family: var(--font-body);
+    font-size: var(--text-md);
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out),
+                border-color var(--dur-fast) var(--ease-out),
+                color var(--dur-fast) var(--ease-out);
+    user-select: none;
+  }
+  .btn[disabled],
+  .btn[aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
+
+  .btn-primary {
+    background: var(--color-accent);
+    color: var(--color-accent-fg);
+  }
+  .btn-primary:hover { background: var(--color-focus-ring); }
+
+  .btn-secondary {
+    background: var(--color-bg-elevated);
+    color: var(--color-fg);
+    border-color: var(--color-border-strong);
+  }
+  .btn-secondary:hover { border-color: var(--color-accent); }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--color-fg);
+  }
+  .btn-ghost:hover { background: var(--color-accent-soft); }
+
+  .btn-sm { min-height: 32px; padding-inline: var(--space-3); font-size: var(--text-sm); }
+  .btn-md { min-height: 44px; }
+  .btn-lg { min-height: 52px; padding-inline: var(--space-6); font-size: var(--text-lg); }
+
+  /* ─── IconButton — requires aria-label (§10 #2) ───────────────── */
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--color-fg-muted);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  }
+  .icon-btn:hover { background: var(--color-accent-soft); color: var(--color-fg); }
+  .icon-btn.danger { color: var(--color-danger); }
+  .icon-btn.danger:hover { background: var(--color-accent-soft); }
+  .icon-btn-sm { width: 32px; height: 32px; border-radius: var(--radius-sm); }
+
+  /* ─── Input / Select / Textarea ──────────────────────────────── */
+  .input,
+  .select,
+  textarea.input {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-bg-elevated);
+    color: var(--color-fg);
+    font: inherit;
+    font-size: var(--text-md);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    transition: border-color var(--dur-fast) var(--ease-out);
+  }
+  textarea.input { min-height: 6rem; resize: vertical; line-height: var(--leading-snug); }
+  .input::placeholder,
+  .select::placeholder { color: var(--color-fg-subtle); }
+  .input:focus-visible,
+  .select:focus-visible,
+  textarea.input:focus-visible { border-color: var(--color-accent); outline-color: var(--color-focus-ring); }
+  .input[aria-invalid="true"],
+  .select[aria-invalid="true"],
+  textarea.input[aria-invalid="true"] { border-color: var(--color-danger); }
+
+  /* The visual <label> used with FormField wrapper. */
+  .label {
+    display: block;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--color-fg-muted);
+    margin-block-end: var(--space-1);
+  }
+
+  /* ─── Checkbox — native input, custom skin ───────────────────── */
+  .checkbox {
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border: 1.5px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-elevated);
+    display: inline-grid;
+    place-content: center;
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+  }
+  .checkbox:checked {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+  }
+  .checkbox:checked::after {
+    content: "";
+    width: 12px; height: 6px;
+    border-left: 2px solid var(--color-accent-fg);
+    border-bottom: 2px solid var(--color-accent-fg);
+    transform: rotate(-45deg) translate(1px, -1px);
+  }
+  .checkbox:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
+
+  /* ─── Badge — neutral / accent / success / warning / danger ─── */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    background: var(--color-bg-sunken);
+    color: var(--color-fg-muted);
+    border: 1px solid var(--color-border);
+  }
+  .badge-accent  { background: var(--color-accent-soft); color: var(--color-accent);  border-color: transparent; }
+  .badge-success { background: color-mix(in oklab, var(--color-success) 12%, transparent); color: var(--color-success); border-color: transparent; }
+  .badge-warning { background: color-mix(in oklab, var(--color-warning) 12%, transparent); color: var(--color-warning); border-color: transparent; }
+  .badge-danger  { background: color-mix(in oklab, var(--color-danger)  12%, transparent); color: var(--color-danger);  border-color: transparent; }
+
+  /* ─── Card — surface with elevation ─────────────────────────── */
+  .card {
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+  }
+  .card-pad-sm { padding: var(--space-3); }
+  .card-pad-md { padding: var(--space-4); }
+  .card-pad-lg { padding: var(--space-6); }
+
+  /* ─── Icon — inline SVG icon ────────────────────────────────── */
+  .icon {
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    vertical-align: -0.125em;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* ─── Toast ─────────────────────────────────────────────────── */
+  .toast {
+    position: fixed;
+    inset: auto 0 var(--space-6) 0;
+    margin-inline: auto;
+    width: max-content;
+    max-width: 90vw;
+    padding: var(--space-3) var(--space-6);
+    background: var(--color-fg);
+    color: var(--color-bg);
+    border-radius: var(--radius-pill);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    box-shadow: var(--shadow-lg);
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+    z-index: var(--z-toast);
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast-error { background: var(--color-danger); color: var(--color-accent-fg); }
+
+  /* ─── Form error live region (§10 #7) ────────────────────────── */
+  .aria-live {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0,0,0,0);
+    white-space: nowrap; border: 0;
+  }
+
+  /* ─── Composite shells (classes consumed by docs/js/components/*) ─── */
+  /* These give the four composites their "warm editorial" feel without
+     inlining visual decisions. */
+
+  /* recipeCard */
+  .recipe-card { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; display: flex; flex-direction: column; }
+  .recipe-card .card-stripe { height: 4px; background: var(--color-accent); }
+  .recipe-card.complete .card-stripe { background: var(--color-success); }
+  .recipe-card .card-body { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); flex: 1; }
+  .recipe-card .card-category { font-size: var(--text-xs); letter-spacing: var(--tracking-wide); text-transform: uppercase; color: var(--color-fg-muted); font-weight: 600; }
+  .recipe-card .card-title { font-family: var(--font-display); font-size: var(--text-xl); line-height: var(--leading-tight); color: var(--color-fg); }
+  .recipe-card .card-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); color: var(--color-fg-muted); font-size: var(--text-sm); }
+  .recipe-card .meta-pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px var(--space-2); border-radius: var(--radius-pill); background: var(--color-bg-sunken); }
+  .recipe-card .card-ingredients { display: flex; flex-direction: column; gap: var(--space-2); }
+  .recipe-card .ingredients-label { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: var(--tracking-wide); color: var(--color-fg-subtle); }
+  .recipe-card .ingredient-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+  .recipe-card .ing-tag { padding: 2px var(--space-2); border-radius: var(--radius-pill); background: var(--color-bg-sunken); color: var(--color-fg-muted); font-size: var(--text-xs); }
+  .recipe-card .ing-tag.have { background: color-mix(in oklab, var(--color-success) 18%, transparent); color: var(--color-success); }
+  .recipe-card .ing-tag.missing { background: color-mix(in oklab, var(--color-danger) 12%, transparent); color: var(--color-danger); }
+  .recipe-card .card-footer { display: flex; justify-content: space-between; align-items: center; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-border); background: var(--color-bg-sunken); }
+  .recipe-card .card-status { font-size: var(--text-sm); color: var(--color-fg-muted); display: inline-flex; align-items: center; gap: var(--space-2); }
+  .recipe-card .status-dot { width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--color-fg-subtle); }
+  .recipe-card.complete .status-dot { background: var(--color-success); }
+  .recipe-card .card-actions { display: flex; gap: var(--space-1); }
+
+  /* Empty state */
+  .empty-state { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); padding: var(--space-12) var(--space-4); color: var(--color-fg-muted); text-align: center; }
+  .empty-state strong { font-family: var(--font-display); font-size: var(--text-lg); color: var(--color-fg); }
+
+  /* recipeDetail */
+  .detail-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: var(--space-3); padding: var(--space-4); background: var(--color-bg-sunken); border-radius: var(--radius-md); margin-block: var(--space-4); }
+  .detail-meta-item { display: flex; flex-direction: column; gap: 2px; }
+  .detail-meta-item .k { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: var(--tracking-wide); color: var(--color-fg-subtle); }
+  .detail-meta-item .v { font-size: var(--text-md); color: var(--color-fg); font-weight: 500; }
+  .recipe-detail { padding: var(--space-6); display: flex; flex-direction: column; gap: var(--space-6); }
+  .recipe-detail h2 { font-family: var(--font-display); }
+  .recipe-detail-body { display: grid; gap: var(--space-8); grid-template-columns: 1fr; }
+  @media (min-width: 64rem) { .recipe-detail-body { grid-template-columns: minmax(0, 18rem) 1fr; } }
+  .detail-ing-list { list-style: none; display: flex; flex-direction: column; gap: var(--space-2); }
+  .detail-ing-item { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); cursor: pointer; transition: background var(--dur-fast) var(--ease-out); }
+  .detail-ing-item:hover { background: var(--color-bg-sunken); }
+  .detail-ing-item.missing-item { color: var(--color-fg-muted); }
+  .detail-ing-check { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-pill); border: 1.5px solid var(--color-border-strong); color: var(--color-accent); }
+  .detail-ing-check.have { background: var(--color-accent); color: var(--color-accent-fg); border-color: var(--color-accent); }
+  .detail-step { display: grid; grid-template-columns: 2rem 1fr; gap: var(--space-3); padding-block: var(--space-2); }
+  .detail-step .step-num { display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; border-radius: var(--radius-pill); background: var(--color-accent-soft); color: var(--color-accent); font-weight: 600; }
+  .detail-step .step-text { font-size: var(--text-md); line-height: var(--leading-relaxed); color: var(--color-fg); }
+  .detail-nutrition { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: var(--space-3); }
+  .nutrition-cell { background: var(--color-bg-sunken); padding: var(--space-3); border-radius: var(--radius-md); }
+  .nutrition-cell .k { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: var(--tracking-wide); color: var(--color-fg-subtle); }
+  .nutrition-cell .v { font-size: var(--text-md); color: var(--color-fg); font-weight: 500; }
+
+  /* recipeForm */
+  .recipe-form { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6); }
+  .recipe-form .form-row { display: grid; gap: var(--space-3); grid-template-columns: 1fr; }
+  @media (min-width: 40rem) { .recipe-form .form-row-2 { grid-template-columns: 1fr 1fr; } }
+  .recipe-form .form-error { color: var(--color-danger); font-size: var(--text-sm); margin-block-start: var(--space-1); }
+  .ing-row, .step-row { display: flex; align-items: center; gap: var(--space-2); }
+  .step-row .step-badge { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--radius-pill); background: var(--color-accent-soft); color: var(--color-accent); font-weight: 600; font-size: var(--text-sm); flex-shrink: 0; }
+
+  /* cart */
+  .cart-empty { padding: var(--space-6); text-align: center; color: var(--color-fg-muted); }
+  .cart-row { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; }
+  .cart-row:last-child { border-bottom: 0; }
+  .cart-name { font-weight: 600; color: var(--color-fg); }
+  .cart-total { font-size: var(--text-sm); color: var(--color-fg-muted); }
+  .cart-contrib { cursor: pointer; padding: 2px var(--space-2); border-radius: var(--radius-pill); background: var(--color-bg-sunken); color: var(--color-fg-muted); font-size: var(--text-sm); transition: background var(--dur-fast) var(--ease-out); }
+  .cart-contrib:hover { background: var(--color-accent-soft); color: var(--color-fg); }
+}

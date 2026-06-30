@@ -8,6 +8,7 @@ export const STORAGE_KEYS = {
   cart: 'cb_cart',
   token: 'cb_token',
   email: 'cb_email',
+  theme: 'cb_theme',
 };
 
 export const CATEGORIES = [

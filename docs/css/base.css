@@ -1,0 +1,61 @@
+/* ════════════════════════════════════════════════════════
+   base.css — @layer base
+   Reset, root typography, body, global :focus-visible ring.
+   Spec §5.3, §10 (focus non-negotiable #1).
+════════════════════════════════════════════════════════ */
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+  *, *::before, *::after { margin: 0; padding: 0; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    font-family: var(--font-body);
+    font-size: var(--text-md);
+    line-height: var(--leading-normal);
+    color: var(--color-fg);
+    background: var(--color-bg);
+    min-height: 100vh;
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Display type — serif on headlines and recipe titles. */
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    line-height: var(--leading-tight);
+    letter-spacing: var(--tracking-tight);
+    color: var(--color-fg);
+  }
+  h1 { font-size: var(--text-3xl); }
+  h2 { font-size: var(--text-2xl); }
+  h3 { font-size: var(--text-xl); }
+  h4 { font-size: var(--text-lg); }
+
+  /* Non-negotiable #1: every interactive primitive gets a visible focus ring
+     using --color-focus-ring. Outline color is token-driven so contrast adapts
+     to the active theme. We move outline to a thick ring with offset for
+     stronger affordance than the UA default. */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Selection — light toast of accent. */
+  ::selection {
+    background: var(--color-accent-soft);
+    color: var(--color-fg);
+  }
+
+  /* Reduced motion: zero transitions globally. Spec §10.5. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      transition: none !important;
+      animation: none !important;
+    }
+  }
+}

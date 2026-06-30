@@ -1,9 +1,9 @@
 // ════════════════════════════════════════════════════════
-// components/recipeForm.js — create/edit drawer form
+// components/recipeForm.js — create/edit drawer form (design-system v1)
 // ════════════════════════════════════════════════════════
 
 import { esc } from '../lib/format.js';
-import { ICON } from '../lib/icons.js';
+import { Icon } from '../lib/ui.js';
 import { uuid } from '../lib/schema.js';
 import { $ } from '../lib/dom.js';
 
@@ -35,28 +35,27 @@ export const formBuffers = {
 };
 
 export function ingEditorHTML(ingredients) {
-  return ingredients
-    .map(
-      (ing, i) =>
-        `<div class="ing-row">
-       <input type="text" value="${esc(ing)}" data-index="${i}" placeholder="e.g. 2 tablespoons olive oil">
-       <button type="button" class="row-remove" data-index="${i}" aria-label="Remove">${ICON.x}</button>
-     </div>`
-    )
-    .join('');
+  return ingredients.map((ing, i) => {
+    const remove = `<button type="button" class="icon-btn" data-action="remove-ing" data-index="${i}" aria-label="Remove ingredient">${Icon({ name: 'x' })}</button>`;
+    return `<div class="ing-row">
+       <input class="input" type="text" value="${esc(ing)}" data-index="${i}" placeholder="e.g. 2 tablespoons olive oil" id="ing-${i}">
+       <label class="aria-live" for="ing-${i}">Ingredient ${i + 1}</label>
+       ${remove}
+     </div>`;
+  }).join('');
 }
 
 export function stepsEditorHTML(steps) {
-  return steps
-    .map(
-      (step, i) =>
-        `<div class="step-row">
-       <span class="step-badge">${i + 1}</span>
-       <textarea data-index="${i}" rows="2" placeholder="Describe this step…">${esc(step)}</textarea>
-       <button type="button" class="row-remove" data-index="${i}" aria-label="Remove step">${ICON.x}</button>
-     </div>`
-    )
-    .join('');
+  return steps.map((step, i) => {
+    const num = i + 1;
+    const remove = `<button type="button" class="icon-btn" data-action="remove-step" data-index="${i}" aria-label="Remove step">${Icon({ name: 'x' })}</button>`;
+    return `<div class="step-row">
+       <span class="step-badge">${num}</span>
+       <label class="aria-live" for="step-${i}">Step ${num}</label>
+       <textarea class="input" id="step-${i}" data-index="${i}" rows="2" placeholder="Describe this step…">${esc(step)}</textarea>
+       ${remove}
+     </div>`;
+  }).join('');
 }
 
 export function rebuildIngEditor() {
@@ -75,9 +74,7 @@ export function rebuildStepsList() {
 export function collectForm(state) {
   const get = (id) => ($(id)?.value || '').trim();
   const nutrition = {};
-  Object.entries(NUTRI_MAP).forEach(([elId, key]) => {
-    nutrition[key] = get(elId);
-  });
+  Object.entries(NUTRI_MAP).forEach(([elId, key]) => { nutrition[key] = get(elId); });
   const prev = state.editingId ? state.recipes.find((r) => r._id === state.editingId) : null;
   return {
     _id: $('f-id').value || uuid(),
