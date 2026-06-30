@@ -404,7 +404,7 @@
     flex: 1 1 auto;          /* fill header-left width; pills flow in a row */
   }
   .detail-meta-item {
-    display: flex; align-items: baseline; gap: 8px;
+    display: flex; flex-direction: row; align-items: baseline; gap: 8px;
     flex: 0 0 auto;          /* horizontal pill — k + v inline */
   }
   .detail-meta-item .k {
