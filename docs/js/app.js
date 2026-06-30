@@ -24,7 +24,7 @@ initRecipes({ state, onOpenDetail: (id) => detail.open(id), onEdit: (id) => draw
 initPantry({ state });
 initCart({ state });
 const extract = initExtract({ state, openPrefilled: (r) => drawer.openPrefilled(r) });
-initSettings({ state, exportRecipes: () => exportRecipesToFile(state) });
+initSettings({ state, exportRecipes: () => exportRecipesToFile(state), panels });
 initFab({ state, openDrawer: (id) => drawer.open(id), extract, showPanel: panels.showPanel });
 initSearch({ state });
 wireSchemaModal();

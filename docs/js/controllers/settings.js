@@ -33,6 +33,9 @@ const DEFAULT_THEME = 'light';
  * @param {() => void} [deps.onChange] - re-render after import
  * @param {() => string|null} [deps.getStoredTheme] - read current theme
  * @param {object} [deps.theme] - { getStored, set, apply } — defaults to singleton
+ * @param {object} [deps.panels] - panels controller; registers the settings
+ *   renderer so showPanel('settings') actually mounts the auth zone + picker.
+ *   Optional for back-compat with tests that wire the panel manually.
  * @returns {{ renderAuth, renderSettings, renderThemePicker, handleAuthClick, handleThemeClick }}
  */
 export function initSettings({
@@ -46,8 +49,15 @@ export function initSettings({
   onChange = null,
   getStoredTheme = defaultTheme.getStored,
   theme: themeDep = defaultTheme,
+  panels = null,
 } = {}) {
   let settingsRendered = false;
+
+  // Register with the panel router so showPanel('settings') mounts both the
+  // auth zone (GIS button) and the theme picker + import/export wiring.
+  // No boot-time call here — that would trigger real auth loading in tests
+  // where the controller is stubbed directly.
+  if (panels) panels.register('settings', () => { renderAuth(); renderSettings(); });
 
   function renderAuth() {
     const zone = document.getElementById('settings-auth-zone');

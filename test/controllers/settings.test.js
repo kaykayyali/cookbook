@@ -316,3 +316,26 @@ test('keyboard nav: arrow keys move focus, Enter activates', () => {
   for (const fn of keyListeners) fn(enterEvent);
   assert.equal(swatches[2].clicked, true, 'Enter on focused swatch should call .click()');
 });
+
+test('initSettings registers a renderer with the panels controller so showPanel("settings") mounts the picker', () => {
+  if (!mod.initSettings) return;
+  const { document, elements } = makePickerDom();
+  // Fake panels controller — just records the registered fn for the 'settings' id.
+  const registered = new Map();
+  const panels = { register: (id, fn) => registered.set(id, fn) };
+  // Stub the auth side so the panel renderer doesn't trigger real GIS loading
+  // (which loads a script tag and races the test's async-cleanup hook).
+  mod.initSettings({
+    document,
+    getStoredTheme: () => 'light',
+    loadAuth: () => ({ token: 'abc', email: 'me@example.com' }),
+    panels,
+  });
+  // The registered fn must exist; invoking it must mount the theme picker.
+  const renderer = registered.get('settings');
+  assert.ok(renderer, 'initSettings must register a settings panel renderer');
+  assert.equal(elements['settings-theme-zone'].innerHTML, '', 'picker should not be mounted before renderer fires');
+  renderer();
+  assert.match(elements['settings-theme-zone'].innerHTML, /role="radiogroup"/,
+    'showPanel("settings") must mount the theme picker');
+});
