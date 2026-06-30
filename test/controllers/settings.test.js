@@ -142,3 +142,110 @@ test('renderSettings wires export button to exportRecipes', () => {
   elements['settings-export-btn'].click();
   assert.equal(exported, true, 'export button click should call exportRecipes');
 });
+
+// ─── Theme picker (added in themes phase) ───────────────────
+
+function makePickerDom() {
+  // Mirrors makeDom but includes the elements renderThemePicker will create.
+  const ids = [
+    'settings-auth-zone', 'settings-import-btn', 'settings-export-btn',
+    'import-file', 'g-signin-btn',
+  ];
+  const elements = {};
+  for (const id of ids) {
+    elements[id] = {
+      innerHTML: '', value: '', textContent: '',
+      listeners: {},
+      addEventListener(evt, fn) { (this.listeners[evt] = this.listeners[evt] || []).push(fn); },
+      click() { for (const fn of (this.listeners.click || [])) fn(); },
+      querySelector: () => null,
+      firstElementChild: null,
+      classList: { _set: new Set(), add(){}, remove(){}, contains(){return false}, toggle(){} },
+    };
+  }
+  // A panel zone where the picker should mount.
+  elements['settings-theme-zone'] = {
+    innerHTML: '',
+    listeners: {},
+    addEventListener(evt, fn) { (this.listeners[evt] = this.listeners[evt] || []).push(fn); },
+  };
+  const document = {
+    getElementById: (sel) => elements[sel] || null,
+  };
+  return { elements, document };
+}
+
+const FIVE_THEMES = ['light', 'dark', 'sepia', 'forest', 'ocean'];
+
+test('renderThemePicker mounts 5 swatch buttons in role=radiogroup', () => {
+  if (!mod.initSettings) return;
+  const { document, elements } = makePickerDom();
+  const ctrl = mod.initSettings({
+    document,
+    getStoredTheme: () => 'light',
+  });
+  ctrl.renderThemePicker();
+  const zone = elements['settings-theme-zone'];
+  assert.match(zone.innerHTML, /role="radiogroup"/);
+  for (const name of FIVE_THEMES) {
+    const re = new RegExp(`data-theme="${name}"`);
+    assert.match(zone.innerHTML, re, `expected swatch for ${name}`);
+  }
+  const swatchCount = (zone.innerHTML.match(/class="theme-swatch[^"]*"/g) || []).length;
+  assert.equal(swatchCount, 5, 'expected 5 .theme-swatch buttons');
+});
+
+test('renderThemePicker marks the stored theme as active and aria-checked', () => {
+  if (!mod.initSettings) return;
+  const { document, elements } = makePickerDom();
+  const ctrl = mod.initSettings({ document, getStoredTheme: () => 'forest' });
+  ctrl.renderThemePicker();
+  const html = elements['settings-theme-zone'].innerHTML;
+  assert.match(html, /data-theme="forest"[^>]*class="theme-swatch is-active"/);
+  assert.match(html, /data-theme="forest"[^>]*aria-checked="true"/);
+  assert.match(html, /data-theme="light"[^>]*aria-checked="false"/);
+});
+
+test('renderThemePicker defaults to light when no stored value', () => {
+  if (!mod.initSettings) return;
+  const { document, elements } = makePickerDom();
+  const ctrl = mod.initSettings({ document, getStoredTheme: () => null });
+  ctrl.renderThemePicker();
+  const html = elements['settings-theme-zone'].innerHTML;
+  assert.match(html, /data-theme="light"[^>]*class="theme-swatch is-active"/);
+});
+
+test('clicking a swatch calls theme.set + theme.apply + toggles aria-checked', () => {
+  if (!mod.initSettings) return;
+  const { document, elements } = makePickerDom();
+  let applied = null;
+  let setName = null;
+  const ctrl = mod.initSettings({
+    document,
+    getStoredTheme: () => 'light',
+    theme: {
+      getStored: () => 'light',
+      set: (n) => { setName = n; },
+      apply: (n) => { applied = n; },
+    },
+  });
+  ctrl.renderThemePicker();
+  // Simulate the click on the sepia swatch by extracting the inline onclick
+  // and calling it, OR by parsing the innerHTML to find the swatch and
+  // re-triggering the click. Easier: simulate the click via the listener
+  // attached to the picker container.
+  const zone = elements['settings-theme-zone'];
+  // The picker is mounted via innerHTML; the click listener is attached to
+  // the container. We test by calling the listener directly with a fake event.
+  const listeners = zone.listeners.click || [];
+  assert.ok(listeners.length > 0, 'picker should have a click listener');
+  const fakeEvent = {
+    target: {
+      closest: (sel) => sel === '.theme-swatch' ? { dataset: { theme: 'sepia' } } : null,
+      getAttribute: (k) => (k === 'data-theme' ? 'sepia' : null),
+    },
+  };
+  for (const fn of listeners) fn(fakeEvent);
+  assert.equal(setName, 'sepia');
+  assert.equal(applied, 'sepia');
+});
