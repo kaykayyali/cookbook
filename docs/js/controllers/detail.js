@@ -76,6 +76,7 @@ export function initDetail({
     // Footer button visibility by source/ownership.
     setDisplay('dm-edit-btn', ctx.source === 'local' ? '' : 'none');
     setDisplay('dm-share-community-btn', ctx.source === 'local' ? '' : 'none');
+    setDisplay('dm-schema-btn', ctx.source === 'local' ? '' : 'none');
     setDisplay('dm-save-local-btn', ctx.source === 'community' ? '' : 'none');
     setDisplay('dm-community-edit-btn', ctx.source === 'community' && ctx.isAuthor ? '' : 'none');
     setDisplay('dm-community-delete-btn', ctx.source === 'community' && ctx.isAuthor ? '' : 'none');
@@ -195,8 +196,9 @@ export function initDetail({
     if (cEditBtn) cEditBtn.addEventListener('click', () => {
       if (current && current.ctx.source === 'community' && onEditCommunity) {
         const ctx = current.ctx;
+        const r = current.r;
         closeSheet();
-        onEditCommunity({ id: ctx.id, author: ctx.author, recipe: current.r });
+        onEditCommunity({ id: ctx.id, author: ctx.author, recipe: r });
       }
     });
     const cDelBtn = document.getElementById('dm-community-delete-btn');

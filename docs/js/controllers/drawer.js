@@ -4,7 +4,6 @@
 
 import { toast } from '../lib/dom.js';
 import { save as persist } from '../lib/store.js';
-import { fromSchema } from '../lib/schema.js';
 import {
   FIELD_MAP,
   NUTRI_MAP,
@@ -89,9 +88,8 @@ export function initDrawer({
 
   /** Open the drawer to edit a community recipe (author). Save PUTs to /api/community/:id. */
   function openCommunityEdit(item) {
-    const internal = fromSchema(item.recipe); // canonical -> internal for the form
     state.communityEdit = { id: item.id, author: item.author };
-    fillFromRecipe(internal);
+    fillFromRecipe(item.recipe); // already internal (fromSchema'd in openCommunity)
     document.getElementById('drawer-title').textContent = 'Edit Community Recipe';
     openSheet();
   }
