@@ -110,6 +110,7 @@
     border-bottom: 1px solid var(--color-border);
     padding: 14px 28px;
     display: flex; align-items: center; gap: 12px;
+    flex-wrap: wrap;          /* chips-scroll (basis 100%) drops to row 2 */
     position: sticky; top: 0;
     z-index: 40;
     /* ponytail: topbar z not in DS token set; 40 < 50 sidebar — fine. */
@@ -161,6 +162,41 @@
     padding: var(--space-2) var(--space-2) var(--space-2) 0;
   }
   .search-wrap > .input:focus-visible { outline: none; }
+
+  /* Category quick filters — horizontally scrolling chip row under the
+     search bar. Each chip is a fixed-width pill; the row scrolls on
+     overflow with the scrollbar hidden. Tap toggles .is-active. */
+  .chips-scroll {
+    display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    flex: 1 1 100%;
+    padding-bottom: 2px;
+    /* fade the trailing edge to hint at scroll overflow */
+    mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
+  }
+  .chips-scroll::-webkit-scrollbar { display: none; }
+  .chip {
+    flex-shrink: 0;
+    padding: 7px 14px;
+    border-radius: var(--radius-pill);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-elevated);
+    color: var(--color-fg-muted);
+    transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+    white-space: nowrap;
+    font-family: inherit;
+    min-height: 32px;
+  }
+  .chip:hover { border-color: var(--color-accent); color: var(--color-accent); }
+  .chip.is-active {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-accent-fg);
+  }
 
   /* Ready-to-make checkbox lives in the recipe panel header.
      Inline with title block on desktop, wraps below on narrow. */

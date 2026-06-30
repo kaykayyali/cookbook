@@ -614,6 +614,19 @@ function wire() {
     renderRecipes();
   });
 
+  // Category chips — horizontal scroll row under the search bar.
+  // Filter by categoryRecipe when a chip is tapped.
+  $('category-chips').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    els('.chip').forEach((c) => {
+      c.classList.toggle('is-active', c === chip);
+      c.setAttribute('aria-selected', c === chip ? 'true' : 'false');
+    });
+    state.categoryFilter = chip.dataset.cat;
+    renderRecipes();
+  });
+
   // Drawer ingredient editor
   $('ing-editor').addEventListener('input', (e) => {
     if (e.target.matches('input')) formBuffers.ingredients[+e.target.dataset.index] = e.target.value;
