@@ -14,12 +14,19 @@ import { initExtract } from './controllers/extract.js';
 import { initSettings } from './controllers/settings.js';
 import { initFab } from './controllers/fab.js';
 import { initSearch } from './controllers/search.js';
+import { initCommunity } from './controllers/community.js';
 import { showRecipeSchema, wireSchemaModal, exportRecipesToFile } from './lib/schema-modal.js';
 
 init();
 const panels = initPanels({ state });
 const drawer = initDrawer({ state, onSchema: showRecipeSchema });
 const detail = initDetail({ state, onEdit: (id) => drawer.open(id), onSchema: showRecipeSchema });
+const community = initCommunity({
+  state,
+  panels,
+  onOpenCommunityDetail: (item) => detail.openCommunity(item),
+  onSignedOut: () => panels.showPanel('recipes'),
+});
 initRecipes({ state, onOpenDetail: (id) => detail.open(id), onEdit: (id) => drawer.open(id), onSchema: showRecipeSchema });
 initPantry({ state });
 initCart({ state });

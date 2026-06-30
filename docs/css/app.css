@@ -930,4 +930,13 @@
   @media (max-width: 380px) {
     .card-actions .icon-btn:first-child { display: none; }   /* drop edit on tiny screens; use detail sheet */
   }
+
+  /* ════════════════════════════════════════════════════════
+     COMMUNITY PANEL — author badge + load-more wrap
+  ════════════════════════════════════════════════════════ */
+  .author-badge { display: inline-flex; align-items: center; gap: .4rem; font-size: .8rem; color: var(--ink-light, #a8a29e); }
+  .author-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; }
+  .author-avatar.author-initial { display: inline-flex; align-items: center; justify-content: center; background: var(--surface-2, #2f2a25); color: var(--ink, #e7e5e4); font-size: .7rem; font-weight: 600; }
+  .author-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .load-more-wrap { display: flex; justify-content: center; padding: 1rem; }
 }
