@@ -49,7 +49,7 @@ export async function handleAuth(body, env, deps) {
 
 	const ttl = Number(env.SESSION_TTL) || DEFAULT_TTL;
 	const token = await deps.signSession(
-		{ sub: claims.sub, email: claims.email },
+		{ sub: claims.sub, email: claims.email, name: claims.name, picture: claims.picture },
 		env.SESSION_SECRET,
 		ttl,
 	);

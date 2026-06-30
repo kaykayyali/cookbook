@@ -4,10 +4,17 @@ import { signSession, verifySession } from '../functions/_lib/session.js';
 
 const SECRET = 'test-secret-please-change-in-prod-32+chars';
 
-test('signSession + verifySession round-trip the claims', async () => {
-  const token = await signSession({ sub: '123', email: 'a@b.com' }, SECRET, 3600);
+test('signSession + verifySession round-trip the claims including name + picture', async () => {
+  const token = await signSession({ sub: '123', email: 'a@b.com', name: 'A', picture: 'https://x/a.png' }, SECRET, 3600);
   const claims = await verifySession(token, SECRET);
-  assert.deepEqual(claims, { sub: '123', email: 'a@b.com' });
+  assert.deepEqual(claims, { sub: '123', email: 'a@b.com', name: 'A', picture: 'https://x/a.png' });
+});
+
+test('verifySession preserves a missing picture as undefined', async () => {
+  const token = await signSession({ sub: '123', email: 'a@b.com', name: 'A' }, SECRET, 3600);
+  const claims = await verifySession(token, SECRET);
+  assert.equal(claims.name, 'A');
+  assert.equal(claims.picture, undefined);
 });
 
 test('verifySession rejects a token signed with a different secret', async () => {

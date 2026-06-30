@@ -20,6 +20,8 @@ import { save as persist } from '../lib/store.js';
  * @param {(msg) => void} [deps.toast]
  * @param {() => void} [deps.exportRecipes]
  * @param {() => void} [deps.onChange] - re-render after import
+ * @param {(email: string) => void} [deps.onSignedIn] - fired after a successful sign-in (state.auth refresh, feed load)
+ * @param {() => void} [deps.onSignedOut] - fired after a sign-out (state.auth reset)
  * @returns {{ renderAuth, renderSettings, handleAuthClick }}
  */
 export function initSettings({
@@ -31,6 +33,8 @@ export function initSettings({
   toast: toastDep = toast,
   exportRecipes: exportRecipesDep = defaultExportRecipes,
   onChange = null,
+  onSignedIn = null,
+  onSignedOut = null,
 } = {}) {
   let settingsRendered = false;
 
@@ -49,7 +53,7 @@ export function initSettings({
       initGoogleSignInDep({
         buttonEl: document.getElementById('g-signin-btn'),
         clientId: typeof window !== 'undefined' ? window.COOKBOOK_GOOGLE_CLIENT_ID : undefined,
-        onSignedIn: () => { renderAuth(); },
+        onSignedIn: (email) => { renderAuth(); if (onSignedIn) onSignedIn(email); },
         onError: (msg) => toastDep(`Sign-in failed: ${msg}`),
       });
     }
@@ -59,6 +63,7 @@ export function initSettings({
     if (!e?.target?.closest?.('[data-action="signout"]')) return;
     await clearAuthDep();
     renderAuth();
+    if (onSignedOut) onSignedOut();
     toastDep('Signed out');
   }
 
