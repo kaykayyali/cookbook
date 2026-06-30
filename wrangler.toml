@@ -25,6 +25,17 @@ EXTRACT_RATE_PER_MIN = "10"
 [ai]
 binding = "AI"
 
+# D1 database for the Community feed — accessible in Pages Functions as env.DB.
+# Create it once (`npx wrangler d1 create cookbook`) and paste the printed
+# database_id below. Git-connected deploys apply this binding from wrangler.toml.
+# The table self-creates on first request via ensureSchema() (see
+# functions/_lib/community.js), so a manual migration is optional; the SQL is
+# also committed at docs/superpowers/migrations/0001_community_recipes.sql.
+[[d1_databases]]
+binding = "DB"
+database_name = "cookbook"
+database_id = "REPLACE_WITH_wrangler_d1_create_OUTPUT"
+
 # Required secret (set via `wrangler pages secret put`, NEVER committed):
 #   SESSION_SECRET — >=32 char random string, e.g. `openssl rand -hex 32`
 #     local dev: put it in a `.dev.vars` file as SESSION_SECRET="..."
