@@ -3,7 +3,7 @@
 // ════════════════════════════════════════════════════════
 import { toast } from '../lib/dom.js';
 import { getToken } from '../lib/auth.js';
-import { fetchCommunity, communityState } from '../lib/community.js';
+import { fetchCommunity, communityState, toLocalCopy, saveCommunityRecipe, deleteCommunityRecipe, shareRecipe as shareToCommunity } from '../lib/community.js';
 import { communityCardHTML, communityEmptyHTML } from '../components/communityCard.js';
 
 /**
@@ -16,10 +16,11 @@ import { communityCardHTML, communityEmptyHTML } from '../components/communityCa
  * @param {object} deps.panels - { register(id, fn) } from controllers/panels.js
  * @param {(item: object) => void} [deps.onOpenCommunityDetail]
  * @param {() => void} [deps.onSignedOut] - fired when the server returns 401
+ * @param {() => void} [deps.onRefreshLibrary] - fired after Save to my library so the Recipes panel re-renders
  * @param {Document} [deps.document]
- * @returns {{ render, loadFirst, loadMore, refresh }}
+ * @returns {{ render, loadFirst, loadMore, refresh, saveToLocal, deleteShared, share }}
  */
-export function initCommunity({ state, panels, onOpenCommunityDetail = null, onSignedOut = null, document = globalThis.document }) {
+export function initCommunity({ state, panels, onOpenCommunityDetail = null, onSignedOut = null, onRefreshLibrary = null, document = globalThis.document }) {
   state.community = state.community || communityState;
 
   function render() {
@@ -69,6 +70,35 @@ export function initCommunity({ state, panels, onOpenCommunityDetail = null, onS
 
   function refresh() { return loadFirst(); }
 
+  async function saveToLocal(ctx) {
+    // ctx = { id } — fetch the canonical recipe, copy into the local library.
+    const res = await saveCommunityRecipe(ctx.id, { onUnauthorized: () => onSignedOut && onSignedOut() });
+    if (!res.ok) { toast(res.error || 'Could not save'); return { ok: false, error: res.error }; }
+    const copy = toLocalCopy(res.recipe);
+    state.recipes.unshift(copy);
+    if (onRefreshLibrary) onRefreshLibrary();
+    toast('Saved to your library');
+    return { ok: true };
+  }
+
+  async function deleteShared(ctx) {
+    const res = await deleteCommunityRecipe(ctx.id, { onUnauthorized: () => onSignedOut && onSignedOut() });
+    if (!res.ok) { toast(res.error || 'Could not delete'); return { ok: false, error: res.error }; }
+    state.community.recipes = state.community.recipes.filter((x) => x.id !== ctx.id);
+    render();
+    toast('Shared recipe deleted');
+    return { ok: true };
+  }
+
+  async function share(recipe) {
+    if (!state.auth || !state.auth.sub) { toast('Sign in to share to Community'); return { ok: false, error: 'not_signed_in' }; }
+    const res = await shareToCommunity(recipe, { onUnauthorized: () => onSignedOut && onSignedOut() });
+    if (!res.ok) { toast(res.error || 'Could not share'); return { ok: false, error: res.error }; }
+    await loadFirst(); // refresh the feed so the new card appears
+    toast('Shared to Community');
+    return { ok: true };
+  }
+
   function wireGrid() {
     const grid = document.getElementById('community-grid');
     if (grid) grid.addEventListener('click', (e) => {
@@ -84,5 +114,5 @@ export function initCommunity({ state, panels, onOpenCommunityDetail = null, onS
 
   panels.register('community', render);
   wireGrid();
-  return { render, loadFirst, loadMore, refresh };
+  return { render, loadFirst, loadMore, refresh, saveToLocal, deleteShared, share };
 }

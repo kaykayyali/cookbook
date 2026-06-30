@@ -117,13 +117,15 @@ test('openPrefilled strips _id so the recipe opens as "New"', () => {
   assert.equal(extracted._id, undefined, '_id should be stripped from the input');
 });
 
-test('save returns an object describing the result', () => {
+test('save returns an object describing the result', async () => {
   if (!mod.initDrawer) return;
   const state = { recipes: [], editingId: null };
   const ctrl = mod.initDrawer({ state, document: doc });
   // Validation will fail (no name, no ingredients) — that's fine, the API
-  // contract is: save() returns { ok: boolean, ... }.
-  const result = ctrl.save();
+  // contract is: save() returns { ok: boolean, ... }. save() is async because
+  // the community-edit branch awaits onCommunitySave; the local branch still
+  // resolves synchronously to the same { ok, ... } shape.
+  const result = await ctrl.save();
   assert.equal(typeof result, 'object');
   assert.equal(result.ok, false, 'save without required fields returns ok:false');
 });

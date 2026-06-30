@@ -939,4 +939,14 @@
   .author-avatar.author-initial { display: inline-flex; align-items: center; justify-content: center; background: var(--surface-2, #2f2a25); color: var(--ink, #e7e5e4); font-size: .7rem; font-weight: 600; }
   .author-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .load-more-wrap { display: flex; justify-content: center; padding: 1rem; }
+
+  /* ════════════════════════════════════════════════════════
+     COMMUNITY DETAIL — destructive footer button + author badge in detail header
+  ════════════════════════════════════════════════════════ */
+  .btn-danger {
+    background: var(--color-danger);
+    color: var(--color-accent-fg);
+    border: 1px solid var(--color-danger);
+  }
+  .btn-danger:hover { background: color-mix(in oklab, var(--color-danger) 88%, black); }
 }

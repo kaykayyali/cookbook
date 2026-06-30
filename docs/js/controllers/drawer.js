@@ -4,6 +4,7 @@
 
 import { toast } from '../lib/dom.js';
 import { save as persist } from '../lib/store.js';
+import { fromSchema } from '../lib/schema.js';
 import {
   FIELD_MAP,
   NUTRI_MAP,
@@ -25,7 +26,8 @@ import {
  * @param {() => void} [deps.onSaved]
  * @param {(id: string) => void} [deps.onOpenDetail]
  * @param {() => void} [deps.onSchema] - fires when user clicks "View schema" in the drawer
- * @returns {{ open, openPrefilled, close, save }}
+ * @param {(id: string, recipe: object) => Promise<{ok: boolean, error?: string}>} [deps.onCommunitySave] - PUT a community edit
+ * @returns {{ open, openPrefilled, openCommunityEdit, close, save }}
  */
 export function initDrawer({
   state,
@@ -33,6 +35,7 @@ export function initDrawer({
   onSaved = null,
   onOpenDetail = null,
   onSchema = null,
+  onCommunitySave = null,
 }) {
   function openSheet() {
     const drawer = document.getElementById('recipe-drawer');
@@ -84,13 +87,31 @@ export function initDrawer({
     openSheet();
   }
 
-  function save() {
+  /** Open the drawer to edit a community recipe (author). Save PUTs to /api/community/:id. */
+  function openCommunityEdit(item) {
+    const internal = fromSchema(item.recipe); // canonical -> internal for the form
+    state.communityEdit = { id: item.id, author: item.author };
+    fillFromRecipe(internal);
+    document.getElementById('drawer-title').textContent = 'Edit Community Recipe';
+    openSheet();
+  }
+
+  async function save() {
     const r = collectForm(state);
     const err = validateRecipe(r);
     if (err) {
       toast(err);
       if (err.includes('name')) document.getElementById('f-name')?.focus();
       return { ok: false, error: err };
+    }
+    if (state.communityEdit) {
+      const res = onCommunitySave ? await onCommunitySave(state.communityEdit.id, r) : { ok: false, error: 'no_handler' };
+      if (!res.ok) { toast(res.error || 'Could not save community recipe'); return { ok: false, error: res.error }; }
+      delete state.communityEdit;
+      closeSheet();
+      if (onSaved) onSaved();
+      toast('Community recipe updated');
+      return { ok: true, recipe: r, isCommunity: true };
     }
     const idx = state.editingId ? state.recipes.findIndex((x) => x._id === state.editingId) : -1;
     const isNew = idx === -1;
@@ -172,7 +193,7 @@ export function initDrawer({
   }
 
   wireDrawer();
-  return { open, openPrefilled, close: closeSheet, save };
+  return { open, openPrefilled, openCommunityEdit, close: closeSheet, save };
 }
 
 function isAnyOpen(document) {
