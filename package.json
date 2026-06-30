@@ -5,14 +5,24 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "dev": "wrangler pages dev docs"
+    "build": "node scripts/build.js",
+    "build:watch": "node scripts/build.js --watch",
+    "dev": "npm run build && wrangler pages dev docs",
+    "test:e2e": "playwright test"
   },
-  "keywords": ["recipe", "cookbook", "schema.org", "json-ld", "pantry"],
+  "keywords": [
+    "recipe",
+    "cookbook",
+    "schema.org",
+    "json-ld",
+    "pantry"
+  ],
   "license": "MIT",
   "dependencies": {
     "jose": "^5.9.6"
   },
   "devDependencies": {
+    "esbuild": "^0.28.1",
     "wrangler": "^3.90.0"
   },
   "engines": {
