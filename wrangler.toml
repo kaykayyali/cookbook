@@ -2,6 +2,15 @@ name = "cookbook"
 pages_build_output_dir = "docs"
 compatibility_date = "2025-09-01"
 
+# Build step: bundle the layered CSS (docs/css/*.css → docs/css/bundle.css) and
+# the JS entry (docs/js/entry → docs/js/bundle.js) via esbuild. bundle.* are
+# gitignored build artifacts (see .gitignore), so they MUST be regenerated on
+# every deploy — index.html links ./css/bundle.css + ./js/bundle.js. Without
+# this build_command, a git-connected deploy would ship docs/ with no bundle
+# and the app would load unstyled/JS-less. `npm ci` installs esbuild (devDep);
+# `npm run build` runs scripts/build.js.
+build_command = "npm ci && npm run build"
+
 # Non-secret config. SESSION_SECRET is the only secret (set separately — see
 # the note at the bottom). GOOGLE_CLIENT_ID is committed here because:
 #   - It is public by design (it already ships in the frontend HTML).
@@ -26,15 +35,14 @@ EXTRACT_RATE_PER_MIN = "10"
 binding = "AI"
 
 # D1 database for the Community feed — accessible in Pages Functions as env.DB.
-# Create it once (`npx wrangler d1 create cookbook`) and paste the printed
-# database_id below. Git-connected deploys apply this binding from wrangler.toml.
-# The table self-creates on first request via ensureSchema() (see
-# functions/_lib/community.js), so a manual migration is optional; the SQL is
-# also committed at docs/superpowers/migrations/0001_community_recipes.sql.
+# Git-connected deploys apply this binding from wrangler.toml. The table is
+# created by the migration at docs/superpowers/migrations/0001_community_recipes.sql
+# (applied once) AND self-heals via ensureSchema() in functions/_lib/community.js
+# on first request, so a missed migration is non-fatal.
 [[d1_databases]]
 binding = "DB"
 database_name = "cookbook"
-database_id = "REPLACE_WITH_wrangler_d1_create_OUTPUT"
+database_id = "6a9fe6f0-054c-401d-a4d3-bb57f852e2e4"
 
 # Required secret (set via `wrangler pages secret put`, NEVER committed):
 #   SESSION_SECRET — >=32 char random string, e.g. `openssl rand -hex 32`
