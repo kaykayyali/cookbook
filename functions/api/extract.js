@@ -127,10 +127,13 @@ function realDeps(env) {
  * Protected by _middleware.js (request.auth attached). Per-email rate limited.
  */
 export async function onRequestPost(context) {
-	const { request, env } = context;
+	const { request, env, data } = context;
 
 	// 1. Verify Authentication Context
-	const email = request.auth && request.auth.email;
+	// Claims arrive via context.data.auth (set by _middleware.js), NOT via
+	// request.auth — expando properties on Request don't survive next() in
+	// the Workers runtime, so reading request.auth here would always fail.
+	const email = data && data.auth && data.auth.email;
 	if (typeof email !== "string" || !email) {
 		console.error(
 			"[Route Extract] Request blocked: Context middleware authentication properties are missing or malformed.",
