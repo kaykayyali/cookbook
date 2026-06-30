@@ -520,7 +520,7 @@
   }
   .detail-pantry-note strong { color: var(--color-fg); }
 
-  .detail-steps { padding: 26px 32px 40px; }
+  .detail-steps { padding: 26px 32px 48px; }
   .detail-step { display: flex; gap: 15px; margin-bottom: 24px; align-items: flex-start; }
   .detail-step:last-child { margin-bottom: 0; }
   .step-num {
@@ -541,19 +541,8 @@
     padding-top: 4px;
   }
 
-  .detail-nutrition {
-    flex-shrink: 0;
-    padding: 20px 32px;
-    border-top: 1px solid var(--color-border);
-    background: var(--color-bg);
-  }
-  .detail-nutrition-inner {
-    display: grid;
-    grid-template-columns: minmax(160px, max-content) 1fr;
-    align-items: center;
-    gap: 24px;
-  }
-  /* Spans full modal width as a single row of 4 equal cells. */
+  .detail-nutrition { margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--color-border); }
+  /* Single row of 4 equal cells inside the steps column. */
   .nutrition-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, 1fr); }
   .nutrition-cell {
     background: var(--color-bg-elevated);
