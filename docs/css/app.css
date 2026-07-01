@@ -380,7 +380,7 @@
 		border-style: solid;
 		border-width: 0 42px 42px 0;
 		border-color: transparent var(--color-bg) transparent transparent;
-		z-index: 2;
+		z-index: var(--z-card-deco);
 	}
 	.recipe-card::after {
 		content: "";
@@ -389,7 +389,7 @@
 		right: 0;
 		width: 42px;
 		height: 42px;
-		z-index: 1;
+		z-index: var(--z-card-deco-back);
 		background: var(--color-fg-subtle);
 	}
 	.card-fold-complete::after {
@@ -431,7 +431,6 @@
 		font-weight: 600;
 		line-height: var(--leading-snug);
 		margin-bottom: 10px;
-		padding-right: 28px;
 	}
 	/* Card header row: title + icon toolbar (Edit/Delete) sit inline.
      The toolbar replaces the old footer .card-actions — buttons now
@@ -456,9 +455,9 @@
 		margin-left: auto;
 		align-self: flex-start;
 		/* Keep the toolbar above the decorative folded corner (::before
-       is z-index 2) so the icon buttons stay clickable. */
+       is z-index var(--z-card-deco)) so the icon buttons stay clickable. */
 		position: relative;
-		z-index: 3;
+		z-index: var(--z-card-toolbar);
 	}
 	.card-meta {
 		display: flex;
@@ -538,7 +537,6 @@
 		border-top: 1px solid var(--color-border);
 		padding: 9px 12px 9px 18px;
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
 		background: var(--color-bg-sunken);
 	}
@@ -565,10 +563,6 @@
 	}
 	.card-fold-none .status-dot {
 		background: var(--color-danger);
-	}
-	.card-actions {
-		display: flex;
-		gap: 4px;
 	}
 
 	/* ════════════════════════════════════════════════════════
