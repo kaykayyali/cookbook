@@ -2,7 +2,7 @@
 // controllers/community.js — Community feed panel
 // ════════════════════════════════════════════════════════
 import { toast } from '../lib/dom.js';
-import { getToken } from '../lib/auth.js';
+import { getToken, initGoogleSignIn } from '../lib/auth.js';
 import { fetchCommunity, communityState, toLocalCopy, saveCommunityRecipe, deleteCommunityRecipe, shareRecipe as shareToCommunity } from '../lib/community.js';
 import { communityCardHTML, communityEmptyHTML } from '../components/communityCard.js';
 import { save as persist } from '../lib/store.js';
@@ -29,7 +29,13 @@ export function initCommunity({ state, panels, onOpenCommunityDetail = null, onS
     const grid = document.getElementById('community-grid');
     if (!grid) return;
     if (!getToken()) {
-      grid.innerHTML = `<div class="empty-state"><strong>Sign in to see the Community</strong><p>Shared recipes from everyone in your group appear here.</p></div>`;
+      grid.innerHTML = `<div class="empty-state"><strong>Sign in to see the Community</strong><p>Shared recipes from everyone in your group appear here.</p><div id="g-signin-btn"></div></div>`;
+      initGoogleSignIn({
+        buttonEl: document.getElementById('g-signin-btn'),
+        clientId: typeof window !== 'undefined' ? window.COOKBOOK_GOOGLE_CLIENT_ID : undefined,
+        onSignedIn: (email) => { state.auth = { sub: state.auth?.sub || null, email }; loadFirst(); },
+        onError: (msg) => toast(`Sign-in failed: ${msg}`),
+      });
       return;
     }
     if (state.community.error) {
@@ -118,7 +124,9 @@ export function initCommunity({ state, panels, onOpenCommunityDetail = null, onS
 
   panels.register('community', () => {
     // First show (signed in) fetches the feed; subsequent shows render from
-    // state. Signed-out shows the sign-in empty state via render().
+    // state. Signed-out shows the sign-in empty state via render() which also
+    // mounts the GIS button (re-render on each show so it reappears if the
+    // user signs out and comes back).
     if (!state.community.loaded && getToken()) loadFirst();
     else render();
   });
