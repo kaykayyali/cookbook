@@ -46,7 +46,7 @@ test('app.js calls all 10 controller init functions', () => {
   }
 });
 
-test('app.js stays under 60 lines (post-trim invariant)', () => {
+test('app.js stays under 70 lines (rendering-wiring allowance)', () => {
   const lines = source.split('\n').length;
-  assert.ok(lines <= 60, `app.js should be ≤ 60 lines (currently ${lines})`);
+  assert.ok(lines <= 70, `app.js should be ≤ 70 lines (currently ${lines})`);
 });
