@@ -6,6 +6,11 @@
 // without needing browser binaries. The actual app interaction is covered by
 // the per-controller unit tests.
 //
+// Self-builds: the `before` hook runs `node scripts/build.js` so the
+// gitignored bundle artifacts (docs/js/bundle.js, docs/css/bundle.css)
+// always exist for the smoke assertions. This keeps `npm test` green in a
+// fresh checkout / CI where no build has run, without weakening the smoke.
+//
 // Run via: node --test test/e2e-smoke.test.js
 
 import { test, before, after } from 'node:test';
@@ -14,6 +19,7 @@ import { createServer } from 'node:http';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -23,6 +29,20 @@ let server;
 let baseUrl;
 
 before(async () => {
+  // Ensure the bundle artifacts exist. They're gitignored, so a fresh
+  // checkout (or CI without a prior `npm run build`) would otherwise 404 the
+  // smoke tests. The build is fast + idempotent — safe to run unconditionally.
+  try {
+    execFileSync(process.execPath, [join(ROOT, 'scripts', 'build.js')], {
+      cwd: ROOT,
+      stdio: 'pipe',
+    });
+  } catch (e) {
+    // Surface build failures clearly — the smoke tests below will then fail
+    // with a meaningful cause instead of opaque 404s.
+    throw new Error(`smoke before-hook build failed: ${e?.stderr?.toString?.() || e?.message || e}`);
+  }
+
   server = createServer((req, res) => {
     let url = req.url.split('?')[0];
     if (url === '/') url = '/index.html';
