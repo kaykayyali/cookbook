@@ -1,410 +1,1143 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="theme-color" content="#1C1917">
-  <meta name="description" content="A mobile-first recipe manager that stores recipes as schema.org/Recipe JSON-LD.">
-  <title>Cookbook</title>
-  <script>window.COOKBOOK_GOOGLE_CLIENT_ID = '143579664794-tv48jb659iadrqqfvb13621qkdfas03k.apps.googleusercontent.com';</script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./css/bundle.css">
-  <script>
-    // Pre-paint theme application — runs before <body> is parsed so dark mode
-    // has no flash of light theme. Mirrors docs/js/lib/theme.js (which is too
-    // late: modules are deferred by default and would paint first).
-    // Reads through STORAGE_KEYS.theme; the key was bumped to cb_theme_v2
-    // (was cb_theme) when the 5-theme picker shipped, so existing dark-mode
-    // users fell back to OS auto on first load after that deploy.
-    (function () {
-      try {
-        var v = localStorage.getItem('cb_theme_v2');
-        if (v !== 'light' && v !== 'dark' && v !== 'sepia' && v !== 'forest' && v !== 'ocean') return;
-        document.documentElement.setAttribute('data-theme', v);
-      } catch (e) { /* private mode etc. — fall through to OS default */ }
-    })();
-  </script>
-</head>
-<body>
+	<head>
+		<meta charset="UTF-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+		/>
+		<meta
+			name="theme-color"
+			content="#1C1917"
+		/>
+		<meta
+			name="description"
+			content="A mobile-first recipe manager that stores recipes as schema.org/Recipe JSON-LD."
+		/>
+		<title>Cookbook</title>
+		<script>
+			window.COOKBOOK_GOOGLE_CLIENT_ID =
+				"143579664794-tv48jb659iadrqqfvb13621qkdfas03k.apps.googleusercontent.com";
+		</script>
+		<link
+			rel="preconnect"
+			href="https://fonts.googleapis.com"
+		/>
+		<link
+			rel="preconnect"
+			href="https://fonts.gstatic.com"
+			crossorigin
+		/>
+		<link
+			href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap"
+			rel="stylesheet"
+		/>
+		<link
+			rel="stylesheet"
+			href="./css/bundle.css"
+		/>
+		<script>
+			// Pre-paint theme application — runs before <body> is parsed so dark mode
+			// has no flash of light theme. Mirrors docs/js/lib/theme.js (which is too
+			// late: modules are deferred by default and would paint first).
+			// Reads through STORAGE_KEYS.theme; the key was bumped to cb_theme_v2
+			// (was cb_theme) when the 5-theme picker shipped, so existing dark-mode
+			// users fell back to OS auto on first load after that deploy.
+			(function () {
+				try {
+					var v = localStorage.getItem("cb_theme_v2");
+					if (
+						v !== "light" &&
+						v !== "dark" &&
+						v !== "sepia" &&
+						v !== "forest" &&
+						v !== "ocean"
+					)
+						return;
+					document.documentElement.setAttribute("data-theme", v);
+				} catch (e) {
+					/* private mode etc. — fall through to OS default */
+				}
+			})();
+		</script>
+	</head>
+	<body>
+		<!-- ─────────────────────────────── Sidebar / Bottom nav -->
+		<nav class="sidebar">
+			<div class="sidebar-brand">
+				<h1>Cookbook</h1>
+				<p>schema.org / Recipe</p>
+			</div>
+			<div class="sidebar-nav">
+				<button
+					class="nav-item active"
+					data-panel="recipes"
+				>
+					<svg
+						width="16"
+						height="16"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<path
+							d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2z"
+						/>
+						<path d="M8 7h8M8 11h8M8 15h5" />
+					</svg>
+					<span class="nav-tab-label">Recipes</span>
+				</button>
+				<button
+					class="nav-item"
+					data-panel="pantry"
+				>
+					<svg
+						width="16"
+						height="16"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<path d="M3 3h18v4H3zM6 7v13M18 7v13M3 13h18" />
+					</svg>
+					<span class="nav-tab-label">Pantry</span>
+				</button>
+				<button
+					class="nav-item"
+					data-panel="cart"
+				>
+					<svg
+						width="16"
+						height="16"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<path
+							d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2 6h13"
+						/>
+						<circle
+							cx="9"
+							cy="20"
+							r="1.5"
+						/>
+						<circle
+							cx="17"
+							cy="20"
+							r="1.5"
+						/>
+					</svg>
+					<span class="nav-tab-label">Shopping</span>
+				</button>
+				<button
+					class="nav-item"
+					data-panel="community"
+				>
+					<svg
+						width="16"
+						height="16"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<path
+							d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 10-4-4 4 4 0 004 4zm6 0a3 3 0 10-3-3"
+						/>
+					</svg>
+					<span class="nav-tab-label">Community</span>
+				</button>
+				<button
+					class="nav-item"
+					data-panel="settings"
+				>
+					<svg
+						width="16"
+						height="16"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<circle
+							cx="12"
+							cy="12"
+							r="3"
+						/>
+						<path
+							d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"
+						/>
+					</svg>
+					<span class="nav-tab-label">Settings</span>
+				</button>
+			</div>
+			<div class="sidebar-footer">
+				<p
+					class="auth-status"
+					id="auth-status"
+				>
+					Stored as
+					<a
+						href="https://schema.org/Recipe"
+						target="_blank"
+						rel="noopener"
+						>schema.org/Recipe</a
+					>
+					JSON-LD
+				</p>
+			</div>
+		</nav>
 
-<!-- ─────────────────────────────── Sidebar / Bottom nav -->
-<nav class="sidebar">
-  <div class="sidebar-brand">
-    <h1>Cookbook</h1>
-    <p>schema.org / Recipe</p>
-  </div>
-  <div class="sidebar-nav">
-    <button class="nav-item active" data-panel="recipes">
-      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2z"/><path d="M8 7h8M8 11h8M8 15h5"/></svg>
-      <span class="nav-tab-label">Recipes</span>
-    </button>
-    <button class="nav-item" data-panel="pantry">
-      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M3 3h18v4H3zM6 7v13M18 7v13M3 13h18"/></svg>
-      <span class="nav-tab-label">Pantry</span>
-    </button>
-    <button class="nav-item" data-panel="cart">
-      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2 6h13"/><circle cx="9" cy="20" r="1.5"/><circle cx="17" cy="20" r="1.5"/></svg>
-      <span class="nav-tab-label">Shopping</span>
-    </button>
-    <button class="nav-item" data-panel="settings">
-      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
-      <span class="nav-tab-label">Settings</span>
-    </button>
-    <button class="nav-item" data-panel="community">
-      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 10-4-4 4 4 0 004 4zm6 0a3 3 0 10-3-3"/></svg>
-      <span class="nav-tab-label">Community</span>
-    </button>
-  </div>
-  <div class="sidebar-footer">
-    <p class="auth-status" id="auth-status">Stored as <a href="https://schema.org/Recipe" target="_blank" rel="noopener">schema.org/Recipe</a> JSON-LD</p>
-  </div>
-</nav>
+		<!-- ─────────────────────────────── Main -->
+		<div class="main">
+			<div class="topbar">
+				<div class="search-wrap">
+					<span
+						class="search-icon"
+						aria-hidden="true"
+					>
+						<svg
+							width="15"
+							height="15"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<circle
+								cx="11"
+								cy="11"
+								r="8"
+							/>
+							<path d="M21 21l-4.35-4.35" />
+						</svg>
+					</span>
+					<input
+						type="text"
+						class="input"
+						id="search-input"
+						placeholder="Search by name, cuisine, or ingredient…"
+					/>
+					<button
+						class="icon-btn search-clear"
+						id="search-clear"
+						aria-label="Clear search"
+					>
+						<svg
+							width="16"
+							height="16"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<path d="M18 6L6 18M6 6l12 12" />
+						</svg>
+					</button>
+				</div>
+				<div
+					class="chips-scroll"
+					id="category-chips"
+					role="tablist"
+					aria-label="Filter by category"
+				>
+					<button
+						class="chip is-active"
+						data-cat=""
+						role="tab"
+						aria-selected="true"
+					>
+						All
+					</button>
+					<button
+						class="chip"
+						data-cat="Breakfast"
+						role="tab"
+						aria-selected="false"
+					>
+						Breakfast
+					</button>
+					<button
+						class="chip"
+						data-cat="Appetizer"
+						role="tab"
+						aria-selected="false"
+					>
+						Appetizer
+					</button>
+					<button
+						class="chip"
+						data-cat="Entree"
+						role="tab"
+						aria-selected="false"
+					>
+						Entree
+					</button>
+					<button
+						class="chip"
+						data-cat="Side Dish"
+						role="tab"
+						aria-selected="false"
+					>
+						Side Dish
+					</button>
+					<button
+						class="chip"
+						data-cat="Dessert"
+						role="tab"
+						aria-selected="false"
+					>
+						Dessert
+					</button>
+					<button
+						class="chip"
+						data-cat="Snack"
+						role="tab"
+						aria-selected="false"
+					>
+						Snack
+					</button>
+					<button
+						class="chip"
+						data-cat="Beverage"
+						role="tab"
+						aria-selected="false"
+					>
+						Beverage
+					</button>
+				</div>
+			</div>
 
-<!-- ─────────────────────────────── Main -->
-<div class="main">
-  <div class="topbar">
-    <div class="search-wrap">
-      <span class="search-icon" aria-hidden="true">
-        <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-      </span>
-      <input type="text" class="input" id="search-input" placeholder="Search by name, cuisine, or ingredient…">
-      <button class="icon-btn search-clear" id="search-clear" aria-label="Clear search">
-        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-      </button>
-    </div>
-    <div class="chips-scroll" id="category-chips" role="tablist" aria-label="Filter by category">
-      <button class="chip is-active" data-cat="" role="tab" aria-selected="true">All</button>
-      <button class="chip" data-cat="Breakfast" role="tab" aria-selected="false">Breakfast</button>
-      <button class="chip" data-cat="Appetizer" role="tab" aria-selected="false">Appetizer</button>
-      <button class="chip" data-cat="Entree" role="tab" aria-selected="false">Entree</button>
-      <button class="chip" data-cat="Side Dish" role="tab" aria-selected="false">Side Dish</button>
-      <button class="chip" data-cat="Dessert" role="tab" aria-selected="false">Dessert</button>
-      <button class="chip" data-cat="Snack" role="tab" aria-selected="false">Snack</button>
-      <button class="chip" data-cat="Beverage" role="tab" aria-selected="false">Beverage</button>
-    </div>
-  </div>
+			<!-- Recipes -->
+			<section
+				class="panel"
+				id="panel-recipes"
+			>
+				<div class="panel-header">
+					<div>
+						<h2>My Recipes</h2>
+						<p id="recipe-count">0 recipes</p>
+					</div>
+					<label class="ready-toggle">
+						<input
+							type="checkbox"
+							class="checkbox"
+							id="eligible-only"
+						/>
+						filter by ready to make
+					</label>
+				</div>
+				<div
+					class="recipe-grid"
+					id="recipe-grid"
+				></div>
+			</section>
 
-  <!-- Recipes -->
-  <section class="panel" id="panel-recipes">
-    <div class="panel-header">
-      <div>
-        <h2>My Recipes</h2>
-        <p id="recipe-count">0 recipes</p>
-      </div>
-      <label class="ready-toggle">
-        <input type="checkbox" class="checkbox" id="eligible-only"> filter by ready to make
-      </label>
-    </div>
-    <div class="recipe-grid" id="recipe-grid"></div>
-  </section>
+			<!-- Pantry -->
+			<section
+				class="panel"
+				id="panel-pantry"
+			>
+				<div class="panel-header">
+					<div>
+						<h2>Pantry</h2>
+						<p>
+							What you have on hand — used to show which recipes
+							you can make
+						</p>
+					</div>
+				</div>
+				<div class="pantry-add">
+					<input
+						type="text"
+						class="input"
+						id="pantry-input"
+						placeholder="Add ingredient, e.g. olive oil"
+						list="pantry-suggestions"
+						autocomplete="off"
+					/>
+					<datalist id="pantry-suggestions"></datalist>
+					<button
+						class="btn btn-primary"
+						id="pantry-add-btn"
+					>
+						Add
+					</button>
+				</div>
+				<p class="pantry-hint">
+					Matching is flexible — <em>olive oil</em> in your pantry
+					matches <em>2 tablespoons olive oil</em> in a recipe.
+				</p>
+				<div
+					class="pantry-grid"
+					id="pantry-grid"
+				></div>
+			</section>
 
-  <!-- Pantry -->
-  <section class="panel" id="panel-pantry">
-    <div class="panel-header">
-      <div>
-        <h2>Pantry</h2>
-        <p>What you have on hand — used to show which recipes you can make</p>
-      </div>
-    </div>
-    <div class="pantry-add">
-      <input type="text" class="input" id="pantry-input" placeholder="Add ingredient, e.g. olive oil" list="pantry-suggestions" autocomplete="off">
-      <datalist id="pantry-suggestions"></datalist>
-      <button class="btn btn-primary" id="pantry-add-btn">Add</button>
-    </div>
-    <p class="pantry-hint">Matching is flexible — <em>olive oil</em> in your pantry matches <em>2 tablespoons olive oil</em> in a recipe.</p>
-    <div class="pantry-grid" id="pantry-grid"></div>
-  </section>
+			<!-- Shopping list -->
+			<section
+				class="panel"
+				id="panel-cart"
+			>
+				<div class="panel-header">
+					<div>
+						<h2>Shopping list</h2>
+						<p>
+							Tap an item to mark it bought — it leaves the list
+							and lands in your pantry.
+						</p>
+					</div>
+					<button
+						class="btn btn-ghost btn-sm"
+						id="cart-clear-btn"
+					>
+						Clear list
+					</button>
+				</div>
+				<div
+					class="cart-grid"
+					id="cart-grid"
+				></div>
+			</section>
 
-  <!-- Shopping list -->
-  <section class="panel" id="panel-cart">
-    <div class="panel-header">
-      <div>
-        <h2>Shopping list</h2>
-        <p>Tap an item to mark it bought — it leaves the list and lands in your pantry.</p>
-      </div>
-      <button class="btn btn-ghost btn-sm" id="cart-clear-btn">Clear list</button>
-    </div>
-    <div class="cart-grid" id="cart-grid"></div>
-  </section>
+			<!-- Settings -->
+			<section
+				class="panel"
+				id="panel-settings"
+			>
+				<div class="panel-header">
+					<div>
+						<h2>Settings</h2>
+						<p>Account and data management</p>
+					</div>
+				</div>
 
-  <!-- Settings -->
-  <section class="panel" id="panel-settings">
-    <div class="panel-header">
-      <div>
-        <h2>Settings</h2>
-        <p>Account and data management</p>
-      </div>
-    </div>
+				<div class="settings-section">
+					<p class="settings-section-label">Account</p>
+					<div id="settings-auth-zone"></div>
+				</div>
 
-    <div class="settings-section">
-      <p class="settings-section-label">Account</p>
-      <div id="settings-auth-zone"></div>
-    </div>
+				<div class="settings-section">
+					<p class="settings-section-label">Theme</p>
+					<div id="settings-theme-zone"></div>
+				</div>
 
-    <div class="settings-section">
-      <p class="settings-section-label">Theme</p>
-      <div id="settings-theme-zone"></div>
-    </div>
+				<div class="settings-section">
+					<p class="settings-section-label">Data</p>
+					<div class="settings-row">
+						<button
+							class="btn btn-ghost"
+							id="settings-import-btn"
+						>
+							Import from file
+						</button>
+						<button
+							class="btn btn-ghost"
+							id="settings-export-btn"
+						>
+							Export all recipes
+						</button>
+					</div>
+					<input
+						type="file"
+						id="import-file"
+						accept=".json,application/json"
+						hidden
+					/>
+				</div>
 
-    <div class="settings-section">
-      <p class="settings-section-label">Data</p>
-      <div class="settings-row">
-        <button class="btn btn-ghost" id="settings-import-btn">Import from file</button>
-        <button class="btn btn-ghost" id="settings-export-btn">Export all recipes</button>
-      </div>
-      <input type="file" id="import-file" accept=".json,application/json" hidden>
-    </div>
+				<div class="settings-section">
+					<p class="settings-section-label">About</p>
+					<p class="settings-hint">
+						Stored locally as JSON-LD, synced only when signed in.
+					</p>
+				</div>
+			</section>
 
-    <div class="settings-section">
-      <p class="settings-section-label">About</p>
-      <p class="settings-hint">Stored locally as JSON-LD, synced only when signed in.</p>
-    </div>
-  </section>
+			<!-- Community -->
+			<section
+				class="panel"
+				id="panel-community"
+			>
+				<div class="panel-header">
+					<h2>Community</h2>
+					<span
+						id="community-count"
+						class="panel-count"
+					></span>
+				</div>
+				<p class="panel-hint">
+					Recipes shared by everyone in your group, marked by who
+					added them.
+				</p>
+				<div
+					id="community-grid"
+					class="recipe-grid"
+				></div>
+				<div class="load-more-wrap">
+					<button
+						class="btn btn-ghost"
+						id="community-load-more"
+						style="display: none"
+					>
+						Load more
+					</button>
+				</div>
+			</section>
+		</div>
 
-  <!-- Community -->
-  <section class="panel" id="panel-community">
-    <div class="panel-header">
-      <h2>Community</h2>
-      <span id="community-count" class="panel-count"></span>
-    </div>
-    <p class="panel-hint">Recipes shared by everyone in your group, marked by who added them.</p>
-    <div id="community-grid" class="recipe-grid"></div>
-    <div class="load-more-wrap"><button class="btn btn-ghost" id="community-load-more" style="display:none">Load more</button></div>
-  </section>
-</div>
+		<!-- FAB -->
+		<div class="fab-stack">
+			<div
+				class="fab-dropdown"
+				id="fab-dropdown"
+				hidden
+				role="menu"
+			>
+				<button
+					class="fab-dropdown-item"
+					data-fab-action="manual"
+					role="menuitem"
+				>
+					Enter Manually
+				</button>
+				<span
+					class="fab-dropdown-divider"
+					aria-hidden="true"
+				></span>
+				<button
+					class="fab-dropdown-item"
+					data-fab-action="url"
+					role="menuitem"
+				>
+					Extract from URL
+				</button>
+			</div>
+			<button
+				class="fab"
+				id="fab-new"
+				aria-label="New recipe"
+				aria-haspopup="menu"
+				aria-expanded="false"
+			>
+				<svg
+					width="24"
+					height="24"
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke="currentColor"
+					stroke-width="2.5"
+				>
+					<path d="M12 5v14M5 12h14" />
+				</svg>
+			</button>
+		</div>
 
-<!-- FAB -->
-<div class="fab-stack">
-  <div class="fab-dropdown" id="fab-dropdown" hidden role="menu">
-    <button class="fab-dropdown-item" data-fab-action="manual" role="menuitem">Enter Manually</button>
-    <span class="fab-dropdown-divider" aria-hidden="true"></span>
-    <button class="fab-dropdown-item" data-fab-action="url" role="menuitem">Extract from URL</button>
-  </div>
-  <button class="fab" id="fab-new" aria-label="New recipe" aria-haspopup="menu" aria-expanded="false">
-    <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-  </button>
-</div>
+		<!-- ─────────────────────────────── Detail modal -->
+		<div
+			class="overlay"
+			id="detail-overlay"
+		></div>
+		<div
+			class="detail-modal"
+			id="detail-modal"
+			role="dialog"
+			aria-label="Recipe detail"
+		>
+			<div class="detail-header">
+				<div class="detail-header-left">
+					<p
+						class="detail-eyebrow"
+						id="dm-eyebrow"
+					></p>
+					<h2
+						class="detail-title"
+						id="dm-title"
+					></h2>
+					<div
+						class="detail-meta-row"
+						id="dm-meta"
+					></div>
+					<span
+						id="dm-author-badge"
+						class="author-badge"
+						style="display: none"
+					></span>
+				</div>
+				<button
+					class="detail-close"
+					id="detail-close-btn"
+				>
+					<svg
+						width="14"
+						height="14"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<path d="M18 6L6 18M6 6l12 12" />
+					</svg>
+					Close
+				</button>
+			</div>
+			<div class="detail-body">
+				<div class="detail-ingredients">
+					<div class="section-label-row">
+						<p class="section-label">Ingredients</p>
+					</div>
+					<ul
+						class="detail-ing-list"
+						id="dm-ingredients"
+					></ul>
+					<div
+						class="detail-pantry-note"
+						id="dm-pantry-note"
+					></div>
+				</div>
+				<div class="detail-steps">
+					<p class="section-label">Method</p>
+					<div id="dm-steps"></div>
+				</div>
+			</div>
+			<div
+				class="detail-nutrition"
+				id="dm-nutrition"
+				style="display: none"
+			>
+				<p class="section-label">
+					Nutrition <span class="sub">per serving</span>
+				</p>
+				<div
+					class="nutrition-grid"
+					id="dm-nutrition-grid"
+				></div>
+			</div>
+			<div class="detail-footer">
+				<button
+					class="btn btn-ghost btn-sm"
+					id="dm-add-all-btn"
+				>
+					Add all items to cart
+				</button>
+				<button
+					class="btn btn-ghost btn-sm"
+					id="dm-schema-btn"
+				>
+					View JSON-LD
+				</button>
+				<button
+					class="btn btn-ghost btn-sm"
+					id="dm-save-local-btn"
+					style="display: none"
+				>
+					Save to my library
+				</button>
+				<button
+					class="btn btn-ghost btn-sm"
+					id="dm-community-edit-btn"
+					style="display: none"
+				>
+					Edit
+				</button>
+				<button
+					class="btn btn-danger btn-sm"
+					id="dm-community-delete-btn"
+					style="display: none"
+				>
+					Delete
+				</button>
+				<div class="detail-actions">
+					<button
+						class="btn btn-ghost btn-sm"
+						id="dm-edit-btn"
+					>
+						<svg
+							width="13"
+							height="13"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<path
+								d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"
+							/>
+							<path
+								d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"
+							/>
+						</svg>
+						Edit
+					</button>
+					<button
+						class="btn btn-ghost btn-sm"
+						id="dm-share-community-btn"
+						style="display: none"
+					>
+						Share to Community
+					</button>
+				</div>
+			</div>
+		</div>
 
-<!-- ─────────────────────────────── Detail modal -->
-<div class="overlay" id="detail-overlay"></div>
-<div class="detail-modal" id="detail-modal" role="dialog" aria-label="Recipe detail">
-  <div class="detail-header">
-    <div class="detail-header-left">
-      <p class="detail-eyebrow" id="dm-eyebrow"></p>
-      <h2 class="detail-title" id="dm-title"></h2>
-      <div class="detail-meta-row" id="dm-meta"></div>
-      <span id="dm-author-badge" class="author-badge" style="display:none"></span>
-    </div>
-    <button class="detail-close" id="detail-close-btn">
-      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-      Close
-    </button>
-  </div>
-  <div class="detail-body">
-    <div class="detail-ingredients">
-      <div class="section-label-row">
-        <p class="section-label">Ingredients</p>
-      </div>
-      <ul class="detail-ing-list" id="dm-ingredients"></ul>
-      <div class="detail-pantry-note" id="dm-pantry-note"></div>
-    </div>
-    <div class="detail-steps">
-      <p class="section-label">Method</p>
-      <div id="dm-steps"></div>
-    </div>
-  </div>
-  <div class="detail-nutrition" id="dm-nutrition" style="display:none">
-    <p class="section-label">Nutrition <span class="sub">per serving</span></p>
-    <div class="nutrition-grid" id="dm-nutrition-grid"></div>
-  </div>
-  <div class="detail-footer">
-    <button class="btn btn-ghost btn-sm" id="dm-add-all-btn">Add all items to cart</button>
-    <button class="btn btn-ghost btn-sm" id="dm-schema-btn">View JSON-LD</button>
-    <button class="btn btn-ghost btn-sm" id="dm-save-local-btn" style="display:none">Save to my library</button>
-    <button class="btn btn-ghost btn-sm" id="dm-community-edit-btn" style="display:none">Edit</button>
-    <button class="btn btn-danger btn-sm" id="dm-community-delete-btn" style="display:none">Delete</button>
-    <div class="detail-actions">
-      <button class="btn btn-ghost btn-sm" id="dm-edit-btn">
-        <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        Edit
-      </button>
-      <button class="btn btn-ghost btn-sm" id="dm-share-community-btn" style="display:none">Share to Community</button>
-    </div>
-  </div>
-</div>
+		<!-- ─────────────────────────────── Drawer (create/edit) -->
+		<div
+			class="overlay"
+			id="drawer-overlay"
+		></div>
+		<aside
+			class="drawer"
+			id="recipe-drawer"
+			role="dialog"
+			aria-label="Recipe editor"
+		>
+			<div class="drawer-header">
+				<h3 id="drawer-title">New Recipe</h3>
+				<button
+					class="drawer-close"
+					id="drawer-close-btn"
+					aria-label="Close"
+				>
+					<svg
+						width="20"
+						height="20"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<path d="M18 6L6 18M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+			<div class="drawer-body">
+				<form
+					id="recipe-form"
+					autocomplete="off"
+				>
+					<p class="form-section-label">Identity</p>
+					<div class="form-group">
+						<label for="f-name"
+							>Recipe Name <span class="req">*</span></label
+						>
+						<input
+							type="text"
+							class="input"
+							id="f-name"
+							required
+							placeholder="e.g. Classic Shakshuka"
+						/>
+					</div>
+					<div class="form-row">
+						<div class="form-col">
+							<label for="f-category">Category</label>
+							<select
+								class="select"
+								id="f-category"
+							>
+								<option value="">— choose —</option>
+								<option>Breakfast</option>
+								<option>Appetizer</option>
+								<option>Entree</option>
+								<option>Side Dish</option>
+								<option>Dessert</option>
+								<option>Snack</option>
+								<option>Beverage</option>
+							</select>
+						</div>
+						<div class="form-col">
+							<label for="f-cuisine">Cuisine</label>
+							<input
+								type="text"
+								class="input"
+								id="f-cuisine"
+								placeholder="e.g. Italian"
+							/>
+						</div>
+					</div>
+					<div class="form-row">
+						<div class="form-col">
+							<label for="f-yield">Yield</label>
+							<input
+								type="text"
+								class="input"
+								id="f-yield"
+								placeholder="e.g. 4 servings"
+							/>
+						</div>
+						<div class="form-col">
+							<label for="f-method">Cooking Method</label>
+							<select
+								class="select"
+								id="f-method"
+							>
+								<option value="">— choose —</option>
+								<option>Baking</option>
+								<option>Boiling</option>
+								<option>Frying</option>
+								<option>Grilling</option>
+								<option>Roasting</option>
+								<option>Steaming</option>
+								<option>Stir-Frying</option>
+								<option>Stovetop</option>
+							</select>
+						</div>
+					</div>
+					<div class="form-row">
+						<div class="form-col">
+							<label for="f-diet">Suitable For Diet</label>
+							<select
+								class="select"
+								id="f-diet"
+							>
+								<option value="">Any diet</option>
+								<option
+									value="https://schema.org/GlutenFreeDiet"
+								>
+									Gluten Free
+								</option>
+								<option value="https://schema.org/DiabeticDiet">
+									Diabetic
+								</option>
+								<option value="https://schema.org/HalalDiet">
+									Halal
+								</option>
+								<option value="https://schema.org/KosherDiet">
+									Kosher
+								</option>
+								<option
+									value="https://schema.org/LowCalorieDiet"
+								>
+									Low Calorie
+								</option>
+								<option value="https://schema.org/LowFatDiet">
+									Low Fat
+								</option>
+								<option value="https://schema.org/VeganDiet">
+									Vegan
+								</option>
+								<option
+									value="https://schema.org/VegetarianDiet"
+								>
+									Vegetarian
+								</option>
+							</select>
+						</div>
+						<div class="form-col">
+							<label for="f-url">Source URL</label>
+							<input
+								type="url"
+								class="input"
+								id="f-url"
+								placeholder="https://…"
+							/>
+						</div>
+					</div>
 
-<!-- ─────────────────────────────── Drawer (create/edit) -->
-<div class="overlay" id="drawer-overlay"></div>
-<aside class="drawer" id="recipe-drawer" role="dialog" aria-label="Recipe editor">
-  <div class="drawer-header">
-    <h3 id="drawer-title">New Recipe</h3>
-    <button class="drawer-close" id="drawer-close-btn" aria-label="Close">
-      <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-    </button>
-  </div>
-  <div class="drawer-body">
-    <form id="recipe-form" autocomplete="off">
-      <p class="form-section-label">Identity</p>
-      <div class="form-group">
-        <label for="f-name">Recipe Name <span class="req">*</span></label>
-        <input type="text" class="input" id="f-name" required placeholder="e.g. Classic Shakshuka">
-      </div>
-      <div class="form-row">
-        <div class="form-col">
-          <label for="f-category">Category</label>
-          <select class="select" id="f-category">
-            <option value="">— choose —</option>
-            <option>Breakfast</option><option>Appetizer</option><option>Entree</option>
-            <option>Side Dish</option><option>Dessert</option><option>Snack</option><option>Beverage</option>
-          </select>
-        </div>
-        <div class="form-col">
-          <label for="f-cuisine">Cuisine</label>
-          <input type="text" class="input" id="f-cuisine" placeholder="e.g. Italian">
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-col">
-          <label for="f-yield">Yield</label>
-          <input type="text" class="input" id="f-yield" placeholder="e.g. 4 servings">
-        </div>
-        <div class="form-col">
-          <label for="f-method">Cooking Method</label>
-          <select class="select" id="f-method">
-            <option value="">— choose —</option>
-            <option>Baking</option><option>Boiling</option><option>Frying</option><option>Grilling</option>
-            <option>Roasting</option><option>Steaming</option><option>Stir-Frying</option><option>Stovetop</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-col">
-          <label for="f-diet">Suitable For Diet</label>
-          <select class="select" id="f-diet">
-            <option value="">Any diet</option>
-            <option value="https://schema.org/GlutenFreeDiet">Gluten Free</option>
-            <option value="https://schema.org/DiabeticDiet">Diabetic</option>
-            <option value="https://schema.org/HalalDiet">Halal</option>
-            <option value="https://schema.org/KosherDiet">Kosher</option>
-            <option value="https://schema.org/LowCalorieDiet">Low Calorie</option>
-            <option value="https://schema.org/LowFatDiet">Low Fat</option>
-            <option value="https://schema.org/VeganDiet">Vegan</option>
-            <option value="https://schema.org/VegetarianDiet">Vegetarian</option>
-          </select>
-        </div>
-        <div class="form-col">
-          <label for="f-url">Source URL</label>
-          <input type="url" class="input" id="f-url" placeholder="https://…">
-        </div>
-      </div>
+					<p class="form-section-label">
+						Timing
+						<span
+							style="
+								font-weight: 400;
+								text-transform: none;
+								letter-spacing: 0;
+							"
+							>(ISO 8601)</span
+						>
+					</p>
+					<div class="form-row">
+						<div class="form-col">
+							<label for="f-prep">Prep</label>
+							<input
+								type="text"
+								class="input"
+								id="f-prep"
+								placeholder="PT10M"
+							/>
+						</div>
+						<div class="form-col">
+							<label for="f-cook">Cook</label>
+							<input
+								type="text"
+								class="input"
+								id="f-cook"
+								placeholder="PT20M"
+							/>
+						</div>
+						<div class="form-col">
+							<label for="f-total">Total</label>
+							<input
+								type="text"
+								class="input"
+								id="f-total"
+								placeholder="PT30M"
+							/>
+						</div>
+					</div>
+					<p class="form-hint">
+						PT10M = 10 min · PT1H30M = 1 hr 30 min
+					</p>
 
-      <p class="form-section-label">Timing <span style="font-weight:400;text-transform:none;letter-spacing:0">(ISO 8601)</span></p>
-      <div class="form-row">
-        <div class="form-col">
-          <label for="f-prep">Prep</label>
-          <input type="text" class="input" id="f-prep" placeholder="PT10M">
-        </div>
-        <div class="form-col">
-          <label for="f-cook">Cook</label>
-          <input type="text" class="input" id="f-cook" placeholder="PT20M">
-        </div>
-        <div class="form-col">
-          <label for="f-total">Total</label>
-          <input type="text" class="input" id="f-total" placeholder="PT30M">
-        </div>
-      </div>
-      <p class="form-hint">PT10M = 10 min · PT1H30M = 1 hr 30 min</p>
+					<p class="form-section-label">
+						Ingredients <span class="req">*</span>
+					</p>
+					<div
+						class="ing-editor"
+						id="ing-editor"
+					></div>
+					<div class="add-row">
+						<input
+							type="text"
+							class="input"
+							id="ing-new-input"
+							placeholder="e.g. 2 tablespoons olive oil"
+						/>
+						<button
+							type="button"
+							class="btn btn-ghost btn-sm"
+							id="ing-add-btn"
+						>
+							+ Add
+						</button>
+					</div>
 
-      <p class="form-section-label">Ingredients <span class="req">*</span></p>
-      <div class="ing-editor" id="ing-editor"></div>
-      <div class="add-row">
-        <input type="text" class="input" id="ing-new-input" placeholder="e.g. 2 tablespoons olive oil">
-        <button type="button" class="btn btn-ghost btn-sm" id="ing-add-btn">+ Add</button>
-      </div>
+					<p class="form-section-label">
+						Instructions <span class="req">*</span>
+					</p>
+					<div
+						class="steps-list"
+						id="steps-list"
+					></div>
+					<button
+						type="button"
+						class="btn btn-ghost btn-sm"
+						id="step-add-btn"
+						style="margin-top: 8px"
+					>
+						+ Add Step
+					</button>
 
-      <p class="form-section-label">Instructions <span class="req">*</span></p>
-      <div class="steps-list" id="steps-list"></div>
-      <button type="button" class="btn btn-ghost btn-sm" id="step-add-btn" style="margin-top:8px">+ Add Step</button>
+					<p class="form-section-label">
+						Nutrition
+						<span
+							style="
+								font-weight: 400;
+								text-transform: none;
+								letter-spacing: 0;
+							"
+							>(optional, per serving)</span
+						>
+					</p>
+					<div class="form-row">
+						<div class="form-col">
+							<label for="f-serving">Serving Size</label>
+							<input
+								type="text"
+								class="input"
+								id="f-serving"
+								placeholder="1 cup"
+							/>
+						</div>
+						<div class="form-col">
+							<label for="f-calories">Calories</label>
+							<input
+								type="text"
+								class="input"
+								id="f-calories"
+								placeholder="320 kcal"
+							/>
+						</div>
+					</div>
+					<div class="form-row">
+						<div class="form-col">
+							<label for="f-protein">Protein</label>
+							<input
+								type="text"
+								class="input"
+								id="f-protein"
+								placeholder="12 g"
+							/>
+						</div>
+						<div class="form-col">
+							<label for="f-fat">Fat</label>
+							<input
+								type="text"
+								class="input"
+								id="f-fat"
+								placeholder="9 g"
+							/>
+						</div>
+						<div class="form-col">
+							<label for="f-carbs">Carbs</label>
+							<input
+								type="text"
+								class="input"
+								id="f-carbs"
+								placeholder="40 g"
+							/>
+						</div>
+					</div>
+					<input
+						type="hidden"
+						id="f-id"
+					/>
+				</form>
+			</div>
+			<div class="drawer-footer">
+				<button
+					class="btn btn-ghost"
+					id="drawer-cancel-btn"
+				>
+					Cancel
+				</button>
+				<button
+					class="btn btn-ghost btn-sm"
+					id="view-schema-btn"
+				>
+					View JSON-LD
+				</button>
+				<button
+					class="btn btn-primary"
+					id="save-recipe-btn"
+				>
+					Save Recipe
+				</button>
+			</div>
+		</aside>
 
-      <p class="form-section-label">Nutrition <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional, per serving)</span></p>
-      <div class="form-row">
-        <div class="form-col">
-          <label for="f-serving">Serving Size</label>
-          <input type="text" class="input" id="f-serving" placeholder="1 cup">
-        </div>
-        <div class="form-col">
-          <label for="f-calories">Calories</label>
-          <input type="text" class="input" id="f-calories" placeholder="320 kcal">
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-col">
-          <label for="f-protein">Protein</label>
-          <input type="text" class="input" id="f-protein" placeholder="12 g">
-        </div>
-        <div class="form-col">
-          <label for="f-fat">Fat</label>
-          <input type="text" class="input" id="f-fat" placeholder="9 g">
-        </div>
-        <div class="form-col">
-          <label for="f-carbs">Carbs</label>
-          <input type="text" class="input" id="f-carbs" placeholder="40 g">
-        </div>
-      </div>
-      <input type="hidden" id="f-id">
-    </form>
-  </div>
-  <div class="drawer-footer">
-    <button class="btn btn-ghost" id="drawer-cancel-btn">Cancel</button>
-    <button class="btn btn-ghost btn-sm" id="view-schema-btn">View JSON-LD</button>
-    <button class="btn btn-primary" id="save-recipe-btn">Save Recipe</button>
-  </div>
-</aside>
+		<!-- ─────────────────────────────── JSON-LD modal -->
+		<div
+			class="schema-overlay"
+			id="schema-overlay"
+		>
+			<div class="schema-modal">
+				<div class="schema-modal-header">
+					<h4>JSON-LD · schema.org/Recipe</h4>
+					<div class="schema-actions">
+						<button
+							class="schema-copy"
+							id="schema-copy-btn"
+						>
+							Copy
+						</button>
+						<button
+							id="schema-close-btn"
+							aria-label="Close"
+						>
+							<svg
+								width="18"
+								height="18"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+								stroke-width="2"
+							>
+								<path d="M18 6L6 18M6 6l12 12" />
+							</svg>
+						</button>
+					</div>
+				</div>
+				<pre id="schema-preview"></pre>
+			</div>
+		</div>
 
-<!-- ─────────────────────────────── JSON-LD modal -->
-<div class="schema-overlay" id="schema-overlay">
-  <div class="schema-modal">
-    <div class="schema-modal-header">
-      <h4>JSON-LD · schema.org/Recipe</h4>
-      <div class="schema-actions">
-        <button class="schema-copy" id="schema-copy-btn">Copy</button>
-        <button id="schema-close-btn" aria-label="Close">
-          <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
-      </div>
-    </div>
-    <pre id="schema-preview"></pre>
-  </div>
-</div>
+		<!-- ─────────────────────────────── URL import modal -->
+		<div
+			class="schema-overlay"
+			id="url-overlay"
+		>
+			<div
+				class="schema-modal"
+				style="max-width: 520px"
+			>
+				<div class="schema-modal-header">
+					<h4>Import from URL</h4>
+					<button
+						id="url-close-btn"
+						aria-label="Close"
+					>
+						<svg
+							width="18"
+							height="18"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<path d="M18 6L6 18M6 6l12 12" />
+						</svg>
+					</button>
+				</div>
+				<div style="padding: 1rem">
+					<div
+						id="url-signedout"
+						style="
+							display: none;
+							color: var(--ink-light, #a8a29e);
+							font-size: 0.9rem;
+						"
+					>
+						Sign in to import from a URL.
+						<button
+							class="btn btn-ghost btn-sm"
+							id="url-signin-hint-btn"
+						>
+							Sign in
+						</button>
+					</div>
+					<div id="url-signedin">
+						<input
+							type="url"
+							id="url-input"
+							placeholder="https://example.com/recipe"
+							style="
+								width: 100%;
+								margin-bottom: 0.75rem;
+								padding: 0.5rem;
+								border-radius: 6px;
+								border: 1px solid var(--border, #3a3531);
+								background: var(--surface, #26221e);
+								color: inherit;
+							"
+						/>
+						<button
+							class="btn btn-primary btn-sm"
+							id="url-extract-btn"
+						>
+							Extract
+						</button>
+						<span
+							id="url-status"
+							style="
+								margin-left: 0.5rem;
+								color: var(--ink-light, #a8a29e);
+								font-size: 0.85rem;
+							"
+						></span>
+					</div>
+				</div>
+			</div>
+		</div>
 
-<!-- ─────────────────────────────── URL import modal -->
-<div class="schema-overlay" id="url-overlay">
-  <div class="schema-modal" style="max-width:520px">
-    <div class="schema-modal-header">
-      <h4>Import from URL</h4>
-      <button id="url-close-btn" aria-label="Close">
-        <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-      </button>
-    </div>
-    <div style="padding:1rem">
-      <div id="url-signedout" style="display:none;color:var(--ink-light,#a8a29e);font-size:.9rem">
-        Sign in to import from a URL. <button class="btn btn-ghost btn-sm" id="url-signin-hint-btn">Sign in</button>
-      </div>
-      <div id="url-signedin">
-        <input type="url" id="url-input" placeholder="https://example.com/recipe" style="width:100%;margin-bottom:.75rem;padding:.5rem;border-radius:6px;border:1px solid var(--border,#3a3531);background:var(--surface,#26221e);color:inherit">
-        <button class="btn btn-primary btn-sm" id="url-extract-btn">Extract</button>
-        <span id="url-status" style="margin-left:.5rem;color:var(--ink-light,#a8a29e);font-size:.85rem"></span>
-      </div>
-    </div>
-  </div>
-</div>
+		<div
+			id="aria-live"
+			class="aria-live"
+			aria-live="polite"
+			aria-atomic="true"
+		></div>
+		<div
+			id="toast"
+			class="toast"
+			role="status"
+			aria-live="polite"
+		></div>
 
-<div id="aria-live" class="aria-live" aria-live="polite" aria-atomic="true"></div>
-<div id="toast" class="toast" role="status" aria-live="polite"></div>
-
-
-<script type="module" src="./js/bundle.js"></script>
-</body>
+		<script
+			type="module"
+			src="./js/bundle.js"
+		></script>
+	</body>
 </html>
