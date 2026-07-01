@@ -47,10 +47,7 @@ test('app.js calls every controller init function', () => {
   }
 });
 
-test('app.js stays under 80 lines (post-Community cap)', () => {
-  // Floor: original Phase 2 trim was ≤60 with 10 controllers; Community
-  // added an 11th controller + sign-in/out callbacks for the feed. 80 leaves
-  // headroom without letting app.js drift back into "doing too much".
+test('app.js stays under 70 lines (rendering-wiring allowance)', () => {
   const lines = source.split('\n').length;
-  assert.ok(lines <= 80, `app.js should be ≤ 80 lines (currently ${lines})`);
+  assert.ok(lines <= 70, `app.js should be ≤ 70 lines (currently ${lines})`);
 });
