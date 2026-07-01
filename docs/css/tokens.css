@@ -153,6 +153,69 @@
     --shadow-lg: 0 12px 32px rgba(42, 31, 23, 0.12);
   }
 
+  /* Sepia — aged-paper cookbook. Manual only (no OS auto). */
+  :root[data-theme="sepia"] {
+    --color-bg:            #f4ead5;
+    --color-bg-elevated:   #fbf2dd;
+    --color-bg-sunken:     #e8dcbe;
+    --color-fg:            #3a2a14;
+    --color-fg-muted:      #7a5a3a;
+    --color-fg-subtle:     #a88860;
+    --color-border:        #d8c8a4;
+    --color-border-strong: #b8a478;
+    --color-accent:        #9c5a1c;
+    --color-accent-fg:     #ffffff;
+    --color-accent-soft:   #ead4b0;
+    --color-success:       #6e8a3e;
+    --color-warning:       #c8901a;
+    --color-danger:        #a83a2a;
+    --color-focus-ring:    #7a4a1a;
+    --shadow-sm: 0 1px 2px rgba(58, 42, 20, 0.10);
+    --shadow-lg: 0 12px 32px rgba(58, 42, 20, 0.18);
+  }
+
+  /* Forest — cabin kitchen at dusk. Manual only. */
+  :root[data-theme="forest"] {
+    --color-bg:            #1d2a23;
+    --color-bg-elevated:   #243328;
+    --color-bg-sunken:     #161e19;
+    --color-fg:            #e6efe1;
+    --color-fg-muted:      #a8b8a3;
+    --color-fg-subtle:     #7a8a78;
+    --color-border:        #324538;
+    --color-border-strong: #4a5e4f;
+    --color-accent:        #7fb069;
+    --color-accent-fg:     #1d2a23;
+    --color-accent-soft:   #2c4230;
+    --color-success:       #9bc77a;
+    --color-warning:       #d4a642;
+    --color-danger:        #d66060;
+    --color-focus-ring:    #a0c890;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.52);
+  }
+
+  /* Ocean — coastal restaurant at night. Manual only. */
+  :root[data-theme="ocean"] {
+    --color-bg:            #0e2333;
+    --color-bg-elevated:   #15304a;
+    --color-bg-sunken:     #091826;
+    --color-fg:            #dceaf2;
+    --color-fg-muted:      #9ab4c4;
+    --color-fg-subtle:     #5d7a8e;
+    --color-border:        #1d3a52;
+    --color-border-strong: #2c5070;
+    --color-accent:        #5dbcd2;
+    --color-accent-fg:     #0e2333;
+    --color-accent-soft:   #1d3a4a;
+    --color-success:       #6dc89a;
+    --color-warning:       #e0b34a;
+    --color-danger:        #e07878;
+    --color-focus-ring:    #7dd0e6;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.42);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.62);
+  }
+
   /* Reduced motion (§10 / §5.7). */
   @media (prefers-reduced-motion: reduce) {
     :root {

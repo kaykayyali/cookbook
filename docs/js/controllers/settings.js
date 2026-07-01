@@ -7,6 +7,17 @@ import { toast } from '../lib/dom.js';
 import { esc, pluralize } from '../lib/format.js';
 import { toSchema, parseImport } from '../lib/schema.js';
 import { save as persist } from '../lib/store.js';
+import { theme as defaultTheme } from '../lib/theme.js';
+
+const THEME_PALETTES = {
+  light:  { bg: '#fbf7f1', accent: '#b34a1c', border: '#d2c4ac' },
+  dark:   { bg: '#1a140e', accent: '#e07a4a', border: '#4a3a28' },
+  sepia:  { bg: '#f4ead5', accent: '#9c5a1c', border: '#b8a478' },
+  forest: { bg: '#1d2a23', accent: '#7fb069', border: '#4a5e4f' },
+  ocean:  { bg: '#0e2333', accent: '#5dbcd2', border: '#2c5070' },
+};
+const THEME_NAMES = Object.keys(THEME_PALETTES);
+const DEFAULT_THEME = 'light';
 
 /**
  * Settings panel controller.
@@ -20,9 +31,11 @@ import { save as persist } from '../lib/store.js';
  * @param {(msg) => void} [deps.toast]
  * @param {() => void} [deps.exportRecipes]
  * @param {() => void} [deps.onChange] - re-render after import
+ * @param {() => string|null} [deps.getStoredTheme] - read current theme
+ * @param {object} [deps.theme] - { getStored, set, apply } — defaults to singleton
  * @param {(email: string) => void} [deps.onSignedIn] - fired after a successful sign-in (state.auth refresh, feed load)
  * @param {() => void} [deps.onSignedOut] - fired after a sign-out (state.auth reset)
- * @returns {{ renderAuth, renderSettings, handleAuthClick }}
+ * @returns {{ renderAuth, renderSettings, renderThemePicker, handleAuthClick, handleThemeClick }}
  */
 export function initSettings({
   state,
@@ -33,6 +46,8 @@ export function initSettings({
   toast: toastDep = toast,
   exportRecipes: exportRecipesDep = defaultExportRecipes,
   onChange = null,
+  getStoredTheme = defaultTheme.getStored,
+  theme: themeDep = defaultTheme,
   onSignedIn = null,
   onSignedOut = null,
 } = {}) {
@@ -82,6 +97,59 @@ export function initSettings({
     reader.readAsText(file);
   }
 
+  function renderThemePicker() {
+    const zone = document.getElementById('settings-theme-zone');
+    if (!zone) return;
+    const current = getStoredTheme() || DEFAULT_THEME;
+    const swatches = THEME_NAMES.map((name) => {
+      const p = THEME_PALETTES[name];
+      const active = name === current;
+      const cls = `theme-swatch${active ? ' is-active' : ''}`;
+      return `<button type="button" data-theme="${name}" class="${cls}" role="radio" `
+        + `aria-checked="${active}" aria-label="${name.charAt(0).toUpperCase() + name.slice(1)}" `
+        + `style="--swatch-bg:${p.bg};--swatch-accent:${p.accent};--swatch-border:${p.border}"></button>`;
+    }).join('');
+    zone.innerHTML =
+      `<div class="theme-picker" role="radiogroup" aria-label="Theme">${swatches}</div>`
+      + `<p class="theme-picker-hint">First load follows your system's light/dark setting. Pick a theme to override.</p>`;
+    zone.addEventListener('click', handleThemeClick);
+    zone.addEventListener('keydown', handleThemeKey);
+  }
+
+  function handleThemeClick(e) {
+    const btn = e?.target?.closest?.('.theme-swatch');
+    if (!btn) return;
+    const name = btn.dataset.theme;
+    if (!THEME_PALETTES[name]) return;
+    themeDep.set(name);
+    themeDep.apply(name);
+    // Update aria-checked and is-active on all swatches within the same radiogroup.
+    const group = btn.closest?.('[role="radiogroup"]');
+    if (!group) return;
+    for (const el of group.querySelectorAll('.theme-swatch')) {
+      const isActive = el.dataset.theme === name;
+      el.classList.toggle('is-active', isActive);
+      el.setAttribute('aria-checked', isActive ? 'true' : 'false');
+    }
+  }
+
+  function handleThemeKey(e) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Enter' && e.key !== ' ') return;
+    const group = e.target?.closest?.('[role="radiogroup"]');
+    if (!group) return;
+    const swatches = [...group.querySelectorAll('.theme-swatch')];
+    const idx = swatches.indexOf(e.target.closest('.theme-swatch'));
+    if (idx < 0) return;
+    e.preventDefault();
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      swatches[(idx + 1) % swatches.length].focus();
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      swatches[(idx - 1 + swatches.length) % swatches.length].focus();
+    } else {
+      swatches[idx].click();
+    }
+  }
+
   function renderSettings() {
     if (settingsRendered) return;
     const importBtn = document.getElementById('settings-import-btn');
@@ -97,10 +165,11 @@ export function initSettings({
     }
     const authZone = document.getElementById('settings-auth-zone');
     if (authZone) authZone.addEventListener('click', handleAuthClick);
+    renderThemePicker();
     settingsRendered = true;
   }
 
-  return { renderAuth, renderSettings, handleAuthClick, _importRecipes: importRecipes };
+  return { renderAuth, renderSettings, renderThemePicker, handleAuthClick, handleThemeClick, _importRecipes: importRecipes };
 }
 
 function defaultExportRecipes() {

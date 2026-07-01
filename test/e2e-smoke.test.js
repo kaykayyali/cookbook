@@ -98,7 +98,7 @@ test('CSS bundle contains the @layer cascade in canonical order', async () => {
   }
 });
 
-test('JS bundle imports the 10 controller init functions (source-level minified check)', async () => {
+test('JS bundle imports the controller init functions (source-level minified check)', async () => {
   const res = await fetch(`${baseUrl}/js/bundle.js`);
   const body = await res.text();
   // The bundle renames, so we check the entry's source (build test owns this).
@@ -112,4 +112,21 @@ test('index.html has no <style> blocks (layered CSS only)', async () => {
   const res = await fetch(`${baseUrl}/`);
   const body = await res.text();
   assert.equal((body.match(/<style/gi) || []).length, 0, 'no inline styles allowed');
+});
+
+test('index.html pre-paint script reads the v2 storage key (5 themes, not the old 2)', async () => {
+  const res = await fetch(`${baseUrl}/`);
+  const body = await res.text();
+  // The pre-paint script must read the new key. Catches drift if anyone
+  // reverts the storage key without updating the script.
+  assert.match(body, /localStorage\.getItem\(\s*['"]cb_theme_v2['"]\s*\)/,
+    'pre-paint script must read cb_theme_v2');
+  // Must accept all 5 valid theme names (no 2-value whitelist left over).
+  for (const name of ['light', 'dark', 'sepia', 'forest', 'ocean']) {
+    assert.match(body, new RegExp(`v\\s*!==?\\s*['"]${name}['"]`),
+      `pre-paint script must accept theme '${name}'`);
+  }
+  // And the old key must not be hardcoded.
+  assert.doesNotMatch(body, /localStorage\.getItem\(\s*['"]cb_theme['"]\s*\)/,
+    'pre-paint script must not read the old cb_theme key');
 });

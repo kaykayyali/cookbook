@@ -16,7 +16,7 @@ import { initSearch } from './controllers/search.js';
 import { initCommunity } from './controllers/community.js';
 import { showRecipeSchema, wireSchemaModal, exportRecipesToFile } from './lib/schema-modal.js';
 
-// Late-binding refresh: drawer's onCommunitySave can refresh the feed though `community` is created after `drawer`.
+// Late-binding refresh: drawer captures onCommunitySave before community exists.
 let communityRefresh = async () => {};
 const readSub = (t) => { try { return JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).sub || null; } catch { return null; } };
 
