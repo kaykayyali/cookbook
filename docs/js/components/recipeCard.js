@@ -46,7 +46,13 @@ export function recipeCardHTML(r, pantry) {
       <div class="card-body">
         <span class="badge ${e === 'complete' ? 'badge-success' : 'badge-accent'}">${esc(r.recipeCategory || 'Recipe')}</span>
         ${r.recipeCuisine ? `<span class="badge">${esc(r.recipeCuisine)}</span>` : ''}
-        <h3 class="card-title">${esc(r.name)}</h3>
+        <div class="card-head">
+          <h3 class="card-title">${esc(r.name)}</h3>
+          <div class="card-toolbar">
+            ${IconButton({ label: 'Edit',     icon: 'edit',   size: 'sm', danger: false, data: { action: 'edit',   id: r._id } })}
+            ${IconButton({ label: 'Delete',   icon: 'trash',  size: 'sm', danger: true,  data: { action: 'delete',  id: r._id } })}
+          </div>
+        </div>
         ${metaPills ? `<div class="card-meta">${metaPills}</div>` : ''}
         <div class="card-ingredients">
           <p class="ingredients-label">Ingredients</p>
@@ -55,10 +61,6 @@ export function recipeCardHTML(r, pantry) {
       </div>
       <div class="card-footer">
         <span class="card-status"><span class="status-dot"></span>${esc(statusText)}</span>
-        <div class="card-actions">
-          ${IconButton({ label: 'Edit',     icon: 'edit',   size: 'sm', danger: false, data: { action: 'edit',   id: r._id } })}
-          ${IconButton({ label: 'Delete',   icon: 'trash',  size: 'sm', danger: true,  data: { action: 'delete',  id: r._id } })}
-        </div>
       </div>
     </article>`;
 }

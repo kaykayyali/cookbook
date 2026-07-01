@@ -171,10 +171,14 @@ export function initDetail({
     });
     const schemaBtn = document.getElementById('dm-schema-btn');
     if (schemaBtn) schemaBtn.addEventListener('click', () => { if (state.detailId && onSchema) onSchema(state.detailId); });
-    const missingBtn = document.getElementById('dm-add-missing-btn');
-    if (missingBtn) missingBtn.addEventListener('click', () => addToCartHandler('missing'));
     const allBtn = document.getElementById('dm-add-all-btn');
     if (allBtn) allBtn.addEventListener('click', () => addToCartHandler('all'));
+    // Pantry note "Add to cart" button (shown only when missing > 0) —
+    // replaces the old section-label "Add missing to cart" button.
+    const note = document.getElementById('dm-pantry-note');
+    if (note) note.addEventListener('click', (e) => {
+      if (e.target.closest('[data-action="add-missing"]')) addToCartHandler('missing');
+    });
     const ings = document.getElementById('dm-ingredients');
     if (ings) {
       ings.addEventListener('click', (e) => {
@@ -208,8 +212,11 @@ export function initDetail({
       onDeleteCommunity(current.ctx);
     });
     const shareBtn = document.getElementById('dm-share-community-btn');
-    if (shareBtn) shareBtn.addEventListener('click', () => {
-      if (current && current.ctx.source === 'local' && onShareCommunity) onShareCommunity(current.r);
+    if (shareBtn) shareBtn.addEventListener('click', async () => {
+      if (current && current.ctx.source === 'local' && onShareCommunity) {
+        await onShareCommunity(current.r);
+        closeSheet(); // hide the detail sheet so the success toast is visible
+      }
     });
   }
 
