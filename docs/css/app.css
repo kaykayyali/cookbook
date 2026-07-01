@@ -827,8 +827,6 @@
      which would lay out the label and the grid as two columns side-by-side. */
 	.detail-nutrition {
 		display: block;
-		margin-top: 30px;
-		padding-top: 22px;
 		border-top: 1px solid var(--color-border);
 	}
 	.detail-nutrition .section-label {
@@ -1562,5 +1560,4 @@
 	.btn-danger:hover {
 		background: color-mix(in oklab, var(--color-danger) 88%, black);
 	}
-
 }
