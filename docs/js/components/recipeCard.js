@@ -41,7 +41,7 @@ export function recipeCardHTML(r, pantry) {
   ].filter(Boolean).join('');
 
   return `
-    <article class="recipe-card card-fold-${e}" data-id="${esc(r._id)}">
+    <article class="card recipe-card card-fold-${e}" data-id="${esc(r._id)}">
       <div class="card-stripe"></div>
       <div class="card-body">
         <span class="badge ${e === 'complete' ? 'badge-success' : 'badge-accent'}">${esc(r.recipeCategory || 'Recipe')}</span>

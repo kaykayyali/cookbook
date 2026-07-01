@@ -298,13 +298,11 @@
 	/* These give the four composites their "warm editorial" feel without
      inlining visual decisions. */
 
-	/* recipeCard */
+	/* recipeCard — consumes the .card primitive (DS §7) for the base
+	   surface (background/border/border-radius/box-shadow/overflow);
+	   .recipe-card adds only the recipe-specific layout (flex column)
+	   and the folded-corner/stripe decoration below. */
 	.recipe-card {
-		background: var(--color-bg-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-lg);
-		box-shadow: var(--shadow-sm);
-		overflow: hidden;
 		display: flex;
 		flex-direction: column;
 	}
@@ -383,7 +381,6 @@
 	}
 	.recipe-card .card-footer {
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
 		padding: var(--space-3) var(--space-4);
 		border-top: 1px solid var(--color-border);
@@ -404,10 +401,6 @@
 	}
 	.recipe-card.complete .status-dot {
 		background: var(--color-success);
-	}
-	.recipe-card .card-actions {
-		display: flex;
-		gap: var(--space-1);
 	}
 
 	/* Empty state */

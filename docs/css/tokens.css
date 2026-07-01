@@ -84,6 +84,12 @@
 
     /* z-index (§5.9) */
     --z-toast: 50;
+
+    /* card stacking — sit between --z-base (0) and the page-overlay tokens.
+       toolbar(3) > folded-corner edge ::before(2) > corner fill ::after(1). */
+    --z-card-deco-back: 1;
+    --z-card-deco: 2;
+    --z-card-toolbar: 3;
   }
 
   /* Dark theme — automatic via OS preference (§9). */
