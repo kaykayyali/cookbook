@@ -36,7 +36,7 @@ export function pantryNoteHTML(ings, pantry) {
   const missing = total - have;
   return missing === 0
     ? '<strong>You have everything.</strong> Ready to cook.'
-    : `<strong>${missing} ingredient${missing !== 1 ? 's' : ''} needed</strong> — ${have} of ${total} in your pantry.`;
+    : `<strong>${missing} ingredient${missing !== 1 ? 's' : ''} needed</strong> — ${have} of ${total} in your pantry. <button class="btn btn-ghost btn-sm" data-action="add-missing">Add to cart</button>`;
 }
 
 /**

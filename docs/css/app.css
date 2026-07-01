@@ -430,6 +430,33 @@
 		margin-bottom: 10px;
 		padding-right: 28px;
 	}
+	/* Card header row: title + icon toolbar (Edit/Delete) sit inline.
+     The toolbar replaces the old footer .card-actions — buttons now
+     live next to the title so they're visible without scrolling to the
+     card bottom. On very narrow cards the toolbar wraps below the title. */
+	.card-head {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		margin-bottom: 10px;
+	}
+	.card-head .card-title {
+		flex: 1 1 auto;
+		min-width: 0;
+		margin-bottom: 0;
+		padding-right: 8px;
+	}
+	.card-toolbar {
+		display: flex;
+		gap: 4px;
+		flex-shrink: 0;
+		margin-left: auto;
+		align-self: flex-start;
+		/* Keep the toolbar above the decorative folded corner (::before
+       is z-index 2) so the icon buttons stay clickable. */
+		position: relative;
+		z-index: 3;
+	}
 	.card-meta {
 		display: flex;
 		gap: 16px;
@@ -849,6 +876,15 @@
 		justify-content: flex-end;
 		background: var(--color-bg);
 	}
+	/* Local-recipe action toolbar: Edit + Share to Community grouped in
+     one row. detail.js setDisplay(...) still targets the buttons by id,
+     so wrapping them in this div is safe. */
+	.detail-actions {
+		display: flex;
+		gap: 10px;
+		align-items: center;
+		flex-wrap: wrap;
+	}
 
 	/* ════════════════════════════════════════════════════════
      DRAWER (create/edit)
@@ -1175,6 +1211,13 @@
      This rule overrides for stacked-mobile positioning (safe-area + FAB). */
 	/* ponytail: original had unique positioning; DS rule owns the visual.
      Kept here only to add the mobile-up shift in the media query below. */
+	/* Lift the toast above every modal/overlay so a success toast fired
+     from inside the detail sheet is never hidden behind it. The highest
+     overlay is .schema-overlay (z-index 200); 210 clears it. DS .toast
+     uses --z-toast (50) — far too low for modal-context toasts. */
+	.toast {
+		z-index: 210;
+	}
 
 	.fab {
 		display: none;
@@ -1469,7 +1512,7 @@
 	}
 
 	@media (max-width: 380px) {
-		.card-actions .icon-btn:first-child {
+		.card-toolbar .icon-btn:first-child {
 			display: none;
 		} /* drop edit on tiny screens; use detail sheet */
 	}
