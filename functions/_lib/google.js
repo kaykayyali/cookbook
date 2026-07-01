@@ -18,7 +18,7 @@ const JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
  * @param {string} idToken
  * @param {string} clientId expected `aud`
  * @param {Function} getKey jose-shaped (protectedHeader, token) => Promise<Key>
- * @returns {Promise<{sub:string,email:string,email_verified:boolean}|null>}
+ * @returns {Promise<{sub:string,email:string,email_verified:boolean,name:string,picture:string|null}|null>}
  */
 export async function verifyIdToken(idToken, clientId, getKey) {
   if (typeof idToken !== 'string' || !idToken) return null;
@@ -29,7 +29,10 @@ export async function verifyIdToken(idToken, clientId, getKey) {
       audience: clientId,
     });
     if (payload.email_verified !== true) return null;
-    return { sub: payload.sub, email: payload.email, email_verified: true };
+    const name = (typeof payload.name === 'string' && payload.name.trim())
+      || (typeof payload.email === 'string' && payload.email.split('@')[0])
+      || 'member';
+    return { sub: payload.sub, email: payload.email, email_verified: true, name, picture: payload.picture || null };
   } catch {
     return null;
   }

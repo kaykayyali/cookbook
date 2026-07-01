@@ -1,6 +1,6 @@
 // ════════════════════════════════════════════════════════
 // extract.js — POST /api/extract: URL → schema.org/Recipe
-// Auth-gated by functions/api/_middleware.js (request.auth = { sub, email }).
+// Auth-gated by functions/api/_middleware.js (context.data.auth = { sub, email, name, picture }).
 // ════════════════════════════════════════════════════════
 import { json, misconfigured } from "../_lib/http.js";
 import { handleExtract } from "../_lib/extract.js";
@@ -124,7 +124,7 @@ function realDeps(env) {
 
 /**
  * POST /api/extract { url } -> { recipe } | { error }
- * Protected by _middleware.js (request.auth attached). Per-email rate limited.
+ * Protected by _middleware.js (context.data.auth attached). Per-email rate limited.
  */
 export async function onRequestPost(context) {
 	const { request, env, data } = context;

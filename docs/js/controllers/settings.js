@@ -36,6 +36,8 @@ const DEFAULT_THEME = 'light';
  * @param {object} [deps.panels] - panels controller; registers the settings
  *   renderer so showPanel('settings') actually mounts the auth zone + picker.
  *   Optional for back-compat with tests that wire the panel manually.
+ * @param {(email: string) => void} [deps.onSignedIn] - fired after a successful sign-in (state.auth refresh, feed load)
+ * @param {() => void} [deps.onSignedOut] - fired after a sign-out (state.auth reset)
  * @returns {{ renderAuth, renderSettings, renderThemePicker, handleAuthClick, handleThemeClick }}
  */
 export function initSettings({
@@ -50,6 +52,8 @@ export function initSettings({
   getStoredTheme = defaultTheme.getStored,
   theme: themeDep = defaultTheme,
   panels = null,
+  onSignedIn = null,
+  onSignedOut = null,
 } = {}) {
   let settingsRendered = false;
 
@@ -74,7 +78,7 @@ export function initSettings({
       initGoogleSignInDep({
         buttonEl: document.getElementById('g-signin-btn'),
         clientId: typeof window !== 'undefined' ? window.COOKBOOK_GOOGLE_CLIENT_ID : undefined,
-        onSignedIn: () => { renderAuth(); },
+        onSignedIn: (email) => { renderAuth(); if (onSignedIn) onSignedIn(email); },
         onError: (msg) => toastDep(`Sign-in failed: ${msg}`),
       });
     }
@@ -84,6 +88,7 @@ export function initSettings({
     if (!e?.target?.closest?.('[data-action="signout"]')) return;
     await clearAuthDep();
     renderAuth();
+    if (onSignedOut) onSignedOut();
     toastDep('Signed out');
   }
 

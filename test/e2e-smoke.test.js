@@ -78,7 +78,7 @@ test('CSS bundle contains the @layer cascade in canonical order', async () => {
   }
 });
 
-test('JS bundle imports the 10 controller init functions (source-level minified check)', async () => {
+test('JS bundle imports the controller init functions (source-level minified check)', async () => {
   const res = await fetch(`${baseUrl}/js/bundle.js`);
   const body = await res.text();
   // The bundle renames, so we check the entry's source (build test owns this).
