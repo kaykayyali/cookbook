@@ -4,7 +4,7 @@
 
 import { STORAGE_KEYS } from './constants.js';
 
-const VALID = new Set(['light', 'dark']);
+const VALID = new Set(['light', 'dark', 'sepia', 'forest', 'ocean']);
 
 /**
  * Build a theme helper bound to a storage + document pair. Testable without
@@ -25,7 +25,7 @@ export function createTheme(opts = {}) {
   }
 
   return {
-    /** @returns {'light' | 'dark' | null} */
+    /** @returns {'light' | 'dark' | 'sepia' | 'forest' | 'ocean' | null} */
     getStored() {
       if (!storage) return null;
       try {
@@ -34,13 +34,13 @@ export function createTheme(opts = {}) {
         return null;
       }
     },
-    /** @param {'light' | 'dark'} name */
+    /** @param {'light' | 'dark' | 'sepia' | 'forest' | 'ocean'} name */
     apply(name) {
       const v = normalize(name);
       if (!v || !doc) return;
       try { doc.documentElement.setAttribute('data-theme', v); } catch { /* ignore */ }
     },
-    /** @param {'light' | 'dark'} name */
+    /** @param {'light' | 'dark' | 'sepia' | 'forest' | 'ocean'} name */
     set(name) {
       const v = normalize(name);
       if (!v || !storage) return;

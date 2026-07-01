@@ -16,7 +16,7 @@ import { initSearch } from './controllers/search.js';
 import { initCommunity } from './controllers/community.js';
 import { showRecipeSchema, wireSchemaModal, exportRecipesToFile } from './lib/schema-modal.js';
 
-// Late-binding refresh: drawer's onCommunitySave can refresh the feed though `community` is created after `drawer`.
+// Late-binding refresh: drawer captures onCommunitySave before community exists.
 let communityRefresh = async () => {};
 const readSub = (t) => { try { return JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).sub || null; } catch { return null; } };
 
@@ -32,7 +32,7 @@ const drawer = initDrawer({
 });
 state.auth = (() => { const a = loadAuth(); return { sub: readSub(a.token), email: a.email }; })();
 let community;
-const detail = initDetail({ state, onEdit: (id) => drawer.open(id), onSchema: showRecipeSchema,
+const detail = initDetail({ state, onEdit: (id) => drawer.open(id), onSchema: showRecipeSchema, onChange: () => recipes.render(),
   onSaveCommunityLocal: (ctx) => community.saveToLocal(ctx), onEditCommunity: (item) => drawer.openCommunityEdit(item),
   onDeleteCommunity: (ctx) => community.deleteShared(ctx), onShareCommunity: (r) => community.share(r) });
 const recipes = initRecipes({ state, onOpenDetail: (id) => detail.open(id), onEdit: (id) => drawer.open(id), onSchema: showRecipeSchema });
@@ -48,7 +48,7 @@ panels.register('cart', cart.render);
 panels.register('settings', () => { settings.renderSettings(); settings.renderAuth(); });
 settings.renderAuth(); // mount the GIS sign-in button on boot (matches the old renderAuth() boot call)
 initFab({ state, openDrawer: (id) => drawer.open(id), extract, showPanel: panels.showPanel });
-initSearch({ state });
+initSearch({ state, onChange: () => recipes.render() });
 community = initCommunity({ state, panels, onRefreshLibrary: () => panels.renderActive(),
   onOpenCommunityDetail: (item) => detail.openCommunity(item),
   onSignedOut: () => { state.auth = { sub: null, email: '' }; panels.showPanel('recipes'); } });

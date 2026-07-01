@@ -24,9 +24,10 @@ const CONTROLLER_INITS = [
   'initSettings',
   'initFab',
   'initSearch',
+  'initCommunity',
 ];
 
-test('app.js imports all 10 controller init functions', () => {
+test('app.js imports every controller init function', () => {
   for (const name of CONTROLLER_INITS) {
     assert.match(
       source,
@@ -36,7 +37,7 @@ test('app.js imports all 10 controller init functions', () => {
   }
 });
 
-test('app.js calls all 10 controller init functions', () => {
+test('app.js calls every controller init function', () => {
   for (const name of CONTROLLER_INITS) {
     assert.match(
       source,

@@ -81,7 +81,7 @@ export function initRecipes({
         const { action: a, id } = action.dataset;
         if (a === 'edit' && onEdit) onEdit(id);
         else if (a === 'schema' && onSchema) onSchema(id);
-        else if (a === 'delete' && onDelete) onDelete(id);
+        else if (a === 'delete') deleteById(id);
         return;
       }
       const card = e.target.closest('.recipe-card');
