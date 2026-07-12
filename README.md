@@ -1,6 +1,6 @@
 # Cookbook
 
-A mobile-first recipe manager that stores recipes as **[schema.org/Recipe](https://schema.org/Recipe)** JSON-LD. No build step, no framework, no dependencies — just native ES modules.
+A mobile-first recipe manager that stores recipes as **[schema.org/Recipe](https://schema.org/Recipe)** JSON-LD. Built with vanilla JavaScript, deployed on Cloudflare Pages with Workers Functions, D1, and Workers AI.
 
 **Live demo:** https://kaykayyali.github.io/cookbook/
 
@@ -14,82 +14,192 @@ A mobile-first recipe manager that stores recipes as **[schema.org/Recipe](https
 - **Pantry autocomplete** — suggestions drawn from every ingredient across your recipes
 - **Search & filter** — by name, cuisine, category, or ingredient; filter to "can make" only
 - **JSON-LD import/export** — everything is valid schema.org/Recipe, so recipes are portable
-- **Offline-first** — all data lives in your browser's `localStorage`, nothing is sent anywhere
+- **Shopping cart** — add ingredients to a cart for shopping, with pantry-matching intelligence
+- **5 color themes** — light, dark, sepia, forest, and ocean
+- **Community sharing** — share recipes to a community feed; save others' recipes to your library (requires Google Sign-In)
+- **AI recipe extraction** — paste a URL and have Workers AI extract the recipe into your library
+- **Offline-first** — local recipes and pantry data live in `localStorage`; community features need connectivity
 
-## Project Structure
+## Architecture
 
 ```
 cookbook/
-├── docs/                      ← GitHub Pages serves this folder
-│   ├── index.html             ← markup only
+├── docs/                          ← Pages static assets
+│   ├── index.html                 ← shell markup
 │   ├── css/
-│   │   └── styles.css
-│   └── js/
-│       ├── app.js             ← orchestration: wires logic + components to the DOM
-│       ├── lib/               ← pure logic (no DOM) — fully unit-tested
-│       │   ├── schema.js      ← schema.org/Recipe ↔ internal model
-│       │   ├── pantry.js      ← matching, eligibility, ingredient parsing
-│       │   ├── filters.js     ← search & filtering
-│       │   ├── format.js      ← duration formatting, HTML escaping
-│       │   ├── store.js       ← state + localStorage persistence
-│       │   ├── constants.js   ← categories, diets, seed data
-│       │   ├── icons.js       ← inline SVG registry
-│       │   └── dom.js         ← minimal DOM helpers
-│       └── components/        ← presentational modules (return HTML strings)
-│           ├── recipeCard.js
-│           ├── recipeDetail.js
-│           └── recipeForm.js
-├── test/                      ← Node built-in test runner (no deps)
+│   │   ├── tokens.css             ← design tokens (colours, spacing, z-index)
+│   │   ├── base.css               ← reset, typography, focus-visible
+│   │   ├── layout.css             ← Stack, Cluster, Grid, Container primitives
+│   │   ├── components.css         ← .card, .badge, .toast, .drawer, .modal, .tabs
+│   │   └── app.css                ← application-specific styles (theme layer)
+│   ├── js/
+│   │   ├── app.js                 ← 65-line bootstrap: inits controllers, wires callbacks
+│   │   ├── lib/                   ← pure logic (no DOM) — fully unit-tested
+│   │   │   ├── schema.js          ← schema.org/Recipe ↔ internal model
+│   │   │   ├── pantry.js          ← matching, eligibility, ingredient parsing
+│   │   │   ├── filters.js         ← search & filtering
+│   │   │   ├── format.js          ← duration formatting, HTML escaping
+│   │   │   ├── store.js           ← state + localStorage persistence
+│   │   │   ├── constants.js       ← categories, diets, seed data
+│   │   │   ├── icons.js           ← inline SVG registry
+│   │   │   ├── dom.js             ← minimal DOM helpers ($, escapeHtml)
+│   │   │   ├── ui.js              ← Button, IconButton, Input, Icon, Toast factories
+│   │   │   ├── theme.js           ← 5-theme palette and switching
+│   │   │   ├── auth.js            ← Google Sign-In token management
+│   │   │   ├── community.js       ← community API client (authFetch wrappers)
+│   │   │   ├── cart.js            ← cart logic (parse, group, check)
+│   │   │   └── schema-modal.js    ← JSON-LD modal + export helper
+│   │   ├── components/            ← HTML-string factories
+│   │   │   ├── recipeCard.js
+│   │   │   ├── recipeDetail.js
+│   │   │   ├── recipeForm.js
+│   │   │   ├── cart.js
+│   │   │   └── communityCard.js
+│   │   └── controllers/           ← DOM wiring + state mutations (one per feature)
+│   │       ├── panels.js          ← tab router (recipes/pantry/cart/community/settings)
+│   │       ├── recipes.js
+│   │       ├── pantry.js
+│   │       ├── cart.js
+│   │       ├── detail.js
+│   │       ├── drawer.js
+│   │       ├── extract.js
+│   │       ├── fab.js
+│   │       ├── search.js
+│   │       ├── settings.js
+│   │       └── community.js
+│   └── superpowers/               ← design specs, plans, and D1 migrations
+├── functions/                     ← Cloudflare Pages Functions (backend)
+│   ├── api/
+│   │   ├── _middleware.js         ← JWT auth gate (context.data.auth)
+│   │   ├── auth.js                ← Google token verification → session cookie
+│   │   ├── community.js           ← GET/POST shared recipes
+│   │   ├── community/[id].js      ← PUT/DELETE individual shared recipes
+│   │   └── extract.js             ← URL → Workers AI → schema.org/Recipe
+│   └── _lib/
+│       ├── session.js             ← JWT sign/verify (jose)
+│       ├── google.js              ← Google token verification
+│       ├── whitelist.js           ← ALLOWED_EMAILS gate
+│       ├── community.js           ← D1 CRUD + self-healing schema
+│       ├── extract.js             ← fetch + AI extraction + SSRF guard
+│       ├── handler.js             ← shared request handler
+│       └── http.js                ← JSON response helpers
+├── scripts/
+│   ├── build.js                   ← esbuild: bundles JS + CSS with @layer cascade
+│   └── app.entry.js               ← controller init re-exports for build test contract
+├── test/                          ← ~300 tests via Node built-in test runner
 │   ├── schema.test.js
 │   ├── pantry.test.js
-│   └── filters.test.js
-├── cookbook.html              ← legacy single-file build (standalone, still works)
-└── package.json
+│   ├── filters.test.js
+│   ├── cart.test.js
+│   ├── ui.test.js
+│   ├── theme.test.js
+│   ├── design-system.test.js
+│   ├── css-themes.test.js
+│   ├── inline-css.test.js
+│   ├── build.test.js
+│   ├── app-bootstrap.test.js
+│   ├── auth-google.test.js
+│   ├── auth-handler.test.js
+│   ├── auth-jwks.test.js
+│   ├── auth-session.test.js
+│   ├── auth-whitelist.test.js
+│   ├── community.test.js
+│   ├── community-client.test.js
+│   ├── community-route.test.js
+│   ├── extract.test.js
+│   ├── extract-route.test.js
+│   ├── e2e-render.test.js
+│   ├── e2e-smoke.test.js
+│   └── controllers/              ← one test file per controller
+│       ├── cart.test.js
+│       ├── community.test.js
+│       ├── detail.test.js
+│       ├── drawer.test.js
+│       ├── extract.test.js
+│       ├── fab.test.js
+│       ├── panels.test.js
+│       ├── pantry.test.js
+│       ├── recipes.test.js
+│       ├── search.test.js
+│       └── settings.test.js
+├── cookbook.html                  ← legacy standalone build (all JS/CSS inlined)
+├── wrangler.toml
+├── package.json
+└── LICENSE
 ```
 
-### Why this layout
-
-The `lib/` modules are **pure** — they take data in and return data out, never touching the DOM. That makes them trivial to unit-test under Node and easy to reason about. The `components/` modules turn data into HTML strings. `app.js` is the only place that reads/writes the DOM and wires up events. This separation is what lets the test suite run without a browser or any DOM-shimming dependency.
+Controllers own their DOM and state. Cross-controller communication happens through callback contracts wired in `app.js`. The `lib/` modules are pure functions — data in, data out — making them trivial to test under Node without a browser.
 
 ## Development
 
-Requires **Node 18+** (uses the built-in test runner; no `npm install` needed).
+Requires **Node 18+**.
 
 ```bash
-# Run the test suite
+# Install dependencies (required for tests, build, and wrangler)
+npm install
+
+# Run the full test suite (~297 tests)
 npm test
 
-# Serve locally (any static server works, because there's no build step)
+# Build JS + CSS bundles (gitignored; required before deploy or `npm run dev`)
+npm run build
+
+# Serve locally with Cloudflare Pages Functions (auth, community, extraction)
+npm run dev
+
+# Or serve static-only (no backend features):
 npx serve docs
-# or
-python3 -m http.server -d docs 8000
 ```
-
-Then open http://localhost:8000.
-
-> ES modules require `http://` — opening `index.html` via `file://` will be blocked by the browser's module CORS policy. Use a static server, or open the standalone `cookbook.html` which has everything inlined.
 
 ## Testing
 
-Tests cover the pure logic layer using Node's built-in test runner:
+All tests use Node's built-in test runner. The suite covers:
 
-- **schema.test.js** — JSON-LD serialisation, HowToStep wrapping, round-trip fidelity, import parsing
-- **pantry.test.js** — substring matching, eligibility classification, ingredient base-name extraction, immutable add/remove/toggle, legacy data migration
-- **filters.test.js** — search across fields, category/eligibility filtering, combined filters; plus format helpers
+| Area | Files | What it covers |
+|------|-------|----------------|
+| **Pure logic** | schema, pantry, filters, cart, ui, theme | Data transformations, matching, formatting |
+| **Controllers** | 11 files in `test/controllers/` | DOM wiring, state mutations, callback contracts |
+| **Auth** | auth-google, auth-handler, auth-jwks, auth-session, auth-whitelist | Token verification, JWT sign/verify, whitelist, fail-closed |
+| **Community** | community, community-client, community-route | D1 CRUD, authFetch, share/edit/delete flows |
+| **Extraction** | extract, extract-route | AI extraction, SSRF blocking, rate limiting, partial recovery |
+| **Build & CSS** | build, design-system, css-themes, inline-css, app-bootstrap | Bundle contents, @layer order, token integrity, controller wiring |
+| **E2E** | e2e-render (jsdom), e2e-smoke | DOM rendering, self-building smoke assertions |
 
 ```bash
-npm test
+npm test                # full suite
+npm run test:e2e        # e2e smoke only
 ```
 
-CI runs the suite on every push and pull request (`.github/workflows/test.yml`).
+CI runs the full suite on every push and pull request (`.github/workflows/test.yml`).
 
 ## Deployment
 
-`docs/` is deployed to GitHub Pages automatically on push to `main` via `.github/workflows/deploy.yml`. To enable it once: **Settings → Pages → Source → GitHub Actions**.
+The app is deployed to **Cloudflare Pages** (git-connected, from `main`).
+
+- `docs/` is the Pages output directory (`pages_build_output_dir = "docs"`)
+- The build command (`npm ci && npm run build`) must be set in the Cloudflare Pages dashboard (Settings → Builds & deployments) — it cannot live in `wrangler.toml`
+- `wrangler.toml` defines bindings (D1, Workers AI) and non-secret vars (GOOGLE_CLIENT_ID, ALLOWED_EMAILS, rate limits)
+- **One secret** must be set separately: `SESSION_SECRET` (≥32 chars) — `wrangler pages secret put SESSION_SECRET`
+
+### Local dev with the full backend
+
+```bash
+# Create .dev.vars with the session secret
+echo 'SESSION_SECRET="your-32-char-secret"' > .dev.vars
+
+# Start the local dev server (Pages + Functions)
+npm run dev
+```
 
 ## Data & Privacy
 
-All recipes and pantry data are stored locally in your browser. Nothing is transmitted to any server. Use **Export** to back up your library as a JSON-LD file you can re-import anytime.
+Local recipes and pantry data are stored in your browser's `localStorage`. Nothing is sent to any server unless you:
+
+- **Sign in** with Google to use community sharing (your email, name, and avatar are embedded in the session JWT)
+- **Share a recipe** to the community feed (stored in D1 with your author info)
+- **Extract a recipe** from a URL (the URL is sent to the backend, which fetches the page and passes content to Workers AI)
+
+Use **Export** to back up your library as a JSON-LD file.
 
 ## License
 
