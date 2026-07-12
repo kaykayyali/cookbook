@@ -2,7 +2,21 @@
 // extract.js — recipe extraction pipeline (pure, deps injected)
 // ════════════════════════════════════════════════════════
 
-const LD_BLOCK = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+// Matches <script type=application/ld+json>, <script type="application/ld+json">,
+// and <script type='application/ld+json'> — unquoted attributes are valid HTML5.
+const LD_BLOCK = /<script[^>]*type\s*=\s*(?:["'])?application\/ld\+json(?:["'])?[^>]*>([\s\S]*?)<\/script>/gi;
+
+function tryParseJSON(raw) {
+  try { return JSON.parse(raw); } catch {
+    // Common JSON-LD malformation: an extra trailing } from templating.
+    // Try trimming one trailing brace before giving up.
+    const trimmed = raw.trimEnd();
+    if (trimmed.endsWith('}')) {
+      try { return JSON.parse(trimmed.slice(0, -1).trimEnd()); } catch { /* fall through */ }
+    }
+    return null;
+  }
+}
 
 function isRecipeType(t) {
   if (!t) return false;
@@ -21,15 +35,17 @@ export function findRecipeInHtml(html) {
   const blocks = html.match(LD_BLOCK) || [];
   for (const block of blocks) {
     const inner = block.replace(/<script[^>]*>/i, '').replace(/<\/script>/i, '');
-    let data;
-    try { data = JSON.parse(inner); } catch { continue; }
+    const data = tryParseJSON(inner);
+    if (!data) continue;
     const candidates = Array.isArray(data) ? data : [data];
     for (const cand of candidates) {
       if (!cand) continue;
       if (isRecipeType(cand['@type']) && cand.name) return cand;
       const graph = cand['@graph'];
       if (Array.isArray(graph)) {
-        const hit = graph.find((g) => g && isRecipeType(g['@type']) && g.name);
+        // Flatten: graph items may themselves be arrays (e.g. [{...}])
+        const flat = graph.flat(1);
+        const hit = flat.find((g) => g && isRecipeType(g['@type']) && g.name);
         if (hit) return hit;
       }
     }

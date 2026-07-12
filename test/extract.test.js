@@ -37,6 +37,26 @@ test('findRecipeInHtml tolerates a broken ld+json block and still parses others'
   assert.equal(findRecipeInHtml(html)?.name, 'Ok');
 });
 
+test('findRecipeInHtml handles unquoted type attribute (HTML5)', () => {
+  const html = `<script type=application/ld+json>${JSON.stringify({ '@type': 'Recipe', name: 'Unquoted', recipeIngredient: ['a'], recipeInstructions: ['b'] })}</script>`;
+  assert.equal(findRecipeInHtml(html)?.name, 'Unquoted');
+});
+
+test('findRecipeInHtml repairs extra trailing brace in JSON-LD', () => {
+  const json = JSON.stringify({ '@type': 'Recipe', name: 'Fixed', recipeIngredient: ['a'], recipeInstructions: ['b'] });
+  const broken = json + '}'; // double closing brace
+  const html = `<script type="application/ld+json">${broken}</script>`;
+  assert.equal(findRecipeInHtml(html)?.name, 'Fixed');
+});
+
+test('findRecipeInHtml traverses nested arrays in @graph', () => {
+  const html = wrap(JSON.stringify({ '@context': 'https://schema.org', '@graph': [
+    { '@type': 'BreadcrumbList' },
+    [{ '@type': 'Recipe', name: 'Nested', recipeIngredient: ['a'], recipeInstructions: ['b'] }],
+  ] }));
+  assert.equal(findRecipeInHtml(html)?.name, 'Nested');
+});
+
 test('hasRequiredFields checks name + ingredients + instructions', () => {
   assert.equal(hasRequiredFields({ name: 'X', recipeIngredient: ['a'], recipeInstructions: ['b'] }), true);
   assert.equal(hasRequiredFields({ name: 'X', recipeIngredient: [], recipeInstructions: ['b'] }), false);
