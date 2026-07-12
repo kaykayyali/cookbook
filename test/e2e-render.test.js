@@ -12,6 +12,9 @@
 // `import('../docs/js/app.js')` runs the boot. That isolates the test to the
 // source wiring.
 //
+// Since the app now requires auth to boot, we pre-populate localStorage with
+// a fake token and mock fetch to return seed recipes from the API.
+//
 // Run via: node --test test/e2e-render.test.js (or `npm test` for everything).
 
 import { test, before, after } from 'node:test';
@@ -21,13 +24,56 @@ import { JSDOM } from 'jsdom';
 import { webcrypto } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-// Save the original property descriptor for each global we override. Some
-// Node globals (notably `navigator`) are getter-only properties — plain
-// assignment throws in strict mode (ES modules), so we use Object.defineProperty
-// for both install and restore.
+// Seed recipes (mirrors constants.js) for the API mock response.
+const SEED_RECIPES = [
+  {
+    id: 'seed-1', recipe: {
+      '@context': 'https://schema.org', '@type': 'Recipe', name: 'Classic Shakshuka',
+      recipeCategory: 'Breakfast', recipeCuisine: 'Middle Eastern', recipeYield: '6 servings',
+      cookingMethod: 'Stovetop', suitableForDiet: 'https://schema.org/VegetarianDiet',
+      prepTime: 'PT10M', cookTime: 'PT20M', totalTime: 'PT30M',
+      recipeIngredient: [
+        '2 tablespoons olive oil', '1 medium onion, diced',
+        '1 red bell pepper, seeded and diced', '4 garlic cloves, finely chopped',
+        '2 tsp paprika', '1 tsp cumin', '¼ tsp chili powder',
+        '1 (28-oz) can whole peeled tomatoes', '6 large eggs',
+        'salt and pepper to taste', 'fresh cilantro, chopped', 'fresh parsley, chopped',
+      ],
+      recipeInstructions: [
+        { '@type': 'HowToStep', position: 1, text: 'Heat olive oil in a large sauté pan over medium heat.' },
+        { '@type': 'HowToStep', position: 2, text: 'Add garlic and spices and cook an additional minute.' },
+        { '@type': 'HowToStep', position: 3, text: 'Pour in tomatoes. Simmer.' },
+        { '@type': 'HowToStep', position: 4, text: 'Crack eggs into wells. Cook 5-8 minutes.' },
+        { '@type': 'HowToStep', position: 5, text: 'Garnish with cilantro and parsley.' },
+      ],
+    },
+    createdAt: Date.now(), updatedAt: Date.now(),
+  },
+  {
+    id: 'seed-2', recipe: {
+      '@context': 'https://schema.org', '@type': 'Recipe', name: 'Spaghetti Carbonara',
+      recipeCategory: 'Entree', recipeCuisine: 'Italian', recipeYield: '4 servings',
+      cookingMethod: 'Boiling', prepTime: 'PT10M', cookTime: 'PT15M', totalTime: 'PT25M',
+      recipeIngredient: [
+        '400g spaghetti', '200g pancetta or guanciale', '4 large eggs',
+        '100g pecorino romano, grated', '50g parmesan, grated',
+        'black pepper to taste', 'salt to taste',
+      ],
+      recipeInstructions: [
+        { '@type': 'HowToStep', position: 1, text: 'Boil spaghetti al dente.' },
+        { '@type': 'HowToStep', position: 2, text: 'Fry pancetta until crispy.' },
+        { '@type': 'HowToStep', position: 3, text: 'Whisk eggs with cheeses and pepper.' },
+        { '@type': 'HowToStep', position: 4, text: 'Toss pasta with pancetta, fold in egg mixture.' },
+        { '@type': 'HowToStep', position: 5, text: 'Add pasta water for creaminess. Serve.' },
+      ],
+    },
+    createdAt: Date.now(), updatedAt: Date.now(),
+  },
+];
+
 const GLOBAL_KEYS = [
   'document', 'window', 'localStorage', 'navigator', 'atob', 'btoa',
-  'HTMLElement', 'Node', 'Event', 'CustomEvent', 'crypto',
+  'HTMLElement', 'Node', 'Event', 'CustomEvent', 'crypto', 'fetch',
 ];
 const savedDescriptors = {};
 
@@ -41,14 +87,6 @@ function installGlobal(key, value) {
 }
 
 before(async () => {
-  // Load the real index.html into jsdom. `outside-only` gives us a working
-  // DOM (document, window, etc.) WITHOUT executing the page's inline scripts
-  // (the theme IIFE and the COOKBOOK_GOOGLE_CLIENT_ID assignment) or the
-  // bundle's <script type="module">. That means window.COOKBOOK_GOOGLE_CLIENT_ID
-  // is undefined in this test → initGoogleSignIn calls onError async and
-  // returns early without appending the GIS <script>. renderAuth() still
-  // mounts #g-signin-btn BEFORE calling initGoogleSignIn, so the button is
-  // present. Good — we test the source wiring, not the network.
   const html = readFileSync(
     fileURLToPath(new URL('../docs/index.html', import.meta.url)),
     'utf8'
@@ -59,9 +97,6 @@ before(async () => {
     pretendToBeVisual: true,
   });
 
-  // app.js + the controllers read document/window/localStorage/navigator/crypto
-  // (and a few DOM constructors) as globals. Install jsdom's versions onto
-  // globalThis BEFORE importing app.js so the boot sees them.
   const overrides = {
     document: dom.window.document,
     window: dom.window,
@@ -73,34 +108,55 @@ before(async () => {
     Node: dom.window.Node,
     Event: dom.window.Event,
     CustomEvent: dom.window.CustomEvent,
-    // Node 20+ exposes Web Crypto as globalThis.crypto; jsdom does not provide
-    // it, so point at node's webcrypto. The app reads crypto for any future
-    // token handling; harmless if unused on this boot path.
     crypto: webcrypto,
+    // Mock fetch: return seed recipes for GET /api/recipes, 200 for everything else
+    fetch: async (url, init) => {
+      const u = typeof url === 'string' ? url : url?.url || '';
+      if (u.includes('/recipes') && (!init || init.method === undefined || init.method === 'GET')) {
+        return new Response(JSON.stringify({ recipes: SEED_RECIPES, hasMore: false }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      // For create/update/delete, return success
+      if (u.includes('/recipes') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ id: 'new-id' }), {
+          status: 201, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (u.includes('/recipes') && init?.method === 'DELETE') {
+        return new Response(null, { status: 204 });
+      }
+      if (u.includes('/recipes') && init?.method === 'PUT') {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      // Default: success
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    },
   };
   for (const k of GLOBAL_KEYS) {
     savedDescriptors[k] = Object.getOwnPropertyDescriptor(globalThis, k);
     installGlobal(k, overrides[k]);
   }
 
-  // Importing app.js runs the boot top-to-bottom:
-  //   init() (store.js) → load() (empty localStorage) → seed() (SEED_RECIPES)
-  //   → initPanels/initRecipes/.../initSettings → panels.register(...)
-  //   → settings.renderAuth() (mounts #g-signin-btn)
-  //   → panels.showPanel('recipes') → recipes.render() → #recipe-grid populated.
-  await import('../docs/js/app.js');
+  // Pre-populate auth so the app boots past the login gate
+  overrides.localStorage.setItem('cb_token', 'fake-jwt-token');
+  overrides.localStorage.setItem('cb_email', 'test@example.com');
+
+  // Import app.js and wait for the async boot to complete.
+  const app = await import('../docs/js/app.js');
+  await app.ready;
 });
 
 after(() => {
-  // Belt-and-suspenders: node --test runs each test file in its own process,
-  // so these globals never leak to other test files. Restore the original
-  // descriptors anyway.
   for (const k of GLOBAL_KEYS) {
     const desc = savedDescriptors[k];
     if (desc) {
       Object.defineProperty(globalThis, k, desc);
     } else {
-      // Was absent before — delete. (defineProperty with undefined would throw.)
       delete globalThis[k];
     }
   }
@@ -115,11 +171,17 @@ test('recipe grid renders on boot (seed recipes)', () => {
   );
 });
 
-test('GIS sign-in button mounts on boot', () => {
-  const btn = globalThis.document.getElementById('g-signin-btn');
+test('auth zone renders on boot', () => {
+  const zone = globalThis.document.getElementById('settings-auth-zone');
+  assert.ok(zone, '#settings-auth-zone exists');
+  // With the fake token set, renderAuth shows signed-in state.
+  // Without a token, it would mount #g-signin-btn.
+  // Either way, the zone should not be empty.
+  const hasSignIn = zone.querySelector('#g-signin-btn');
+  const hasSignedIn = zone.textContent.toLowerCase().includes('signed in');
   assert.ok(
-    btn,
-    '#g-signin-btn mounted by settings.renderAuth() before initGoogleSignIn runs'
+    hasSignIn || hasSignedIn,
+    'auth zone populated — either GIS button (signed out) or sign-in status (signed in)'
   );
 });
 
@@ -135,7 +197,5 @@ test('panel router marked the recipes panel active on boot', () => {
 test('recipe count label reflects seeded library', () => {
   const countEl = globalThis.document.getElementById('recipe-count');
   assert.ok(countEl, '#recipe-count exists');
-  // SEED_RECIPES has multiple entries; the label should be non-empty and
-  // mention "recipe"/"recipes".
   assert.match(countEl.textContent, /recipe/i, 'recipe-count label populated');
 });

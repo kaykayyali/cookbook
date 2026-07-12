@@ -7,6 +7,7 @@ import { filterRecipes } from '../lib/filters.js';
 import { allRecipeIngredients } from '../lib/pantry.js';
 import { save as persist } from '../lib/store.js';
 import { toast } from '../lib/dom.js';
+import { deleteRecipeById } from '../lib/api.js';
 import { recipeCardHTML, emptyStateHTML } from '../components/recipeCard.js';
 
 /**
@@ -89,8 +90,10 @@ export function initRecipes({
     });
   }
 
-  function deleteById(id) {
+  async function deleteById(id) {
     if (!confirm('Delete this recipe?')) return;
+    const res = await deleteRecipeById(id);
+    if (!res.ok) { toast(res.error || 'Could not delete recipe'); return; }
     state.recipes = state.recipes.filter((r) => r._id !== id);
     persist();
     render();

@@ -62,6 +62,25 @@
 		</script>
 	</head>
 	<body>
+		<!-- ─────────────────────────────── Login gate -->
+		<div id="login-gate" style="display:none" class="login-gate">
+			<div class="login-gate-card">
+				<div class="login-gate-icon">
+					<svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+						<path d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2z"/>
+						<path d="M8 7h8M8 11h8M8 15h5"/>
+					</svg>
+				</div>
+				<h1>Cookbook</h1>
+				<p>Sign in to access your recipes</p>
+				<div id="login-gate-btn"></div>
+				<p class="login-error" style="color:var(--danger);font-size:.85rem;margin-top:1rem"></p>
+			</div>
+		</div>
+
+		<!-- ─────────────────────────────── Main content -->
+		<div id="main-content">
+
 		<!-- ─────────────────────────────── Sidebar / Bottom nav -->
 		<nav class="sidebar">
 			<div class="sidebar-brand">
@@ -1128,6 +1147,7 @@
 				</div>
 			</div>
 		</div>
+		</div><!-- /main-content -->
 
 		<div
 			id="aria-live"

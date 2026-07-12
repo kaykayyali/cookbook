@@ -4,6 +4,7 @@
 
 import { toast } from '../lib/dom.js';
 import { save as persist } from '../lib/store.js';
+import { createRecipe, updateRecipe } from '../lib/api.js';
 import {
   FIELD_MAP,
   NUTRI_MAP,
@@ -131,8 +132,20 @@ export function initDrawer({
     }
     const idx = state.editingId ? state.recipes.findIndex((x) => x._id === state.editingId) : -1;
     const isNew = idx === -1;
-    if (isNew) state.recipes.unshift(r);
-    else state.recipes[idx] = r;
+    if (isNew) {
+      const res = await createRecipe(r);
+      if (!res.ok) { toast(res.error || 'Could not save recipe'); return { ok: false, error: res.error }; }
+      r._id = res.id;
+      state.recipes.unshift(r);
+    } else {
+      const existing = state.recipes[idx];
+      const serverId = existing._id;
+      const res = await updateRecipe(serverId, r);
+      if (!res.ok) { toast(res.error || 'Could not save recipe'); return { ok: false, error: res.error }; }
+      r._id = serverId;
+      r.dateCreated = existing.dateCreated;
+      state.recipes[idx] = r;
+    }
     persist();
     closeSheet();
     if (onSaved) onSaved();

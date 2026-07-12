@@ -8,6 +8,7 @@ import { esc, pluralize } from '../lib/format.js';
 import { toSchema, parseImport } from '../lib/schema.js';
 import { save as persist } from '../lib/store.js';
 import { theme as defaultTheme } from '../lib/theme.js';
+import { importRecipes as importToServer } from '../lib/api.js';
 
 const THEME_PALETTES = {
   light:  { bg: '#fbf7f1', accent: '#b34a1c', border: '#d2c4ac' },
@@ -82,16 +83,22 @@ export function initSettings({
     toastDep('Signed out');
   }
 
-  function importRecipes(file) {
+  async function importRecipes(file) {
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const imported = parseImport(JSON.parse(e.target.result));
         if (!imported.length) { toastDep('No valid recipes found in file'); return; }
-        state.recipes = [...imported, ...state.recipes];
-        persist();
+        // Send canonical JSON-LD to server
+        const canonicals = imported.map(toSchema);
+        const res = await importToServer(canonicals);
+        if (!res.ok) { toastDep('Could not import recipes'); return; }
+        // Reload recipes from server to get server-assigned ids
+        const { fetchRecipes } = await import('../lib/api.js');
+        const fres = await fetchRecipes();
+        if (fres.ok) state.recipes = fres.recipes;
         if (onChange) onChange();
-        toastDep(`Imported ${pluralize(imported.length, 'recipe')}`);
+        toastDep(`Imported ${pluralize(res.imported || imported.length, 'recipe')}`);
       } catch { toastDep('Could not read file — expected JSON-LD'); }
     };
     reader.readAsText(file);

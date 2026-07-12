@@ -1,10 +1,13 @@
 // ════════════════════════════════════════════════════════
-// store.js — app state + localStorage persistence
+// store.js — app state + persistence
+//
+// Recipes are stored server-side (D1) and fetched via /api/recipes.
+// Pantry and cart remain local (localStorage) — they're device-specific.
 // ════════════════════════════════════════════════════════
 
-import { STORAGE_KEYS, SEED_RECIPES, SEED_PANTRY } from './constants.js';
-import { fromSchema } from './schema.js';
+import { STORAGE_KEYS } from './constants.js';
 import { normalizePantry } from './pantry.js';
+import { fetchRecipes } from './api.js';
 
 export const state = {
   recipes: [],
@@ -15,20 +18,18 @@ export const state = {
   searchTerm: '',
   categoryFilter: '',
   eligibleOnly: false,
+  recipesLoaded: false,
+  authChecked: false,
 };
 
+/** Persist pantry + cart to localStorage (recipes are server-side). */
 export function save() {
-  localStorage.setItem(STORAGE_KEYS.recipes, JSON.stringify(state.recipes));
   localStorage.setItem(STORAGE_KEYS.pantry, JSON.stringify(state.pantry));
   localStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(state.cart));
 }
 
+/** Load pantry + cart from localStorage. */
 export function load() {
-  try {
-    state.recipes = JSON.parse(localStorage.getItem(STORAGE_KEYS.recipes) || '[]');
-  } catch {
-    state.recipes = [];
-  }
   try {
     state.pantry = normalizePantry(JSON.parse(localStorage.getItem(STORAGE_KEYS.pantry) || '[]'));
   } catch {
@@ -43,14 +44,23 @@ export function load() {
   }
 }
 
-export function seed() {
-  state.recipes = SEED_RECIPES.map(fromSchema);
-  state.pantry = [...SEED_PANTRY];
-  save();
+/**
+ * Load recipes from the server. Called after auth is confirmed.
+ * @param {{ onUnauthorized?: () => void }} opts
+ * @returns {Promise<boolean>} true if recipes loaded (may be empty, including seeded)
+ */
+export async function loadRecipes({ onUnauthorized } = {}) {
+  const res = await fetchRecipes({ onUnauthorized });
+  if (!res.ok) {
+    state.recipesLoaded = false;
+    return false;
+  }
+  state.recipes = res.recipes || [];
+  state.recipesLoaded = true;
+  return true;
 }
 
-/** Load persisted data, seeding first-run defaults if the library is empty. */
+/** Initialize localStorage data (pantry + cart). Recipes loaded later via loadRecipes(). */
 export function init() {
   load();
-  if (!state.recipes.length) seed();
 }

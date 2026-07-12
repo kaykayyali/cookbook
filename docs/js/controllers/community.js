@@ -6,6 +6,7 @@ import { getToken, initGoogleSignIn } from '../lib/auth.js';
 import { fetchCommunity, communityState, toLocalCopy, saveCommunityRecipe, deleteCommunityRecipe, shareRecipe as shareToCommunity } from '../lib/community.js';
 import { communityCardHTML, communityEmptyHTML } from '../components/communityCard.js';
 import { save as persist } from '../lib/store.js';
+import { createRecipe } from '../lib/api.js';
 import { esc } from '../lib/format.js';
 
 /**
@@ -80,10 +81,14 @@ export function initCommunity({ state, panels, onOpenCommunityDetail = null, onS
   function refresh() { return loadFirst(); }
 
   async function saveToLocal(ctx) {
-    // ctx = { id } — fetch the canonical recipe, copy into the local library.
-    const res = await saveCommunityRecipe(ctx.id, { onUnauthorized: () => onSignedOut && onSignedOut() });
-    if (!res.ok) { toast(res.error || 'Could not save'); return { ok: false, error: res.error }; }
-    const copy = toLocalCopy(res.recipe);
+    // ctx = { id } — fetch the canonical recipe, copy into the user's personal recipes.
+    const getRes = await saveCommunityRecipe(ctx.id, { onUnauthorized: () => onSignedOut && onSignedOut() });
+    if (!getRes.ok) { toast(getRes.error || 'Could not save'); return { ok: false, error: getRes.error }; }
+    const copy = toLocalCopy(getRes.recipe);
+    // Create on the server
+    const res = await createRecipe(copy);
+    if (!res.ok) { toast(res.error || 'Could not save to library'); return { ok: false, error: res.error }; }
+    copy._id = res.id;
     state.recipes.unshift(copy);
     persist();
     if (onRefreshLibrary) onRefreshLibrary();

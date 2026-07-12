@@ -47,7 +47,7 @@ test('app.js calls every controller init function', () => {
   }
 });
 
-test('app.js stays under 70 lines (rendering-wiring allowance)', () => {
+test('app.js stays under 130 lines (auth-gate + login screen allowance)', () => {
   const lines = source.split('\n').length;
-  assert.ok(lines <= 70, `app.js should be ≤ 70 lines (currently ${lines})`);
+  assert.ok(lines <= 130, `app.js should be ≤ 130 lines (currently ${lines})`);
 });

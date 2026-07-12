@@ -16,5 +16,8 @@ import { initCommunity } from '../docs/js/controllers/community.js';
 
 import '../docs/js/app.js';
 
+// Also import new lib modules so esbuild includes them in the bundle.
+import '../docs/js/lib/api.js';
+
 // Re-export so esbuild keeps the names visible (test contract).
 export { initPanels, initRecipes, initPantry, initCart, initDetail, initDrawer, initExtract, initSettings, initFab, initSearch, initCommunity };
