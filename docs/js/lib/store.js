@@ -7,12 +7,14 @@
 
 import { STORAGE_KEYS } from './constants.js';
 import { normalizePantry } from './pantry.js';
+import { normalizeCart } from './cart.js';
 import { fetchRecipes } from './api.js';
 
 export const state = {
   recipes: [],
   pantry: [],
   cart: [],
+  normalizations: {},
   editingId: null,
   detailId: null,
   searchTerm: '',
@@ -26,6 +28,7 @@ export const state = {
 export function save() {
   localStorage.setItem(STORAGE_KEYS.pantry, JSON.stringify(state.pantry));
   localStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(state.cart));
+  localStorage.setItem(STORAGE_KEYS.normalizations, JSON.stringify(state.normalizations));
 }
 
 /** Load pantry + cart from localStorage. */
@@ -38,9 +41,15 @@ export function load() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.cart);
     const parsed = raw ? JSON.parse(raw) : [];
-    state.cart = Array.isArray(parsed) ? parsed : [];
+    state.cart = normalizeCart(parsed);
   } catch {
     state.cart = [];
+  }
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.normalizations) || '{}');
+    state.normalizations = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    state.normalizations = {};
   }
 }
 

@@ -5,8 +5,9 @@
 import { toast } from '../lib/dom.js';
 import { save as persist } from '../lib/store.js';
 import { togglePantry } from '../lib/pantry.js';
-import { addToCart } from '../lib/cart.js';
-import { pluralize, esc } from '../lib/format.js';
+import { addRecipeSelection, isNormalizedIngredient, normalizeIngredientsLocal } from '../lib/cart.js';
+import { normalizeRecipeIngredients } from '../lib/api.js';
+import { esc } from '../lib/format.js';
 
 import {
   ingredientListHTML,
@@ -34,6 +35,8 @@ export function initDetail({
   onEdit = null,
   onSchema = null,
   onChange = null,
+  normalizeIngredients = normalizeRecipeIngredients,
+  notify = toast,
 }) {
   let current = null;
 
@@ -128,16 +131,39 @@ export function initDetail({
     current = null;
   }
 
-  function addToCartHandler(mode) {
+  async function addToCartHandler() {
     const r = current && current.r;
     if (!r) return;
-    const ings = r.recipeIngredient || [];
-    if (!ings.length) { toast('This recipe has no ingredients'); return; }
-    const { cart, addedCount } = addToCart(state.cart, r, state.pantry, mode);
-    state.cart = cart;
+    const ings = (r.recipeIngredient || []).filter((line) => typeof line === 'string');
+    if (!ings.length) { notify('This recipe has no ingredients'); return; }
+    let normalized;
+    state.normalizations ||= {};
+    const persisted = state.normalizations[r._id];
+    const persistedMatches = persisted?.version === 1
+      && Array.isArray(persisted.raw)
+      && persisted.raw.length === ings.length
+      && persisted.raw.every((line, index) => line === ings[index])
+      && Array.isArray(persisted.ingredients)
+      && persisted.ingredients.length === ings.length
+      && persisted.ingredients.every(isNormalizedIngredient);
+    const active = (state.cart || []).find((selection) => selection.recipeId === r._id
+      && selection.normalizationVersion === 1
+      && Array.isArray(selection.ingredients)
+      && selection.ingredients.length === ings.length
+      && selection.ingredients.every(isNormalizedIngredient)
+      && selection.ingredients.every((ingredient, index) => ingredient.raw === ings[index]));
+    if (persistedMatches) normalized = persisted.ingredients;
+    else if (active) normalized = active.ingredients;
+    else {
+      try { normalized = await normalizeIngredients(ings, r); }
+      catch { normalized = normalizeIngredientsLocal(ings); }
+    }
+    delete state.normalizations[r._id];
+    state.normalizations[r._id] = { version: 1, raw: [...ings], ingredients: normalized.map((item) => ({ ...item })) };
+    while (Object.keys(state.normalizations).length > 100) delete state.normalizations[Object.keys(state.normalizations)[0]];
+    state.cart = addRecipeSelection(state.cart || [], r, normalized);
     persist();
-    if (mode === 'missing' && addedCount === 0) toast('Nothing missing — you have everything');
-    else toast(`Added ${pluralize(addedCount, 'item')} to cart`);
+    notify(`Added “${r.name}” to shopping list`);
   }
 
   function wireDetail() {
@@ -154,12 +180,12 @@ export function initDetail({
     const schemaBtn = document.getElementById('dm-schema-btn');
     if (schemaBtn) schemaBtn.addEventListener('click', () => { if (state.detailId && onSchema) onSchema(state.detailId); });
     const allBtn = document.getElementById('dm-add-all-btn');
-    if (allBtn) allBtn.addEventListener('click', () => addToCartHandler('all'));
+    if (allBtn) allBtn.addEventListener('click', () => { void addToCartHandler(); });
     // Pantry note "Add to cart" button (shown only when missing > 0) —
     // replaces the old section-label "Add missing to cart" button.
     const note = document.getElementById('dm-pantry-note');
     if (note) note.addEventListener('click', (e) => {
-      if (e.target.closest('[data-action="add-missing"]')) addToCartHandler('missing');
+      if (e.target.closest('[data-action="add-missing"]')) void addToCartHandler();
     });
     const ings = document.getElementById('dm-ingredients');
     if (ings) {
@@ -171,7 +197,7 @@ export function initDetail({
         persist();
         renderIngredients();
         if (onChange) onChange();
-        toast(added ? `Added "${name}" to pantry` : `Removed "${name}" from pantry`);
+        notify(added ? `Added "${name}" to pantry` : `Removed "${name}" from pantry`);
       });
     }
 
@@ -179,7 +205,7 @@ export function initDetail({
   }
 
   wireDetail();
-  return { open, close: closeSheet, _renderIngredients: renderIngredients };
+  return { open, close: closeSheet, _renderIngredients: renderIngredients, _addToCart: addToCartHandler };
 }
 
 function isAnyOpen(document) {

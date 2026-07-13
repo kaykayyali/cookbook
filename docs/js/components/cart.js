@@ -1,36 +1,35 @@
-// ════════════════════════════════════════════════════════
-// cart.js — shopping cart markup (design-system v1)
-// ════════════════════════════════════════════════════════
-
+// cart.js — concise selected recipes + one aggregated shopping list.
 import { esc } from '../lib/format.js';
-import { groupCart, sumIfHomogeneous } from '../lib/cart.js';
+import { aggregateCart, canonicalName, formatCanonicalAmount } from '../lib/cart.js';
 
-/**
- * Render the cart as grouped rows. Each contribution is a tappable span
- * (data-action="bought") carrying recipe-id, line, and name so a delegated
- * handler can mark it bought.
- * @param {object[]} cart
- * @returns {string}
- */
-export function cartGroupsHTML(cart) {
-  const groups = groupCart(cart);
-  const rows = [];
-  for (const [name, items] of groups) {
-    const { total, unit } = sumIfHomogeneous(items);
-    const totalHTML = total != null
-      ? `<span class="cart-total">${esc(total)}${unit ? ' ' + esc(unit) : ''} total</span> `
-      : '';
-    const contribs = items.map((it) => {
-      const qty = it.qtyText ? `${esc(it.qtyText)}: ` : '';
-      const safeName = esc(it.recipeName);
-      return `<span class="cart-contrib" data-action="bought" data-recipe-id="${esc(it.recipeId)}" data-line="${esc(it.line)}" data-name="${esc(it.name)}" title="Tap to mark bought (adds to pantry)">${qty}${safeName}</span>`;
-    }).join(', ');
-    rows.push(`<div class="cart-row"><span class="cart-name">${esc(name)}</span> ${totalHTML}(${contribs})</div>`);
-  }
-  return rows.join('');
+function pantryContains(name, pantry) {
+  const needle = canonicalName(name);
+  return (Array.isArray(pantry) ? pantry : []).some((item) => canonicalName(item) === needle);
 }
 
-/** Empty-state message for the cart section. */
+export function cartGroupsHTML(cart, pantry = []) {
+  const selections = (Array.isArray(cart) ? cart : []).map((selection) => `
+    <div class="cart-recipe" data-recipe-id="${esc(selection.recipeId)}">
+      <span class="cart-recipe-name">${esc(selection.recipeName)}</span>
+      <div class="cart-serving-controls" aria-label="Servings for ${esc(selection.recipeName)}">
+        <button class="icon-btn icon-btn-sm" data-action="servings-down" data-recipe-id="${esc(selection.recipeId)}" aria-label="Decrease servings">−</button>
+        <span>${esc(selection.targetServings)} servings</span>
+        <button class="icon-btn icon-btn-sm" data-action="servings-up" data-recipe-id="${esc(selection.recipeId)}" aria-label="Increase servings">+</button>
+      </div>
+      <button class="btn btn-ghost btn-sm" data-action="remove-recipe" data-recipe-id="${esc(selection.recipeId)}">Remove</button>
+    </div>`).join('');
+
+  const items = aggregateCart(cart).map((item) => {
+    const inPantry = pantryContains(item.name, pantry);
+    const amount = formatCanonicalAmount(item.purchaseQuantity, item.unit);
+    const uncertain = item.uncertain ? ' · check amount' : '';
+    const source = item.raw.length ? ` title="From: ${esc(item.raw.join('; '))}"` : '';
+    return `<li class="cart-row"${source}><span class="cart-name">${esc(item.name)}</span><span class="cart-total">${esc(amount)}${uncertain}</span>${inPantry ? '<span class="cart-pantry">in pantry</span>' : ''}<button class="btn btn-ghost btn-sm cart-item-remove" data-action="remove-item" data-name="${esc(item.name)}" aria-label="Remove ${esc(item.name)} from shopping list">Remove</button></li>`;
+  }).join('');
+
+  return `<div class="cart-recipes">${selections}</div><ul class="shopping-list">${items}</ul>`;
+}
+
 export function emptyCartHTML() {
-  return '<p class="cart-empty">Your cart is empty. Open a recipe and tap "Add … items to cart."</p>';
+  return '<p class="cart-empty">Your cart is empty. Open a recipe and add it to your shopping list.</p>';
 }

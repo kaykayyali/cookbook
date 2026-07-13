@@ -6,6 +6,7 @@ export const STORAGE_KEYS = {
 
   pantry: 'cb_pantry',
   cart: 'cb_cart',
+  normalizations: 'cb_ingredient_normalizations_v1',
   token: 'cb_token',
   email: 'cb_email',
   theme: 'cb_theme_v2',
