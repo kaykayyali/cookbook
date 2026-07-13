@@ -60,7 +60,17 @@ export function initExtract({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
       });
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        if (status) {
+          status.textContent = res.status >= 500
+            ? `Server error (${res.status}) — try again in a minute`
+            : `Request failed (${res.status || 'invalid response'})`;
+        }
+        return;
+      }
       if (!res.ok) {
         if (status) status.textContent = data.error || 'failed';
         if (data.partial) {

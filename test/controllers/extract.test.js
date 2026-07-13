@@ -175,6 +175,25 @@ test('submit() on error surfaces the error in url-status', async () => {
   assert.equal(elements['url-status'].textContent, 'site blocked');
 });
 
+test('submit() handles a Cloudflare HTML 502 without exposing a JSON parse error', async () => {
+  if (!mod.initExtract) return;
+  const { document, elements } = makeDom();
+  elements['url-input'].value = 'https://example.com/r';
+  const ctrl = mod.initExtract({
+    state: {}, document,
+    authFetch: () => Promise.resolve({
+      ok: false,
+      status: 502,
+      headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'text/html; charset=UTF-8' : null },
+      json: () => Promise.reject(new SyntaxError("Unexpected token '<'")),
+    }),
+  });
+
+  await ctrl.submit();
+
+  assert.equal(elements['url-status'].textContent, 'Server error (502) — try again in a minute');
+});
+
 test('submit() re-enables the extract button after the call', async () => {
   if (!mod.initExtract) return;
   const { document, elements } = makeDom();
