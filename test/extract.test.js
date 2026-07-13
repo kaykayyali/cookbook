@@ -71,6 +71,27 @@ test('toSimpleRecipe flattens HowToStep instructions to text', () => {
   assert.equal(r['@type'], 'Recipe');
 });
 
+test('toSimpleRecipe recursively flattens HowToSection instructions', () => {
+  const r = toSimpleRecipe({
+    '@type': 'Recipe', name: 'Tsukemen', recipeIngredient: ['noodles'],
+    recipeInstructions: [
+      { '@type': 'HowToSection', name: 'Prepare', itemListElement: [
+        { '@type': 'HowToStep', text: 'Make the ramen eggs.' },
+        { '@type': 'HowToStep', text: 'Slice the pork.' },
+      ] },
+      { '@type': 'HowToSection', name: 'Cook', itemListElement: [
+        { '@type': 'HowToStep', text: 'Cook the noodles.' },
+      ] },
+    ],
+  });
+
+  assert.deepEqual(r.recipeInstructions, [
+    'Make the ramen eggs.',
+    'Slice the pork.',
+    'Cook the noodles.',
+  ]);
+});
+
 test('buildExtractionPrompt returns system + user messages', () => {
   const msgs = buildExtractionPrompt('mix and bake');
   assert.ok(Array.isArray(msgs));

@@ -53,6 +53,30 @@ export function findRecipeInHtml(html) {
   return null;
 }
 
+/** Flatten schema.org instruction strings, HowToSteps, and nested HowToSections. */
+function instructionTexts(value) {
+  const texts = [];
+  const visit = (item) => {
+    if (typeof item === 'string') {
+      const text = item.trim();
+      if (text) texts.push(text);
+      return;
+    }
+    if (Array.isArray(item)) {
+      item.forEach(visit);
+      return;
+    }
+    if (!item || typeof item !== 'object') return;
+    if (typeof item.text === 'string' && item.text.trim()) {
+      texts.push(item.text.trim());
+      return;
+    }
+    if (item.itemListElement) visit(item.itemListElement);
+  };
+  visit(value);
+  return texts;
+}
+
 /**
  * True if obj looks like a usable recipe (name + non-empty ingredients + instructions).
  * @param {object} obj
@@ -62,9 +86,7 @@ export function hasRequiredFields(obj) {
   if (!obj || typeof obj !== 'object') return false;
   if (!obj.name || typeof obj.name !== 'string') return false;
   if (!Array.isArray(obj.recipeIngredient) || !obj.recipeIngredient.length) return false;
-  const instr = obj.recipeInstructions;
-  const okInstr = Array.isArray(instr) ? instr.length > 0 : typeof instr === 'string' && instr.length > 0;
-  return okInstr;
+  return instructionTexts(obj.recipeInstructions).length > 0;
 }
 
 /**
@@ -78,14 +100,7 @@ export function toSimpleRecipe(obj) {
   out.recipeIngredient = Array.isArray(obj.recipeIngredient)
     ? obj.recipeIngredient.map(String)
     : [];
-  const instr = obj.recipeInstructions;
-  if (Array.isArray(instr)) {
-    out.recipeInstructions = instr.map((s) => (typeof s === 'string' ? s : (s?.text || '')));
-  } else if (typeof instr === 'string') {
-    out.recipeInstructions = [instr];
-  } else {
-    out.recipeInstructions = [];
-  }
+  out.recipeInstructions = instructionTexts(obj.recipeInstructions);
   return out;
 }
 
