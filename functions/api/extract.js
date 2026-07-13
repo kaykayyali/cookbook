@@ -37,7 +37,7 @@ function rateLimited(email, perMin) {
  * @param {object} env
  * @returns {{fetchPage: function, runLLM: function}}
  */
-function realDeps(env) {
+export function realDeps(env) {
 	return {
 		fetchPage: async (url) => {
 			const ctrl = new AbortController();
@@ -104,7 +104,12 @@ function realDeps(env) {
 				console.log(
 					`[Workers AI] Dispatching inference call to model: ${AI_MODEL}`,
 				);
-				const out = await env.AI.run(AI_MODEL, { messages });
+				const out = await env.AI.run(AI_MODEL, {
+					messages,
+					// The provider default is too small for recipes with detailed
+					// ingredients and instructions and can truncate the JSON response.
+					max_tokens: 2048,
+				});
 				const resultText =
 					typeof out === "string" ? out : out?.response || "";
 				console.log(

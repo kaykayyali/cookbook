@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { signSession } from '../functions/_lib/session.js';
 import { onRequest as middleware } from '../functions/api/_middleware.js';
-import { onRequestPost as extractRoute } from '../functions/api/extract.js';
+import { onRequestPost as extractRoute, realDeps } from '../functions/api/extract.js';
 
 const SECRET = 'test-secret-please-change-in-prod-32+chars';
 
@@ -70,4 +70,15 @@ test('extract route returns 401 invalid_token when claims did not propagate', as
   const res = await extractRoute(context);
   assert.equal(res.status, 401);
   assert.deepEqual(await res.json(), { error: 'invalid_token' });
+});
+
+test('Workers AI extraction allows enough output tokens for a complete recipe', async () => {
+  let input;
+  const deps = realDeps({
+    AI: { run: async (_model, options) => { input = options; return { response: '{}' }; } },
+  });
+
+  await deps.runLLM([{ role: 'user', content: 'extract this recipe' }]);
+
+  assert.equal(input.max_tokens, 2048);
 });
