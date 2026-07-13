@@ -77,6 +77,78 @@ function instructionTexts(value) {
   return texts;
 }
 
+function textFromHtml(fragment) {
+  const entities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+  return String(fragment || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&(#x?[0-9a-f]+|amp|lt|gt|quot|apos|nbsp);/gi, (_match, entity) => {
+      if (entity[0] === '#') {
+        const hex = entity[1]?.toLowerCase() === 'x';
+        const value = Number.parseInt(entity.slice(hex ? 2 : 1), hex ? 16 : 10);
+        return Number.isFinite(value) ? String.fromCodePoint(value) : ' ';
+      }
+      return entities[entity.toLowerCase()] || ' ';
+    })
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Extract common article recipes that use an ingredient table/list and
+ * numbered Step headings but provide no valid schema.org Recipe JSON-LD.
+ */
+export function findRecipeInArticleHtml(html, url = '') {
+  if (typeof html !== 'string') return null;
+  const nameMatch = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  const name = textFromHtml(nameMatch?.[1]);
+  if (!name) return null;
+
+  const ingredientHeading = /<h([1-6])[^>]*>[\s\S]*?ingredients[\s\S]*?<\/h\1>/i.exec(html);
+  if (!ingredientHeading) return null;
+  const ingredientStart = ingredientHeading.index + ingredientHeading[0].length;
+  const afterIngredientHeading = html.slice(ingredientStart);
+  const nextHeading = afterIngredientHeading.search(/<h[1-6][^>]*>/i);
+  const ingredientBlock = nextHeading >= 0
+    ? afterIngredientHeading.slice(0, nextHeading)
+    : afterIngredientHeading;
+
+  const ingredients = [];
+  for (const row of ingredientBlock.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const cells = [...row[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)]
+      .map((cell) => textFromHtml(cell[1]));
+    if (cells.length >= 2 && !/^ingredient$/i.test(cells[0])) {
+      ingredients.push(`${cells[1]} ${cells[0]}`.trim());
+    }
+  }
+  if (!ingredients.length) {
+    for (const item of ingredientBlock.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)) {
+      const text = textFromHtml(item[1]);
+      if (text) ingredients.push(text);
+    }
+  }
+
+  const instructions = [];
+  const stepHeading = /<h([2-6])[^>]*>\s*Step\s*\d+\s*:?\s*([\s\S]*?)<\/h\1>([\s\S]*?)(?=<h[2-6][^>]*>|$)/gi;
+  for (const step of html.matchAll(stepHeading)) {
+    const title = textFromHtml(step[2]);
+    const body = textFromHtml(step[3]);
+    const text = title && body ? `${title}: ${body}` : title || body;
+    if (text) instructions.push(text);
+  }
+
+  const recipe = {
+    '@context': 'https://schema.org',
+    '@type': 'Recipe',
+    name,
+    url,
+    recipeIngredient: ingredients,
+    recipeInstructions: instructions,
+  };
+  return hasRequiredFields(recipe) ? recipe : null;
+}
+
 /**
  * True if obj looks like a usable recipe (name + non-empty ingredients + instructions).
  * @param {object} obj
@@ -233,6 +305,12 @@ export async function extractRecipe(url, deps) {
   if (found && hasRequiredFields(found)) {
     return { ok: true, recipe: toSimpleRecipe(found) };
   }
+
+  // Prefer a deterministic article parser before Workers AI. Besides being
+  // faster, this avoids platform AI failures for pages that already expose
+  // clear ingredient tables and numbered step headings in their HTML.
+  const articleRecipe = findRecipeInArticleHtml(page.html || '', url);
+  if (articleRecipe) return { ok: true, recipe: articleRecipe };
 
   // Partial recovery: if JSON-LD had a name but was missing required fields
   // (e.g. had ingredients but no instructions), capture it as a partial so

@@ -162,6 +162,36 @@ test('extractRecipe uses embedded JSON-LD without calling the LLM', async () => 
   assert.equal(llmCalled, false);
 });
 
+test('extractRecipe parses article tables and numbered steps without calling Workers AI', async () => {
+  const html = `<html><body>
+    <h1>Japanese Soufflé Pancakes</h1>
+    <h2>Ingredients for Japanese Soufflé Pancakes</h2>
+    <table><tr><th>Ingredient</th><th>Measure</th><th>Notes</th></tr>
+      <tr><td>Large eggs</td><td>2 (separated)</td><td>Room temperature</td></tr>
+      <tr><td>Cake flour</td><td>1/4 cup</td><td>Sifted</td></tr></table>
+    <h2>Step-by-Step: How to Make Japanese Soufflé Pancakes</h2>
+    <h3>Step 1: Make the Batter</h3><ul><li>Whisk the yolks and milk.</li><li>Fold in flour.</li></ul>
+    <h3>Step 2: Cook</h3><ul><li>Cook over low heat.</li></ul>
+    <h2>Expert Tips</h2>
+  </body></html>`;
+  let llmCalled = false;
+  const deps = {
+    fetchPage: async () => ({ ok: true, status: 200, html }),
+    runLLM: async () => { llmCalled = true; return ''; },
+  };
+
+  const res = await extractRecipe('https://example.com/pancakes', deps);
+
+  assert.equal(res.ok, true);
+  assert.equal(res.recipe.name, 'Japanese Soufflé Pancakes');
+  assert.deepEqual(res.recipe.recipeIngredient, ['2 (separated) Large eggs', '1/4 cup Cake flour']);
+  assert.deepEqual(res.recipe.recipeInstructions, [
+    'Make the Batter: Whisk the yolks and milk. Fold in flour.',
+    'Cook: Cook over low heat.',
+  ]);
+  assert.equal(llmCalled, false);
+});
+
 test('extractRecipe falls back to the LLM when no JSON-LD', async () => {
   const deps = {
     fetchPage: async () => ({ ok: true, status: 200, html: '<p>boil water, add pasta</p>' }),
