@@ -24,6 +24,7 @@ export function initExtract({
   authFetch: authFetchDep = authFetch,
   parseImport: parseImportDep = parseImport,
   toast: toastDep = toast,
+  clipboard = globalThis.navigator?.clipboard,
 } = {}) {
   function open() {
     const signedOut = !getTokenDep();
@@ -38,12 +39,30 @@ export function initExtract({
     const overlay = document.getElementById('url-overlay');
     if (overlay) overlay.classList.add('open');
     document.body.style.overflow = 'hidden';
+    if (!signedOut) input?.focus?.();
   }
 
   function close() {
     const overlay = document.getElementById('url-overlay');
     if (overlay) overlay.classList.remove('open');
     if (!isAnyOpen(document)) document.body.style.overflow = '';
+  }
+
+  async function paste() {
+    const input = document.getElementById('url-input');
+    const status = document.getElementById('url-status');
+    try {
+      const text = await clipboard?.readText?.();
+      if (!text) {
+        if (status) status.textContent = 'Clipboard is empty';
+      } else if (input) {
+        input.value = text.trim();
+        if (status) status.textContent = '';
+      }
+    } catch {
+      if (status) status.textContent = 'Clipboard access unavailable — use Ctrl+V';
+    }
+    input?.focus?.();
   }
 
   async function submit() {
@@ -103,6 +122,8 @@ export function initExtract({
     if (overlay) overlay.addEventListener('click', (e) => { if (e.target.id === 'url-overlay') close(); });
     const extractBtn = document.getElementById('url-extract-btn');
     if (extractBtn) extractBtn.addEventListener('click', () => submit());
+    const pasteBtn = document.getElementById('url-paste-btn');
+    if (pasteBtn) pasteBtn.addEventListener('click', () => paste());
     const input = document.getElementById('url-input');
     if (input) {
       input.addEventListener('keydown', (e) => {
@@ -121,7 +142,7 @@ export function initExtract({
   }
 
   wireExtract();
-  return { open, close, submit };
+  return { open, close, paste, submit };
 }
 
 function isAnyOpen(document) {

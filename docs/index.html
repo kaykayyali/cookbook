@@ -1029,34 +1029,35 @@
 						</button>
 					</div>
 					<div id="url-signedin">
-						<input
-							type="url"
-							id="url-input"
-							placeholder="https://example.com/recipe"
-							style="
-								width: 100%;
-								margin-bottom: 0.75rem;
-								padding: 0.5rem;
-								border-radius: 6px;
-								border: 1px solid var(--border, #3a3531);
-								background: var(--surface, #26221e);
-								color: inherit;
-							"
-						/>
-						<button
-							class="btn btn-primary btn-sm"
-							id="url-extract-btn"
-						>
-							Extract
-						</button>
+						<div class="url-input-row">
+							<input
+								class="input"
+								type="url"
+								id="url-input"
+								aria-label="Recipe URL"
+								placeholder="https://example.com/recipe"
+							/>
+							<button
+								type="button"
+								class="btn btn-secondary btn-md"
+								id="url-paste-btn"
+							>
+								Paste
+							</button>
+						</div>
+						<div class="url-actions">
+							<button
+								type="button"
+								class="btn btn-primary btn-md"
+								id="url-extract-btn"
+							>
+								Extract recipe
+							</button>
 						<span
 							id="url-status"
-							style="
-								margin-left: 0.5rem;
-								color: var(--ink-light, #a8a29e);
-								font-size: 0.85rem;
-							"
+							aria-live="polite"
 						></span>
+						</div>
 					</div>
 				</div>
 			</div>

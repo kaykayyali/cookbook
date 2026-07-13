@@ -22,7 +22,8 @@ function makeDom() {
   for (const id of ids) {
     elements[id] = {
       value: '', textContent: '', innerHTML: '', style: { display: '' },
-      disabled: false,
+      disabled: false, focused: false,
+      focus(){ this.focused = true; },
       addEventListener: () => {},
       querySelector: () => null,
       firstElementChild: null,
@@ -84,6 +85,30 @@ test('open() shows the signed-in block when getToken() returns a token', () => {
   ctrl.open();
   assert.equal(elements['url-signedin'].style.display, '');
   assert.equal(elements['url-signedout'].style.display, 'none');
+});
+
+test('open() focuses the URL input for a signed-in user', () => {
+  if (!mod.initExtract) return;
+  const { document, elements } = makeDom();
+  const ctrl = mod.initExtract({ state: {}, document, getToken: () => 'fake-token' });
+
+  ctrl.open();
+
+  assert.equal(elements['url-input'].focused, true);
+});
+
+test('paste() reads and trims the clipboard URL into the focused input', async () => {
+  if (!mod.initExtract) return;
+  const { document, elements } = makeDom();
+  const ctrl = mod.initExtract({
+    state: {}, document,
+    clipboard: { readText: async () => '  https://example.com/recipe  ' },
+  });
+
+  await ctrl.paste();
+
+  assert.equal(elements['url-input'].value, 'https://example.com/recipe');
+  assert.equal(elements['url-input'].focused, true);
 });
 
 test('open() resets url-input value and url-status text', () => {
