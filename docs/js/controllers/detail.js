@@ -7,7 +7,7 @@ import { save as persist } from '../lib/store.js';
 import { togglePantry } from '../lib/pantry.js';
 import { addToCart } from '../lib/cart.js';
 import { pluralize, esc } from '../lib/format.js';
-import { fromSchema } from '../lib/schema.js';
+
 import {
   ingredientListHTML,
   pantryNoteHTML,
@@ -25,11 +25,8 @@ import {
  * @param {(id: string) => void} [deps.onEdit] - fires when user clicks "Edit"
  * @param {(id: string) => void} [deps.onSchema] - fires when user clicks "Schema"
  * @param {() => void} [deps.onChange] - fires when pantry changes via ingredient tap (re-render recipes)
- * @param {(ctx: object) => void} [deps.onSaveCommunityLocal] - "Save to my library" on a community recipe
- * @param {(item: object) => void} [deps.onEditCommunity] - author "Edit" on a community recipe
- * @param {(ctx: object) => void} [deps.onDeleteCommunity] - author "Delete" on a community recipe
- * @param {(recipe: object) => void} [deps.onShareCommunity] - "Share to Community" on a local recipe
- * @returns {{ open: (id) => void, openCommunity: (item) => void, close: () => void, _renderIngredients: () => void }}
+
+ * @returns {{ open: (id) => void, close: () => void, _renderIngredients: () => void }}
  */
 export function initDetail({
   state,
@@ -37,14 +34,8 @@ export function initDetail({
   onEdit = null,
   onSchema = null,
   onChange = null,
-  onSaveCommunityLocal = null,
-  onEditCommunity = null,
-  onDeleteCommunity = null,
-  onShareCommunity = null,
 }) {
-  // The recipe currently shown in the detail modal (works for local + community).
   let current = null;
-  // ctx = { source: 'local' | 'community', author?: {sub,name,picture}, isAuthor?: boolean, id?: string }
 
   function openRecipe(r, ctx = { source: 'local' }) {
     if (!r) return;
@@ -61,7 +52,7 @@ export function initDetail({
     // Author badge: shown only for community recipes.
     const badge = document.getElementById('dm-author-badge');
     if (badge) {
-      if (ctx.source === 'community' && ctx.author) {
+      if (ctx.author) {
         const a = ctx.author;
         const avatar = a.picture
           ? `<img class="author-avatar" src="${esc(a.picture)}" alt="" width="22" height="22" referrerpolicy="no-referrer" crossorigin="anonymous">`
@@ -74,12 +65,9 @@ export function initDetail({
     }
 
     // Footer button visibility by source/ownership.
-    setDisplay('dm-edit-btn', ctx.source === 'local' ? '' : 'none');
-    setDisplay('dm-share-community-btn', ctx.source === 'local' ? '' : 'none');
+    setDisplay('dm-edit-btn', ctx.source === 'local' && ctx.isAuthor !== false ? '' : 'none');
     setDisplay('dm-schema-btn', ctx.source === 'local' ? '' : 'none');
-    setDisplay('dm-save-local-btn', ctx.source === 'community' ? '' : 'none');
-    setDisplay('dm-community-edit-btn', ctx.source === 'community' && ctx.isAuthor ? '' : 'none');
-    setDisplay('dm-community-delete-btn', ctx.source === 'community' && ctx.isAuthor ? '' : 'none');
+
 
     renderIngredients();
     const stepsEl = document.getElementById('dm-steps');
@@ -103,16 +91,10 @@ export function initDetail({
   function open(id) {
     const r = state.recipes.find((x) => x._id === id);
     if (!r) return;
-    openRecipe(r, { source: 'local' });
+    const isAuthor = !r._author || !!(state.auth?.sub && r._author.sub === state.auth.sub);
+    openRecipe(r, { source: 'local', author: r._author, isAuthor });
   }
 
-  /** Open a community recipe item (read-only for non-authors; author sees Edit/Delete). */
-  function openCommunity(item) {
-    const internal = fromSchema(item.recipe); // canonical JSON-LD -> internal model for rendering
-    internal._id = item.id; // detail render uses this as a key; not persisted
-    const isAuthor = !!(state.auth && item.author && state.auth.sub === item.author.sub);
-    openRecipe(internal, { source: 'community', author: item.author, isAuthor, id: item.id });
-  }
 
   function renderIngredients() {
     const r = current && current.r;
@@ -192,36 +174,12 @@ export function initDetail({
         toast(added ? `Added "${name}" to pantry` : `Removed "${name}" from pantry`);
       });
     }
-    const saveLocalBtn = document.getElementById('dm-save-local-btn');
-    if (saveLocalBtn) saveLocalBtn.addEventListener('click', () => {
-      if (current && current.ctx.source === 'community' && onSaveCommunityLocal) onSaveCommunityLocal(current.ctx);
-    });
-    const cEditBtn = document.getElementById('dm-community-edit-btn');
-    if (cEditBtn) cEditBtn.addEventListener('click', () => {
-      if (current && current.ctx.source === 'community' && onEditCommunity) {
-        const ctx = current.ctx;
-        const r = current.r;
-        closeSheet();
-        onEditCommunity({ id: ctx.id, author: ctx.author, recipe: r });
-      }
-    });
-    const cDelBtn = document.getElementById('dm-community-delete-btn');
-    if (cDelBtn) cDelBtn.addEventListener('click', () => {
-      if (!current || current.ctx.source !== 'community' || !onDeleteCommunity) return;
-      if (!confirm('Delete this shared recipe?')) return;
-      onDeleteCommunity(current.ctx);
-    });
-    const shareBtn = document.getElementById('dm-share-community-btn');
-    if (shareBtn) shareBtn.addEventListener('click', async () => {
-      if (current && current.ctx.source === 'local' && onShareCommunity) {
-        await onShareCommunity(current.r);
-        closeSheet(); // hide the detail sheet so the success toast is visible
-      }
-    });
+
+
   }
 
   wireDetail();
-  return { open, openCommunity, close: closeSheet, _renderIngredients: renderIngredients };
+  return { open, close: closeSheet, _renderIngredients: renderIngredients };
 }
 
 function isAnyOpen(document) {

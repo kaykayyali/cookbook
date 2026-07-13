@@ -5,7 +5,7 @@
 import { esc, pluralize } from '../lib/format.js';
 import { filterRecipes } from '../lib/filters.js';
 import { allRecipeIngredients } from '../lib/pantry.js';
-import { save as persist } from '../lib/store.js';
+
 import { toast } from '../lib/dom.js';
 import { deleteRecipeById } from '../lib/api.js';
 import { recipeCardHTML, emptyStateHTML } from '../components/recipeCard.js';
@@ -61,7 +61,7 @@ export function initRecipes({
     const grid = document.getElementById('recipe-grid');
     if (grid) {
       grid.innerHTML = list.length
-        ? list.map((r) => recipeCardHTML(r, state.pantry)).join('')
+        ? list.map((r) => recipeCardHTML(r, state.pantry, { currentUserSub: state.auth?.sub })).join('')
         : emptyStateHTML(total > 0);
     }
   }
@@ -95,7 +95,7 @@ export function initRecipes({
     const res = await deleteRecipeById(id);
     if (!res.ok) { toast(res.error || 'Could not delete recipe'); return; }
     state.recipes = state.recipes.filter((r) => r._id !== id);
-    persist();
+
     render();
     toast('Recipe deleted');
   }

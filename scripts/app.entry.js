@@ -12,7 +12,7 @@ import { initExtract } from '../docs/js/controllers/extract.js';
 import { initSettings } from '../docs/js/controllers/settings.js';
 import { initFab } from '../docs/js/controllers/fab.js';
 import { initSearch } from '../docs/js/controllers/search.js';
-import { initCommunity } from '../docs/js/controllers/community.js';
+
 
 import '../docs/js/app.js';
 
@@ -20,4 +20,4 @@ import '../docs/js/app.js';
 import '../docs/js/lib/api.js';
 
 // Re-export so esbuild keeps the names visible (test contract).
-export { initPanels, initRecipes, initPantry, initCart, initDetail, initDrawer, initExtract, initSettings, initFab, initSearch, initCommunity };
+export { initPanels, initRecipes, initPantry, initCart, initDetail, initDrawer, initExtract, initSettings, initFab, initSearch };

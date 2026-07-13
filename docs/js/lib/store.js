@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════
 // store.js — app state + persistence
 //
-// Recipes are stored server-side (D1) and fetched via /api/recipes.
+// Recipes are stored only in the shared community D1 cookbook.
 // Pantry and cart remain local (localStorage) — they're device-specific.
 // ════════════════════════════════════════════════════════
 

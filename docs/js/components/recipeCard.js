@@ -18,7 +18,7 @@ const STATUS_TEXT = {
  * @param {string[]} pantry
  * @returns {string}
  */
-export function recipeCardHTML(r, pantry) {
+export function recipeCardHTML(r, pantry, { currentUserSub = null } = {}) {
   const e = eligibility(r, pantry);
   const ings = r.recipeIngredient || [];
   const { have, total } = ingredientCounts(r, pantry);
@@ -40,6 +40,9 @@ export function recipeCardHTML(r, pantry) {
     r.recipeYield && `<span class="meta-pill">${Icon({ name: 'serves' })}${esc(r.recipeYield)}</span>`,
   ].filter(Boolean).join('');
 
+  const author = r._author;
+  const canManage = !!(author && currentUserSub && author.sub === currentUserSub);
+
   return `
     <article class="card recipe-card card-fold-${e}" data-id="${esc(r._id)}">
       <div class="card-stripe"></div>
@@ -49,10 +52,11 @@ export function recipeCardHTML(r, pantry) {
         <div class="card-head">
           <h3 class="card-title">${esc(r.name)}</h3>
           <div class="card-toolbar">
-            ${IconButton({ label: 'Edit',     icon: 'edit',   size: 'sm', danger: false, data: { action: 'edit',   id: r._id } })}
-            ${IconButton({ label: 'Delete',   icon: 'trash',  size: 'sm', danger: true,  data: { action: 'delete',  id: r._id } })}
+            ${canManage ? IconButton({ label: 'Edit', icon: 'edit', size: 'sm', danger: false, data: { action: 'edit', id: r._id } }) : ''}
+            ${canManage ? IconButton({ label: 'Delete', icon: 'trash', size: 'sm', danger: true, data: { action: 'delete', id: r._id } }) : ''}
           </div>
         </div>
+        ${author ? `<p class="recipe-author">added by ${esc(author.name || 'someone')}</p>` : ''}
         ${metaPills ? `<div class="card-meta">${metaPills}</div>` : ''}
         <div class="card-ingredients">
           <p class="ingredients-label">Ingredients</p>

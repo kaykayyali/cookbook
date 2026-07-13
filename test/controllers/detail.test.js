@@ -10,6 +10,7 @@ function makeDom() {
   const ids = [
     'detail-modal', 'detail-overlay', 'dm-eyebrow', 'dm-title', 'dm-meta',
     'dm-ingredients', 'dm-pantry-note', 'dm-steps', 'dm-nutrition', 'dm-nutrition-grid',
+    'dm-edit-btn', 'dm-schema-btn', 'dm-community-edit-btn', 'dm-community-delete-btn',
   ];
   const elements = {};
   for (const id of ids) {
@@ -65,6 +66,14 @@ test('open(id) sets state.detailId', () => {
   const ctrl = mod.initDetail({ state, document });
   ctrl.open('r1');
   assert.equal(state.detailId, 'r1');
+});
+
+test('open(id) hides author-only controls from a non-author', () => {
+  const { document, elements } = makeDom();
+  const recipe = { ...SAMPLE, _author: { sub: 'author-1', name: 'Ada' } };
+  const state = { recipes: [recipe], pantry: [], auth: { sub: 'reader-1' } };
+  mod.initDetail({ state, document }).open('r1');
+  assert.equal(elements['dm-edit-btn'].style.display, 'none');
 });
 
 test('open(id) opens the modal and overlay (.open class)', () => {

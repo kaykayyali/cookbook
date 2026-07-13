@@ -38,7 +38,7 @@ const REQUIRED_TOKEN_NAMES = [
 const CONTROLLER_INIT_NAMES = [
   'initPanels', 'initRecipes', 'initPantry', 'initCart',
   'initDetail', 'initDrawer', 'initExtract', 'initSettings',
-  'initFab', 'initSearch', 'initCommunity',
+  'initFab', 'initSearch',
 ];
 
 test('npm run build produces docs/js/bundle.js and docs/css/bundle.css', () => {

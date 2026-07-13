@@ -2,7 +2,7 @@
 // community.js — Community feed client (pure helpers + thin authFetch wrappers)
 // ════════════════════════════════════════════════════════
 import { authFetch } from './auth.js';
-import { toSchema, fromSchema, uuid } from './schema.js';
+import { toSchema, fromSchema } from './schema.js';
 
 export const communityState = { recipes: [], nextCursor: null, loading: false, hasMore: true, error: null, loaded: false };
 
@@ -11,10 +11,15 @@ export function toShareable(recipe) {
   return toSchema(recipe);
 }
 
-/** Canonical JSON-LD -> a local library recipe with a fresh _id (Save to my library). */
-export function toLocalCopy(canonicalRecipe) {
-  const internal = fromSchema(canonicalRecipe);
-  internal._id = uuid();
+/** Community D1 row -> the internal model used by the primary cookbook. */
+export function mapCommunityItem(item) {
+  const internal = fromSchema(item.recipe);
+  internal._id = item.id;
+  internal._author = item.author || null;
+  if (item.createdAt != null) internal.dateCreated = new Date(item.createdAt).toISOString();
+  if (item.updatedAt != null && item.updatedAt !== item.createdAt) {
+    internal.dateModified = new Date(item.updatedAt).toISOString();
+  }
   return internal;
 }
 
@@ -45,8 +50,8 @@ export async function shareRecipe(recipe, { onUnauthorized } = {}) {
   return { ok: true, recipe: await res.json() };
 }
 
-/** GET /api/community/:id — fetch one (for Save to my library). */
-export async function saveCommunityRecipe(id, { onUnauthorized } = {}) {
+/** GET /api/community/:id — fetch one canonical community row. */
+export async function getCommunityRecipe(id, { onUnauthorized } = {}) {
   const res = await authFetch(`/community/${encodeURIComponent(id)}`, {}, { onUnauthorized });
   if (!res.ok) return { ok: false, status: res.status, error: await readError(res) };
   const data = await res.json();

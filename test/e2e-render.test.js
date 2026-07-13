@@ -47,6 +47,7 @@ const SEED_RECIPES = [
         { '@type': 'HowToStep', position: 5, text: 'Garnish with cilantro and parsley.' },
       ],
     },
+    author: { sub: 'seed-author', name: 'Community Cook', picture: null },
     createdAt: Date.now(), updatedAt: Date.now(),
   },
   {
@@ -67,6 +68,7 @@ const SEED_RECIPES = [
         { '@type': 'HowToStep', position: 5, text: 'Add pasta water for creaminess. Serve.' },
       ],
     },
+    author: { sub: 'seed-author', name: 'Community Cook', picture: null },
     createdAt: Date.now(), updatedAt: Date.now(),
   },
 ];
@@ -109,24 +111,24 @@ before(async () => {
     Event: dom.window.Event,
     CustomEvent: dom.window.CustomEvent,
     crypto: webcrypto,
-    // Mock fetch: return seed recipes for GET /api/recipes, 200 for everything else
+    // Mock fetch: return seed recipes for GET /api/community, 200 for everything else
     fetch: async (url, init) => {
       const u = typeof url === 'string' ? url : url?.url || '';
-      if (u.includes('/recipes') && (!init || init.method === undefined || init.method === 'GET')) {
-        return new Response(JSON.stringify({ recipes: SEED_RECIPES, hasMore: false }), {
+      if (u.includes('/community') && (!init || init.method === undefined || init.method === 'GET')) {
+        return new Response(JSON.stringify({ recipes: SEED_RECIPES, nextCursor: null }), {
           status: 200, headers: { 'Content-Type': 'application/json' },
         });
       }
       // For create/update/delete, return success
-      if (u.includes('/recipes') && init?.method === 'POST') {
+      if (u.includes('/community') && init?.method === 'POST') {
         return new Response(JSON.stringify({ id: 'new-id' }), {
           status: 201, headers: { 'Content-Type': 'application/json' },
         });
       }
-      if (u.includes('/recipes') && init?.method === 'DELETE') {
+      if (u.includes('/community') && init?.method === 'DELETE') {
         return new Response(null, { status: 204 });
       }
-      if (u.includes('/recipes') && init?.method === 'PUT') {
+      if (u.includes('/community') && init?.method === 'PUT') {
         return new Response(JSON.stringify({ ok: true }), {
           status: 200, headers: { 'Content-Type': 'application/json' },
         });

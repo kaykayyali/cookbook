@@ -1,5 +1,10 @@
 # PRD 4 — Shared Recipes (Community)
 
+> **Superseded architecture (2026-07-12):** recipes now come exclusively from the
+> `community_recipes` D1 table through `/api/community`. There is no personal/local recipe
+> library or save-to-library flow. Pantry, cart, authentication, and theme preferences remain
+> device-local. The historical design below is retained as implementation history.
+
 **Status:** Design (approved 2026-06-30, pending written-spec review)
 **Type:** Feature PRD. Builds on PRD 0 (existing app), PRD 3 (Google auth), PRD 2 (recipe extraction).
 

@@ -3,7 +3,7 @@
 // ════════════════════════════════════════════════════════
 
 export const STORAGE_KEYS = {
-  recipes: 'cb_recipes',
+
   pantry: 'cb_pantry',
   cart: 'cb_cart',
   token: 'cb_token',

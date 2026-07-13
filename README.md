@@ -2,7 +2,7 @@
 
 A mobile-first recipe manager that stores recipes as **[schema.org/Recipe](https://schema.org/Recipe)** JSON-LD. **Login-required** — all recipes are stored in Cloudflare D1 and synced across devices. Pantry and shopping cart stay local.
 
-**Live demo:** https://kaykayyali.github.io/cookbook/
+**Live demo:** https://cookbook-2ie.pages.dev/
 
 ![Tests](https://github.com/kaykayyali/cookbook/actions/workflows/test.yml/badge.svg)
 
@@ -16,7 +16,7 @@ A mobile-first recipe manager that stores recipes as **[schema.org/Recipe](https
 - **JSON-LD import/export** — everything is valid schema.org/Recipe, so recipes are portable
 - **Shopping cart** — add ingredients to a cart for shopping, with pantry-matching intelligence
 - **5 color themes** — light, dark, sepia, forest, and ocean
-- **Community sharing** — share recipes to a community feed; save others' recipes to your library (requires Google Sign-In)
+- **One shared cookbook** — every signed-in member reads and writes the same D1-backed recipe collection, with author attribution
 - **AI recipe extraction** — paste a URL and have Workers AI extract the recipe into your library
 - **Login-required** — Google Sign-In gate; all recipes stored server-side, synced across devices
 - **Offline-tolerant** — pantry and shopping cart work without connectivity
@@ -49,16 +49,15 @@ cookbook/
 │   │   │   ├── auth.js            ← Google Sign-In token management
 │   │   │   ├── community.js       ← community API client (authFetch wrappers)
 │   │   │   ├── cart.js            ← cart logic (parse, group, check)
-│   │   │   ├── api.js             ← personal recipes API client (CRUD)
+│   │   │   ├── api.js             ← community-D1 primary cookbook client (CRUD)
 │   │   │   └── schema-modal.js    ← JSON-LD modal + export helper
 │   │   ├── components/            ← HTML-string factories
 │   │   │   ├── recipeCard.js
 │   │   │   ├── recipeDetail.js
 │   │   │   ├── recipeForm.js
 │   │   │   ├── cart.js
-│   │   │   └── communityCard.js
 │   │   └── controllers/           ← DOM wiring + state mutations (one per feature)
-│   │       ├── panels.js          ← tab router (recipes/pantry/cart/community/settings)
+│   │       ├── panels.js          ← tab router (recipes/pantry/cart/settings)
 │   │       ├── recipes.js
 │   │       ├── pantry.js
 │   │       ├── cart.js
@@ -67,21 +66,20 @@ cookbook/
 │   │       ├── extract.js
 │   │       ├── fab.js
 │   │       ├── search.js
-│   │       ├── settings.js
-│   │       └── community.js
+│   │       └── settings.js
 │   └── superpowers/               ← design specs, plans, and D1 migrations
 ├── functions/                     ← Cloudflare Pages Functions (backend)
 │   ├── _middleware.js             ← login gate (session verification)
 │   ├── api/
 │   │   ├── _middleware.js         ← JWT auth gate (context.data.auth)
 │   │   ├── auth.js                ← Google token verification → session cookie
-│   │   ├── recipes.js             ← GET/POST personal recipes
-│   │   ├── recipes/[id].js        ← GET/PUT/DELETE personal recipes
+│   │   ├── recipes.js             ← legacy personal recipe routes (not used by the client)
+│   │   ├── recipes/[id].js        ← legacy personal recipe routes (not used by the client)
 │   │   ├── community.js           ← GET/POST shared recipes
 │   │   ├── community/[id].js      ← PUT/DELETE individual shared recipes
 │   │   └── extract.js             ← URL → Workers AI → schema.org/Recipe
 │   └── _lib/
-│       ├── recipes.js             ← personal recipe CRUD + seed (D1)
+│       ├── recipes.js             ← legacy personal recipe helpers
 │       ├── session.js             ← JWT sign/verify (jose)
 │       ├── google.js              ← Google token verification
 │       ├── whitelist.js           ← ALLOWED_EMAILS gate
@@ -151,7 +149,7 @@ npm test
 # Build JS + CSS bundles
 npm run build
 
-# Serve locally with Cloudflare Pages Functions (auth, recipes, community, extraction)
+# Serve locally with Cloudflare Pages Functions (auth, shared recipes, extraction)
 npm run dev
 
 # Or serve static-only (no backend, login gate will show):
@@ -165,9 +163,9 @@ All tests use Node's built-in test runner. The suite covers:
 | Area | Files | What it covers |
 |------|-------|----------------|
 | **Pure logic** | schema, pantry, filters, cart, ui, theme | Data transformations, matching, formatting |
-| **Controllers** | 11 files in `test/controllers/` | DOM wiring, state mutations, callback contracts |
+| **Controllers** | 10 files in `test/controllers/` | DOM wiring, state mutations, callback contracts |
 | **Auth** | auth-google, auth-handler, auth-jwks, auth-session, auth-whitelist | Token verification, JWT sign/verify, whitelist, fail-closed |
-| **Community** | community, community-client, community-route | D1 CRUD, authFetch, share/edit/delete flows |
+| **Shared cookbook** | community, community-client, community-route, community-primary | D1 CRUD, primary recipe loading, ownership-aware edit/delete |
 | **Extraction** | extract, extract-route | AI extraction, SSRF blocking, rate limiting, partial recovery |
 | **Build & CSS** | build, design-system, css-themes, inline-css, app-bootstrap | Bundle contents, @layer order, token integrity, controller wiring |
 | **E2E** | e2e-render (jsdom), e2e-smoke | DOM rendering, self-building smoke assertions |
@@ -202,7 +200,7 @@ npm run dev
 
 Recipes are stored in Cloudflare D1 and require Google Sign-In. Pantry and shopping cart data remain in your browser's `localStorage`.
 
-- **What goes to the server**: Your recipes (when signed in), author name/email/avatar in the session JWT and on community-shared recipes, URLs sent for AI recipe extraction
+- **What goes to the server**: Shared recipes, author name/email/avatar in the session JWT and on recipe records, URLs sent for AI recipe extraction
 - **What stays local**: Pantry items, shopping cart, color theme preference
 - **Export** backs up your library as a portable JSON-LD file
 

@@ -24,7 +24,6 @@ const CONTROLLER_INITS = [
   'initSettings',
   'initFab',
   'initSearch',
-  'initCommunity',
 ];
 
 test('app.js imports every controller init function', () => {
