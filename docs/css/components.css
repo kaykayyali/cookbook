@@ -618,6 +618,30 @@
 	}
 	.cart-row:last-child { border-bottom: 0; }
 	.cart-row.is-completed { opacity: 0.72; }
+	.cart-row.is-completing,
+	.cart-row.is-restoring {
+		overflow: hidden;
+		pointer-events: none;
+		transform-origin: center;
+		will-change: max-height, min-height, padding, opacity, transform;
+	}
+	.cart-row.is-completing { animation: cart-row-complete 280ms cubic-bezier(.22, 1, .36, 1) both; }
+	.cart-row.is-restoring { animation: cart-row-restore 220ms var(--ease-out) both; }
+	.cart-row.is-completing .cart-check { animation: cart-check-pop 220ms cubic-bezier(.34, 1.56, .64, 1) both; }
+	@keyframes cart-row-complete {
+		0% { max-height: 96px; min-height: 44px; opacity: 1; transform: translateX(0) scale(1); }
+		38% { max-height: 96px; min-height: 44px; opacity: 1; transform: translateX(4px) scale(.995); background: color-mix(in oklab, var(--color-success) 10%, transparent); }
+		100% { max-height: 0; min-height: 0; padding-block: 0; opacity: 0; transform: translateX(14px) scale(.98); border-bottom-color: transparent; }
+	}
+	@keyframes cart-row-restore {
+		0% { max-height: 96px; min-height: 44px; opacity: .72; transform: translateX(0); }
+		100% { max-height: 0; min-height: 0; padding-block: 0; opacity: 0; transform: translateX(-10px); border-bottom-color: transparent; }
+	}
+	@keyframes cart-check-pop {
+		0% { transform: scale(.72); }
+		60% { transform: scale(1.14); }
+		100% { transform: scale(1); }
+	}
 	.cart-check {
 		width: 34px;
 		height: 34px;
@@ -722,5 +746,10 @@
 	@media (max-width: 36rem) {
 		.cart-serving-controls span { min-width: 4.5rem; text-align: center; }
 		.cart-recipe { grid-template-columns: minmax(0, 1fr) auto 34px; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.cart-row.is-completing,
+		.cart-row.is-restoring,
+		.cart-row.is-completing .cart-check { animation: none; }
 	}
 }

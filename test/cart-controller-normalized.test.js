@@ -66,6 +66,34 @@ test('delegated check-off toggles persistent state and restores a completed item
   assert.equal(state.shoppingChecked.egg, undefined);
 });
 
+test('delegated check-off plays a short exit animation before moving the row to Completed', () => {
+  const { document, listeners } = dom();
+  const state = { cart: [{ ...selection, ingredients: [{ raw: '2 eggs', name: 'egg', quantity: 2, unit: 'count', kind: 'indivisible' }] }], pantry: [], shoppingChecked: {} };
+  let scheduled;
+  const classes = new Set();
+  const check = { textContent: '', setAttribute(name, value) { this[name] = value; } };
+  const row = {
+    dataset: {},
+    classList: { add: (name) => classes.add(name) },
+    querySelector: () => check,
+  };
+  const action = { dataset: { action: 'toggle-item', name: 'egg' }, closest: () => row };
+  initCart({
+    state,
+    document,
+    prefersReducedMotion: () => false,
+    schedule: (fn, delay) => { scheduled = { fn, delay }; },
+  });
+  listeners.click({ target: { closest: () => action } });
+  assert.equal(state.shoppingChecked.egg, undefined, 'state waits until the exit motion finishes');
+  assert.equal(classes.has('is-completing'), true);
+  assert.equal(check.textContent, '✓');
+  assert.equal(check['aria-pressed'], 'true');
+  assert.ok(scheduled.delay >= 200 && scheduled.delay <= 350);
+  scheduled.fn();
+  assert.equal(state.shoppingChecked.egg, true);
+});
+
 test('opening Shopping automatically upgrades a stale active cart with a whole-list review', async () => {
   const { document } = dom();
   const state = {

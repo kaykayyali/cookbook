@@ -15,7 +15,14 @@ import { save as persist } from '../lib/store.js';
 import { toast } from '../lib/dom.js';
 import { cartGroupsHTML, emptyCartHTML } from '../components/cart.js';
 
-export function initCart({ state, document = globalThis.document, onChange = null, normalizeIngredients = normalizeRecipeIngredients }) {
+export function initCart({
+  state,
+  document = globalThis.document,
+  onChange = null,
+  normalizeIngredients = normalizeRecipeIngredients,
+  schedule = globalThis.setTimeout,
+  prefersReducedMotion = () => document.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true,
+}) {
   let refreshPromise = null;
 
   function mutationGeneration() { return Number(state.cartMutationGeneration) || 0; }
@@ -125,12 +132,32 @@ export function initCart({ state, document = globalThis.document, onChange = nul
     return true;
   }
 
-  function toggleItem(name) {
+  function setItemCompleted(name, completed) {
     if (!name || !state.cart.some((selection) => selection.ingredients?.some((item) => item.name === name))) return false;
     state.shoppingChecked ||= {};
-    if (state.shoppingChecked[name]) delete state.shoppingChecked[name];
-    else state.shoppingChecked[name] = true;
+    if (completed) state.shoppingChecked[name] = true;
+    else delete state.shoppingChecked[name];
     changed();
+    return true;
+  }
+
+  function toggleItem(name) {
+    return setItemCompleted(name, state.shoppingChecked?.[name] !== true);
+  }
+
+  function animateToggleItem(action, name) {
+    const completed = state.shoppingChecked?.[name] === true;
+    const row = typeof action?.closest === 'function' ? action.closest('.cart-row') : null;
+    if (!row || prefersReducedMotion()) return setItemCompleted(name, !completed);
+    if (row.dataset.cartTransition === 'true') return false;
+    row.dataset.cartTransition = 'true';
+    row.classList.add(completed ? 'is-restoring' : 'is-completing');
+    const check = row.querySelector('.cart-check');
+    if (check) {
+      check.textContent = completed ? '' : '✓';
+      check.setAttribute('aria-pressed', String(!completed));
+    }
+    schedule(() => setItemCompleted(name, !completed), 280);
     return true;
   }
 
@@ -161,7 +188,7 @@ export function initCart({ state, document = globalThis.document, onChange = nul
     if (action.dataset.action === 'servings-up') changeServings(recipeId, 1);
     if (action.dataset.action === 'remove-recipe') removeRecipe(recipeId);
     if (action.dataset.action === 'remove-item') removeItem(action.dataset.name);
-    if (action.dataset.action === 'toggle-item') toggleItem(action.dataset.name);
+    if (action.dataset.action === 'toggle-item') animateToggleItem(action, action.dataset.name);
   });
   const clearBtn = document.getElementById('cart-clear-btn');
   if (clearBtn) clearBtn.addEventListener('click', clear);
