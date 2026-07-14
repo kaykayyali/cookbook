@@ -80,7 +80,6 @@ export function initSettings({
     await clearAuthDep();
     renderAuth();
     if (onSignedOut) onSignedOut();
-    toastDep('Signed out');
   }
 
   async function importRecipes(file) {

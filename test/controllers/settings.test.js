@@ -85,7 +85,7 @@ test('renderAuth calls initGoogleSignIn when signed out', () => {
   assert.equal(typeof calledWith.onError, 'function');
 });
 
-test('handleAuthClick on signout calls clearAuth, re-renders, and toasts', () => {
+test('handleAuthClick on signout calls clearAuth without a redundant toast over the login gate', () => {
   if (!mod.initSettings) return;
   const { document } = makeDom();
   let cleared = false;
@@ -102,7 +102,7 @@ test('handleAuthClick on signout calls clearAuth, re-renders, and toasts', () =>
   const e = { target: { closest: (sel) => (sel === '[data-action="signout"]' ? fakeBtn : null) } };
   return ctrl.handleAuthClick(e).then(() => {
     assert.equal(cleared, true, 'clearAuth should have been called');
-    assert.match(toasts.join('|'), /Signed out/);
+    assert.deepEqual(toasts, []);
   });
 });
 

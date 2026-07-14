@@ -25,6 +25,7 @@ const MAIN = $('main-content');
 const LOGIN_GATE = $('login-gate');
 
 function showLoginGate() {
+  $('toast')?.classList.remove('show');
   if (MAIN) MAIN.style.display = 'none';
   if (LOGIN_GATE) {
     LOGIN_GATE.style.display = '';
