@@ -98,6 +98,19 @@ test('remove("salt") drops it from state.pantry', () => {
   assert.deepEqual(state.pantry, ['pepper']);
 });
 
+test('shared pantry add and remove emit absolute workspace operations', () => {
+  const { document } = makeDom();
+  const state = { pantry: [], recipes: [] };
+  const calls = [];
+  const ctrl = mod.initPantry({ state, document, mutate: (op, payload) => calls.push({ op, payload }) });
+  ctrl.add('  Olive Oil  ');
+  ctrl.remove('olive oil');
+  assert.deepEqual(calls, [
+    { op: 'pantry.add', payload: { name: 'olive oil' } },
+    { op: 'pantry.remove', payload: { name: 'olive oil' } },
+  ]);
+});
+
 test('render produces one .pantry-tag per item', () => {
   if (!mod.initPantry) return;
   const { document, grid } = makeDom();

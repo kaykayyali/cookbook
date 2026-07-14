@@ -37,6 +37,15 @@ test('primary recipe cards attribute the author and only show author controls to
   assert.doesNotMatch(readerHtml, /data-action="delete"/);
 });
 
+test('recipe card shows concise cook count and last-cooked metadata', () => {
+  const recipe = mapCommunityItem(item);
+  const html = recipeCardHTML(recipe, [], {
+    currentUserSub: 'author-1', history: { cookCount: 4, lastCookedAt: Date.UTC(2026, 6, 9) },
+  });
+  assert.match(html, /Cooked 4 times/);
+  assert.match(html, /Last cooked/);
+});
+
 test('client architecture has no personal recipe API or local recipe storage key', () => {
   const files = [
     'docs/js/lib/api.js',

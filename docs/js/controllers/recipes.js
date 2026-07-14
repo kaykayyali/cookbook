@@ -31,6 +31,10 @@ export function initRecipes({
   onEdit = null,
   onSchema = null,
   onDelete = null,
+  confirmDelete = (message) => globalThis.confirm(message),
+  removeRecipe = deleteRecipeById,
+  notify = toast,
+  offlineMutations = false,
 }) {
   function populatePantryAutocomplete() {
     const dl = document.getElementById('pantry-suggestions');
@@ -61,7 +65,12 @@ export function initRecipes({
     const grid = document.getElementById('recipe-grid');
     if (grid) {
       grid.innerHTML = list.length
-        ? list.map((r) => recipeCardHTML(r, state.pantry, { currentUserSub: state.auth?.sub })).join('')
+        ? list.map((r) => {
+          const id = String(r._id || r.id);
+          const cooked = (state.cookEvents || []).filter((event) => event.recipeId === id && !event.deletedAt);
+          const history = cooked.length ? { cookCount: cooked.length, lastCookedAt: Math.max(...cooked.map((event) => event.cookedAt)) } : null;
+          return recipeCardHTML(r, state.pantry, { currentUserSub: state.auth?.sub, history });
+        }).join('')
         : emptyStateHTML(total > 0);
     }
   }
@@ -91,13 +100,19 @@ export function initRecipes({
   }
 
   async function deleteById(id) {
-    if (!confirm('Delete this recipe?')) return;
-    const res = await deleteRecipeById(id);
-    if (!res.ok) { toast(res.error || 'Could not delete recipe'); return; }
+    if (state.offlineCache && !offlineMutations) {
+      const error = 'Recipe changes are unavailable while offline';
+      notify(error);
+      return { ok: false, error };
+    }
+    if (!confirmDelete('Delete this recipe?')) return { ok: false, cancelled: true };
+    const res = await removeRecipe(id);
+    if (!res.ok) { notify(res.error || 'Could not delete recipe'); return { ok: false, error: res.error }; }
     state.recipes = state.recipes.filter((r) => r._id !== id);
 
     render();
-    toast('Recipe deleted');
+    notify('Recipe deleted');
+    return { ok: true };
   }
 
   wireGrid();

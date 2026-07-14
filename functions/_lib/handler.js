@@ -93,16 +93,7 @@ export async function authorize(req, env, deps) {
 	}
 
 	if (!claims) {
-		// Helpful debugging metrics to see if you have an environmental variable visibility problem
-		const secretSnippet = env.SESSION_SECRET
-			? `${env.SESSION_SECRET.substring(0, 3)}... (len: ${env.SESSION_SECRET.length})`
-			: "UNDEFINED";
-
-		console.error(
-			`[Authorize] Token signature verification failed. ` +
-				`Secret present: ${secretSnippet}. ` +
-				`Token string snapshot: ${tokenToVerify.substring(0, 15)}...`,
-		);
+		console.error("[Authorize] Token signature verification failed.");
 		return { ok: false, status: 401, body: { error: "invalid_token" } };
 	}
 

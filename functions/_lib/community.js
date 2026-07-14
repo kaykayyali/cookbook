@@ -16,29 +16,33 @@ function uuid() {
 }
 
 /**
- * D1 DDL for the community_recipes table + indexes. Idempotent (IF NOT EXISTS),
- * so ensureSchema is safe to run on every cold start.
+ * D1 DDL for the household-owned recipe table and indexes. Existing community
+ * rows are retained as a migration source; all live reads and writes use the
+ * household table.
  */
 export const SCHEMA = `
-CREATE TABLE IF NOT EXISTS community_recipes (
-  id             TEXT PRIMARY KEY,
-  author_sub     TEXT NOT NULL,
-  author_name    TEXT NOT NULL,
-  author_picture TEXT,
-  recipe_json    TEXT NOT NULL,
-  created_at    INTEGER NOT NULL,
-  updated_at    INTEGER NOT NULL
+CREATE TABLE IF NOT EXISTS household_recipes (
+  id               TEXT PRIMARY KEY,
+  household_id     TEXT NOT NULL,
+  added_by_sub     TEXT NOT NULL,
+  added_by_name    TEXT NOT NULL,
+  added_by_picture TEXT,
+  recipe_json      TEXT NOT NULL,
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL,
+  FOREIGN KEY (household_id) REFERENCES households(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_community_created ON community_recipes(created_at DESC, id);
-CREATE INDEX IF NOT EXISTS idx_community_author  ON community_recipes(author_sub, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_household_recipes_created
+  ON household_recipes(household_id, created_at DESC, id);
+CREATE INDEX IF NOT EXISTS idx_household_recipes_added_by
+  ON household_recipes(household_id, added_by_sub, created_at DESC);
 `;
 
 /**
- * Run the schema DDL (idempotent). Uses db.batch so the statements apply in one
- * transaction. Safe to call repeatedly.
- * @param {object} db D1 binding (env.DB)
+ * Ensure both the live table and the one-way compatibility bridge from the
+ * legacy community table. The copy is idempotent by recipe ID.
  */
-export async function ensureSchema(db) {
+export async function ensureSchema(db, householdId = 'our-home') {
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS community_recipes (
       id TEXT PRIMARY KEY,
@@ -49,17 +53,44 @@ export async function ensureSchema(db) {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )`),
-    db.prepare(`CREATE INDEX IF NOT EXISTS idx_community_created ON community_recipes(created_at DESC, id)`),
-    db.prepare(`CREATE INDEX IF NOT EXISTS idx_community_author ON community_recipes(author_sub, created_at DESC)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS household_recipes (
+      id TEXT PRIMARY KEY,
+      household_id TEXT NOT NULL,
+      added_by_sub TEXT NOT NULL,
+      added_by_name TEXT NOT NULL,
+      added_by_picture TEXT,
+      recipe_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (household_id) REFERENCES households(id) ON DELETE CASCADE
+    )`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_household_recipes_created
+      ON household_recipes(household_id, created_at DESC, id)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_household_recipes_added_by
+      ON household_recipes(household_id, added_by_sub, created_at DESC)`),
   ]);
+  await db.prepare(`
+    INSERT OR IGNORE INTO household_recipes (
+      id, household_id, added_by_sub, added_by_name, added_by_picture,
+      recipe_json, created_at, updated_at
+    )
+    SELECT id, ?, author_sub, author_name, author_picture,
+      recipe_json, created_at, updated_at
+    FROM community_recipes
+  `).bind(householdId).run();
 }
 
-let schemaEnsured = false;
-/** Idempotent per-isolate schema ensure — routes call this once, then handlers run. */
-export async function ensureOnce(db) {
-  if (schemaEnsured) return;
-  await ensureSchema(db);
-  schemaEnsured = true;
+const schemaPromises = new WeakMap();
+/** Idempotent per-binding schema ensure; concurrent calls share one promise. */
+export function ensureOnce(db, householdId = 'our-home') {
+  if (!schemaPromises.has(db)) {
+    const promise = ensureSchema(db, householdId).catch((error) => {
+      schemaPromises.delete(db);
+      throw error;
+    });
+    schemaPromises.set(db, promise);
+  }
+  return schemaPromises.get(db);
 }
 
 /**
@@ -115,16 +146,22 @@ export function validateRecipe(recipe) {
   return null;
 }
 
-const COLS = 'id, author_sub, author_name, author_picture, recipe_json, created_at, updated_at';
+const COLS = 'id, household_id, added_by_sub, added_by_name, added_by_picture, recipe_json, created_at, updated_at';
+const householdRequired = () => ({ status: 403, body: { error: 'household_required' } });
 
-/** Map a D1 row to a recipe item (recipe is the parsed canonical JSON-LD). */
+/** Map a D1 row to a recipe item while preserving household attribution. */
 function rowToRecipe(row) {
   let recipe;
   try { recipe = JSON.parse(row.recipe_json); } catch { recipe = {}; }
   return {
     id: row.id,
+    householdId: row.household_id,
     recipe,
-    author: { sub: row.author_sub, name: row.author_name, picture: row.author_picture || null },
+    author: {
+      sub: row.added_by_sub,
+      name: row.added_by_name,
+      picture: row.added_by_picture || null,
+    },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -137,21 +174,25 @@ function rowToRecipe(row) {
  * @param {{cursor?:string, limit?:number}} opts
  * @returns {Promise<{status:number, body:object}>}
  */
-export async function listCommunity(db, { cursor, limit } = {}) {
+export async function listCommunity(db, { householdId, cursor, limit } = {}) {
+  if (!householdId) return householdRequired();
   const lim = Math.min(Math.max(Number(limit) || DEFAULT_LIMIT, 1), MAX_LIMIT);
   const cur = decodeCursor(cursor);
   let results;
   if (cur) {
     results = await db.prepare(
-      `SELECT ${COLS} FROM community_recipes
-       WHERE created_at < ? OR (created_at = ? AND id < ?)
+      `SELECT ${COLS} FROM household_recipes
+       WHERE household_id = ? AND (created_at < ? OR (created_at = ? AND id < ?))
        ORDER BY created_at DESC, id DESC
        LIMIT ?`,
-    ).bind(cur.c, cur.c, cur.i, lim + 1).all();
+    ).bind(householdId, cur.c, cur.c, cur.i, lim + 1).all();
   } else {
     results = await db.prepare(
-      `SELECT ${COLS} FROM community_recipes ORDER BY created_at DESC, id DESC LIMIT ?`,
-    ).bind(lim + 1).all();
+      `SELECT ${COLS} FROM household_recipes
+       WHERE household_id = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+    ).bind(householdId, lim + 1).all();
   }
   const rows = (results && results.results) || [];
   const hasMore = rows.length > lim;
@@ -167,8 +208,11 @@ export async function listCommunity(db, { cursor, limit } = {}) {
  * @param {string} id
  * @returns {Promise<{status:number, body:object}>}
  */
-export async function getCommunity(db, id) {
-  const row = await db.prepare(`SELECT ${COLS} FROM community_recipes WHERE id = ?`).bind(id).first();
+export async function getCommunity(db, { id, householdId } = {}) {
+  if (!householdId) return householdRequired();
+  const row = await db.prepare(
+    `SELECT ${COLS} FROM household_recipes WHERE id = ? AND household_id = ?`,
+  ).bind(id, householdId).first();
   if (!row) return { status: 404, body: { error: 'not_found' } };
   return { status: 200, body: rowToRecipe(row) };
 }
@@ -180,18 +224,37 @@ export async function getCommunity(db, id) {
  * @param {{recipe:object, author:{sub,name,picture}}} args
  * @returns {Promise<{status:number, body:object}>}
  */
-export async function shareRecipe(db, { recipe, author }) {
+export async function shareRecipe(db, { id: requestedId, recipe, author, householdId } = {}) {
+  if (!householdId) return householdRequired();
   const err = validateRecipe(recipe);
   if (err) return { status: 400, body: { error: err } };
-  const id = uuid();
+  const id = typeof requestedId === 'string' && requestedId.trim() ? requestedId.trim().slice(0, 100) : uuid();
   const now = Date.now();
   await db.prepare(
-    `INSERT INTO community_recipes (id, author_sub, author_name, author_picture, recipe_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(id, author.sub, author.name, author.picture || null, JSON.stringify(recipe), now, now).run();
+    `INSERT OR IGNORE INTO household_recipes (
+       id, household_id, added_by_sub, added_by_name, added_by_picture,
+       recipe_json, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    id,
+    householdId,
+    author.sub,
+    author.name,
+    author.picture || null,
+    JSON.stringify(recipe),
+    now,
+    now,
+  ).run();
   return {
     status: 201,
-    body: { id, recipe, author: { sub: author.sub, name: author.name, picture: author.picture || null }, createdAt: now, updatedAt: now },
+    body: {
+      id,
+      householdId,
+      recipe,
+      author: { sub: author.sub, name: author.name, picture: author.picture || null },
+      createdAt: now,
+      updatedAt: now,
+    },
   };
 }
 
@@ -201,19 +264,39 @@ export async function shareRecipe(db, { recipe, author }) {
  * @param {{id:string, recipe:object, author:{sub,name,picture}}} args
  * @returns {Promise<{status:number, body:object}>}
  */
-export async function editRecipe(db, { id, recipe, author }) {
+export async function editRecipe(db, { id, recipe, author, householdId } = {}) {
+  if (!householdId) return householdRequired();
   const err = validateRecipe(recipe);
   if (err) return { status: 400, body: { error: err } };
-  const row = await db.prepare(`SELECT author_sub, created_at FROM community_recipes WHERE id = ?`).bind(id).first();
+  const row = await db.prepare(
+    `SELECT added_by_sub, created_at FROM household_recipes WHERE id = ? AND household_id = ?`,
+  ).bind(id, householdId).first();
   if (!row) return { status: 404, body: { error: 'not_found' } };
-  if (row.author_sub !== author.sub) return { status: 403, body: { error: 'not_author' } };
+  if (row.added_by_sub !== author.sub) return { status: 403, body: { error: 'not_author' } };
   const now = Date.now();
   await db.prepare(
-    `UPDATE community_recipes SET recipe_json = ?, author_name = ?, author_picture = ?, updated_at = ? WHERE id = ?`,
-  ).bind(JSON.stringify(recipe), author.name, author.picture || null, now, id).run();
+    `UPDATE household_recipes
+     SET recipe_json = ?, added_by_name = ?, added_by_picture = ?, updated_at = ?
+     WHERE id = ? AND household_id = ? AND added_by_sub = ?`,
+  ).bind(
+    JSON.stringify(recipe),
+    author.name,
+    author.picture || null,
+    now,
+    id,
+    householdId,
+    author.sub,
+  ).run();
   return {
     status: 200,
-    body: { id, recipe, author: { sub: author.sub, name: author.name, picture: author.picture || null }, createdAt: row.created_at, updatedAt: now },
+    body: {
+      id,
+      householdId,
+      recipe,
+      author: { sub: author.sub, name: author.name, picture: author.picture || null },
+      createdAt: row.created_at,
+      updatedAt: now,
+    },
   };
 }
 
@@ -223,11 +306,19 @@ export async function editRecipe(db, { id, recipe, author }) {
  * @param {{id:string, author:{sub}}} args
  * @returns {Promise<{status:number, body:null}>}
  */
-export async function deleteCommunity(db, { id, author }) {
-  const row = await db.prepare(`SELECT author_sub FROM community_recipes WHERE id = ?`).bind(id).first();
+export async function deleteCommunity(db, { id, author, householdId } = {}) {
+  if (!householdId) return householdRequired();
+  const row = await db.prepare(
+    `SELECT added_by_sub FROM household_recipes WHERE id = ? AND household_id = ?`,
+  ).bind(id, householdId).first();
   if (!row) return { status: 404, body: { error: 'not_found' } };
-  if (row.author_sub !== author.sub) return { status: 403, body: { error: 'not_author' } };
-  await db.prepare(`DELETE FROM community_recipes WHERE id = ?`).bind(id).run();
+  if (row.added_by_sub !== author.sub) return { status: 403, body: { error: 'not_author' } };
+  await db.batch([
+    db.prepare(
+      `DELETE FROM household_recipes WHERE id = ? AND household_id = ? AND added_by_sub = ?`,
+    ).bind(id, householdId, author.sub),
+    db.prepare('DELETE FROM community_recipes WHERE id = ?').bind(id),
+  ]);
   return { status: 204, body: null };
 }
 

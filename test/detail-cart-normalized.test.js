@@ -18,7 +18,8 @@ test('detail add audits the complete changed recipe set in one request and maps 
   const soup = { _id: 'r0', name: 'Soup', recipeYield: '2 servings', recipeIngredient: ['1 cup milk'] };
   const state = { recipes: [soup, recipe], cart: [{ recipeId: 'r0', recipeName: 'Soup', sourceServings: 2, targetServings: 1, normalizationVersion: 2, ingredients: [{ raw: '1 cup milk', name: 'milk', displayName: 'Milk', countLabel: '', category: 'dairy-eggs', quantity: 8, unit: 'ounce', kind: 'divisible', confidence: .9 }] }], pantry: [], normalizations: {} };
   let request;
-  const ctrl = initDetail({ state, document: makeDom(), notify() {}, normalizeIngredients: async (recipes) => {
+  const mutations = [];
+  const ctrl = initDetail({ state, document: makeDom(), notify() {}, mutate: (op, payload) => mutations.push({ op, payload }), normalizeIngredients: async (recipes) => {
     request = recipes;
     return recipes.map((entry) => ({ recipeId: entry.recipeId, ingredients: entry.ingredients.map((raw) => raw.includes('milk')
       ? { raw, name: 'milk', displayName: 'Milk', countLabel: '', category: 'dairy-eggs', quantity: 8, unit: 'ounce', kind: 'divisible', confidence: .9 }
@@ -34,6 +35,10 @@ test('detail add audits the complete changed recipe set in one request and maps 
   assert.equal(state.cart.find((x) => x.recipeId === 'r0').targetServings, 1);
   assert.equal(state.normalizations.r0.version, 2);
   assert.equal(state.normalizations.r1.version, 2);
+  assert.deepEqual(mutations.map(({ op, payload }) => ({ op, recipeId: payload.selection.recipeId })), [
+    { op: 'cart.upsertSelection', recipeId: 'r0' },
+    { op: 'cart.upsertSelection', recipeId: 'r1' },
+  ]);
 });
 
 test('whole-set failure uses deterministic local fallback without cart loss', async () => {

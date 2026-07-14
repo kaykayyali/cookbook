@@ -30,7 +30,7 @@ function makeDom() {
     'recipe-drawer', 'drawer-overlay', 'drawer-title', 'f-id',
     'f-name', 'f-category', 'f-cuisine', 'f-yield', 'f-method', 'f-diet', 'f-url',
     'f-prep', 'f-cook', 'f-total', 'f-serving', 'f-calories', 'f-protein', 'f-fat', 'f-carbs',
-    'ing-editor', 'ing-new-input', 'steps-list',
+    'ing-editor', 'ing-new-input', 'steps-list', 'save-recipe-btn',
   ];
   const elements = {};
   for (const id of ids) {
@@ -104,6 +104,39 @@ test('open(id) populates the form fields with the recipe', () => {
   assert.equal(elements['f-id'].value, 'r1');
 });
 
+test('cached offline mode disables recipe saving before any network write', async () => {
+  const { document, elements } = makeDom();
+  let writes = 0;
+  const state = { recipes: [], editingId: null, offlineCache: true };
+  const ctrl = mod.initDrawer({ state, document, create: async () => { writes += 1; return { ok: true }; } });
+  ctrl.open(null);
+  assert.equal(elements['save-recipe-btn'].disabled, true);
+  const result = await ctrl.save();
+  assert.equal(result.ok, false);
+  assert.match(result.error, /offline/i);
+  assert.equal(writes, 0);
+});
+
+test('durable recipe outbox allows an offline edit after queue persistence', async () => {
+  const { document, elements } = makeDom();
+  globalThis.document = document;
+  const calls = [];
+  const state = { recipes: [SAMPLE], editingId: null, offlineCache: true };
+  const ctrl = mod.initDrawer({
+    state, document,
+    mutateRecipe: async (op, payload) => { calls.push({ op, payload }); state.recipes[0] = payload.item; return true; },
+  });
+  ctrl.open('r1');
+  assert.equal(elements['save-recipe-btn'].disabled, false);
+  elements['f-name'].value = 'Offline Carbonara';
+  const result = await ctrl.save();
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(calls[0].op, 'recipe.update');
+  assert.equal(calls[0].payload.id, 'r1');
+  assert.equal(calls[0].payload.recipe.name, 'Offline Carbonara');
+  globalThis.document = doc;
+});
+
 test('openPrefilled strips _id so the recipe opens as "New"', () => {
   if (!mod.initDrawer) return;
   const { document, elements } = makeDom();
@@ -115,6 +148,24 @@ test('openPrefilled strips _id so the recipe opens as "New"', () => {
   assert.equal(state.editingId, null);
   assert.equal(elements['f-name'].value, 'Extracted Recipe');
   assert.equal(extracted._id, undefined, '_id should be stripped from the input');
+});
+
+test('reviewable draft uses its explicit confirmation callback instead of ordinary recipe creation', async () => {
+  const { document } = makeDom();
+  const previousDocument = globalThis.document;
+  globalThis.document = document;
+  const state = { recipes: [], editingId: null };
+  let confirmed;
+  let created = 0;
+  const ctrl = mod.initDrawer({ state, document, create: async () => { created += 1; return { ok: true }; } });
+  ctrl.openPrefilled({ name: 'Photo Soup', recipeIngredient: ['water'], recipeInstructions: ['Boil'] }, {
+    onSave: async (recipe) => { confirmed = recipe; return { ok: true, recipeId: 'published-1' }; },
+  });
+  const result = await ctrl.save();
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(confirmed.name, 'Photo Soup');
+  assert.equal(created, 0);
+  globalThis.document = previousDocument;
 });
 
 test('save returns an object describing the result', async () => {

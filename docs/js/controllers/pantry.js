@@ -17,7 +17,7 @@ import { toast } from '../lib/dom.js';
  * @param {() => void} [deps.onChange] - called after add/remove
  * @returns {{ render: () => void, add: (raw) => string|null, remove: (item) => void }}
  */
-export function initPantry({ state, document = globalThis.document, onChange = null }) {
+export function initPantry({ state, document = globalThis.document, onChange = null, mutate = null }) {
   function render() {
     const grid = document.getElementById('pantry-grid');
     if (!grid) return;
@@ -37,6 +37,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     if (!name) return null;
     if (!added) return null;
     state.pantry = pantry;
+    if (mutate) void mutate('pantry.add', { name });
     persist();
     render();
     if (onChange) onChange();
@@ -54,6 +55,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
 
   function remove(item) {
     state.pantry = removeFromPantry(state.pantry, item);
+    if (mutate) void mutate('pantry.remove', { name: item });
     persist();
     render();
     if (onChange) onChange();

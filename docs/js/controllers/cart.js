@@ -14,11 +14,15 @@ import { normalizeRecipeIngredients } from '../lib/api.js';
 import { save as persist } from '../lib/store.js';
 import { toast } from '../lib/dom.js';
 import { cartGroupsHTML, emptyCartHTML } from '../components/cart.js';
+import { regeneratePlanRangeCart } from '../lib/plan-range.js';
+
+const uid = () => globalThis.crypto?.randomUUID?.() || `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export function initCart({
   state,
   document = globalThis.document,
   onChange = null,
+  mutate = null,
   normalizeIngredients = normalizeRecipeIngredients,
   schedule = globalThis.setTimeout,
   prefersReducedMotion = () => document.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true,
@@ -35,7 +39,9 @@ export function initCart({
   function render({ skipAudit = false } = {}) {
     const grid = document.getElementById('cart-grid');
     if (!grid) return;
-    grid.innerHTML = state.cart.length ? cartGroupsHTML(state.cart, state.pantry, state.shoppingChecked) : emptyCartHTML();
+    grid.innerHTML = state.cart.length || state.manualItems?.length
+      ? cartGroupsHTML(state.cart, state.pantry, state.shoppingChecked, state.manualItems, state.shoppingFilter)
+      : emptyCartHTML();
     if (!skipAudit && state.recipesLoaded === true) void refreshNormalization();
   }
 
@@ -86,6 +92,9 @@ export function initCart({
         ingredients: result.ingredients.map((item) => ({ ...item })),
       };
       state.cart = addRecipeSelection(state.cart, entry.recipe, result.ingredients);
+      if (mutate) void mutate('cart.upsertSelection', {
+        selection: state.cart.find((item) => item.recipeId === entry.recipeId),
+      });
     });
     state.normalizationAudit = { signature };
     persist();
@@ -109,6 +118,10 @@ export function initCart({
     const selection = state.cart.find((item) => item.recipeId === recipeId);
     if (!selection || !Array.isArray(selection.ingredients)) return false;
     state.cart = setTargetServings(state.cart, recipeId, selection.targetServings + delta);
+    if (mutate) void mutate('cart.setTargetServings', {
+      recipeId,
+      targetServings: state.cart.find((item) => item.recipeId === recipeId).targetServings,
+    });
     changed();
     return true;
   }
@@ -117,6 +130,7 @@ export function initCart({
     const next = removeRecipeSelection(state.cart, recipeId);
     if (next.length === state.cart.length) return false;
     state.cart = next;
+    if (mutate) void mutate('cart.removeSelection', { recipeId });
     markCartMutated();
     state.normalizationAudit = {};
     changed();
@@ -126,6 +140,7 @@ export function initCart({
   function removeItem(name) {
     if (!name || !state.cart.some((selection) => selection.ingredients?.some((item) => item.name === name))) return false;
     state.cart = removeShoppingItem(state.cart, name);
+    if (mutate) void mutate('shopping.removeIngredient', { name });
     markCartMutated();
     if (state.shoppingChecked) delete state.shoppingChecked[name];
     changed();
@@ -137,6 +152,7 @@ export function initCart({
     state.shoppingChecked ||= {};
     if (completed) state.shoppingChecked[name] = true;
     else delete state.shoppingChecked[name];
+    if (mutate) void mutate('shopping.setChecked', { key: name, checked: completed });
     changed();
     return true;
   }
@@ -161,8 +177,47 @@ export function initCart({
     return true;
   }
 
+  function addManual(raw) {
+    const name = String(raw || '').trim();
+    if (!name) return null;
+    const item = { id: uid(), name };
+    state.manualItems ||= [];
+    state.manualItems.push(item);
+    if (mutate) void mutate('shopping.addManual', item);
+    changed();
+    return item;
+  }
+
+  function removeManual(id) {
+    if (!state.manualItems?.some((item) => item.id === id)) return false;
+    state.manualItems = state.manualItems.filter((item) => item.id !== id);
+    delete state.shoppingChecked?.[`manual:${id}`];
+    if (mutate) void mutate('shopping.removeManual', { id });
+    changed();
+    return true;
+  }
+
+  function toggleManual(id) {
+    if (!state.manualItems?.some((item) => item.id === id)) return false;
+    const key = `manual:${id}`;
+    const checked = state.shoppingChecked?.[key] !== true;
+    state.shoppingChecked ||= {};
+    if (checked) state.shoppingChecked[key] = true;
+    else delete state.shoppingChecked[key];
+    if (mutate) void mutate('shopping.setChecked', { key, checked });
+    changed();
+    return true;
+  }
+
+  function generatePlanRange(startDate, endDate) {
+    if (!startDate || !endDate || !mutate) return false;
+    const optimisticCart = regeneratePlanRangeCart(state, { rangeStart: startDate, rangeEnd: endDate }, state.recipes);
+    void mutate('shopping.regeneratePlanRange', { rangeStart: startDate, rangeEnd: endDate, optimisticCart });
+    return true;
+  }
+
   function clear() {
-    const before = state.cart.length;
+    const before = state.cart.length + (state.manualItems?.length || 0);
     markCartMutated();
     if (!before) {
       state.normalizationAudit = {};
@@ -171,11 +226,13 @@ export function initCart({
       return 0;
     }
     state.cart = clearCart();
+    state.manualItems = [];
     state.shoppingChecked = {};
     state.normalizationAudit = {};
     persist();
     render();
     toast('Cart cleared');
+    if (mutate) void mutate('shopping.clear', {});
     return before;
   }
 
@@ -189,9 +246,35 @@ export function initCart({
     if (action.dataset.action === 'remove-recipe') removeRecipe(recipeId);
     if (action.dataset.action === 'remove-item') removeItem(action.dataset.name);
     if (action.dataset.action === 'toggle-item') animateToggleItem(action, action.dataset.name);
+    if (action.dataset.action === 'remove-manual') removeManual(action.dataset.id);
+    if (action.dataset.action === 'toggle-manual') toggleManual(action.dataset.id);
   });
   const clearBtn = document.getElementById('cart-clear-btn');
   if (clearBtn) clearBtn.addEventListener('click', clear);
 
-  return { render, changeServings, removeRecipe, removeItem, toggleItem, clear, _refreshNormalization: refreshNormalization };
+  const input = document.getElementById('shopping-manual-input');
+  const filter = document.getElementById('shopping-filter');
+  filter?.addEventListener('input', () => { state.shoppingFilter = filter.value; render({ skipAudit: true }); });
+  const addBtn = document.getElementById('shopping-manual-add');
+  const addFromInput = () => {
+    if (!input) return;
+    if (addManual(input.value)) { input.value = ''; input.focus(); }
+  };
+  addBtn?.addEventListener('click', addFromInput);
+  input?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); addFromInput(); }
+  });
+  const start = document.getElementById('plan-shop-start');
+  const end = document.getElementById('plan-shop-end');
+  if (start && end) {
+    const now = new Date();
+    const offset = now.getTimezoneOffset() * 60_000;
+    start.value ||= new Date(now.getTime() - offset).toISOString().slice(0, 10);
+    end.value ||= new Date(now.getTime() - offset + 6 * 86_400_000).toISOString().slice(0, 10);
+  }
+  document.getElementById('plan-shop-generate')?.addEventListener('click', () => {
+    if (generatePlanRange(start.value, end.value)) toast('Shopping list updated from the plan');
+  });
+
+  return { render, changeServings, removeRecipe, removeItem, toggleItem, addManual, removeManual, toggleManual, generatePlanRange, clear, _refreshNormalization: refreshNormalization };
 }

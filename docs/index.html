@@ -10,6 +10,11 @@
 			name="theme-color"
 			content="#1C1917"
 		/>
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+		<meta name="apple-mobile-web-app-title" content="Cookbook" />
+		<link rel="manifest" href="./manifest.webmanifest" />
+		<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
 		<meta
 			name="description"
 			content="A mobile-first recipe manager that stores recipes as schema.org/Recipe JSON-LD."
@@ -98,8 +103,12 @@
 				<p>schema.org / Recipe</p>
 			</div>
 			<div class="sidebar-nav">
+				<button class="nav-item active" data-panel="week">
+					<svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18M8 14h.01M12 14h.01M16 14h.01"/></svg>
+					<span class="nav-tab-label">Week</span>
+				</button>
 				<button
-					class="nav-item active"
+					class="nav-item"
 					data-panel="recipes"
 				>
 					<svg
@@ -322,6 +331,19 @@
 				</div>
 			</div>
 
+			<!-- Week -->
+			<section class="panel active" id="panel-week">
+				<div class="panel-header week-header">
+					<div><p class="week-eyebrow">Our kitchen</p><h2>This week</h2><p>Tonight first, then the next six dinners.</p></div>
+				</div>
+				<div id="workspace-status" class="workspace-status" role="status" hidden>We couldn't save that change. <button class="btn btn-ghost btn-sm" data-action="retry-workspace">Retry</button></div>
+				<section class="pick-for-us-section" aria-labelledby="pick-for-us-title">
+					<div><h3 id="pick-for-us-title">Pick for us</h3><p>Three honest ideas from your recipes and shared memories.</p></div>
+					<div class="suggestion-grid" id="pick-for-us" aria-live="polite"></div>
+				</section>
+				<div class="week-grid" id="week-grid"></div>
+			</section>
+
 			<!-- Recipes -->
 			<section
 				class="panel"
@@ -407,6 +429,19 @@
 						Clear list
 					</button>
 				</div>
+				<div class="shopping-tools">
+					<input class="input" type="search" id="shopping-filter" placeholder="Filter this list" aria-label="Filter shopping list" />
+					<div class="shopping-manual-add">
+						<input class="input" id="shopping-manual-input" placeholder="Add anything — flowers, foil, milk" autocomplete="off" />
+						<button class="btn btn-primary" id="shopping-manual-add">Add item</button>
+					</div>
+					<div class="plan-shop-tools">
+						<div><strong>Shop this plan</strong><small>Includes recipe dinners, keeps manual items, and skips open, dining-out, and skipped meals.</small></div>
+						<label>From <input class="input" type="date" id="plan-shop-start" /></label>
+						<label>To <input class="input" type="date" id="plan-shop-end" /></label>
+						<button class="btn btn-secondary" id="plan-shop-generate">Update from plan</button>
+					</div>
+				</div>
 				<div
 					class="cart-grid"
 					id="cart-grid"
@@ -433,6 +468,13 @@
 				<div class="settings-section">
 					<p class="settings-section-label">Theme</p>
 					<div id="settings-theme-zone"></div>
+				</div>
+
+				<div class="settings-section">
+					<p class="settings-section-label">Optional reminders</p>
+					<p class="settings-hint">Quiet by default. Turn either reminder on or off whenever you like.</p>
+					<label class="ready-toggle"><input id="weekly-plan-reminder" type="checkbox" class="checkbox" /> Remind me when our weekly plan is empty</label>
+					<label class="ready-toggle"><input id="post-cook-reminder" type="checkbox" class="checkbox" /> Remind me to rate a meal after cooking</label>
 				</div>
 
 				<div class="settings-section">
@@ -489,12 +531,23 @@
 					aria-hidden="true"
 				></span>
 				<button
-					class="fab-dropdown-item"
-					data-fab-action="url"
-					role="menuitem"
-				>
-					Extract from URL
-				</button>
+						class="fab-dropdown-item"
+						data-fab-action="url"
+						role="menuitem"
+					>
+						Extract from URL
+					</button>
+					<span
+						class="fab-dropdown-divider"
+						aria-hidden="true"
+					></span>
+					<button
+						class="fab-dropdown-item"
+						data-fab-action="image"
+						role="menuitem"
+					>
+						Capture from image
+					</button>
 			</div>
 			<button
 				class="fab"
@@ -582,6 +635,10 @@
 					<p class="section-label">Method</p>
 					<div id="dm-steps"></div>
 				</div>
+				<section class="detail-history" aria-labelledby="dm-history-title">
+					<p class="section-label" id="dm-history-title">Cooked together</p>
+					<div id="dm-history" aria-live="polite"></div>
+				</section>
 
 				<div
 					class="detail-nutrition"
@@ -598,6 +655,8 @@
 				</div>
 			</div>
 			<div class="detail-footer">
+				<button class="btn btn-primary btn-sm" id="dm-mark-cooked-btn">Mark cooked</button>
+				<button class="btn btn-secondary btn-sm" id="dm-cook-mode-btn">Cook mode</button>
 				<button
 					class="btn btn-ghost btn-sm"
 					id="dm-add-all-btn"
@@ -1071,8 +1130,116 @@
 				</div>
 			</div>
 		</div>
+
+		<!-- ─────────────────────────────── Image capture modal -->
+		<div
+			class="schema-overlay"
+			id="image-capture-overlay"
+		>
+			<div
+				class="schema-modal"
+				style="max-width: 520px"
+			>
+				<div class="schema-modal-header">
+					<h4>Capture from image</h4>
+					<button
+						id="image-capture-close-btn"
+						aria-label="Close"
+					>
+						<svg
+							width="18"
+							height="18"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<path d="M18 6L6 18M6 6l12 12" />
+						</svg>
+					</button>
+				</div>
+				<div style="padding: 1rem">
+					<p style="color: var(--ink-light, #a8a29e); font-size: 0.9rem; margin-bottom: 0.75rem">
+						Photograph a cookbook page or card. You can add multiple pages and reorder them —
+						uncertain fields will be highlighted for review before the draft is saved.
+					</p>
+					<input
+						type="file"
+						id="image-capture-input"
+						accept="image/*"
+						multiple
+						aria-label="Select recipe images"
+						style="margin-bottom: 0.75rem"
+					/>
+					<div id="image-capture-preview" style="margin-bottom: 0.75rem"></div>
+					<div class="url-actions">
+						<button
+							type="button"
+							class="btn btn-primary btn-md"
+							id="image-capture-submit"
+						>
+							Create draft
+						</button>
+						<span
+							id="image-capture-status"
+							aria-live="polite"
+						></span>
+					</div>
+					<p style="color: var(--ink-light, #a8a29e); font-size: 0.8rem; margin-top: 0.5rem">
+						Nothing is published until you review and confirm the draft.
+					</p>
+				</div>
+			</div>
+		</div>
+
+		<!-- ─────────────────────────────── Cooking mode overlay -->
+		<div
+			class="schema-overlay cooking-mode-overlay"
+			id="cooking-mode-overlay"
+		>
+			<div class="cooking-mode-container">
+				<div id="cooking-mode-header" class="cooking-mode-header">
+					<button
+						id="cook-close"
+						data-action="close"
+						aria-label="Close cooking mode"
+						class="btn btn-ghost btn-sm"
+					>✕</button>
+				</div>
+				<div id="cooking-mode-step" class="cooking-mode-step" style="font-size:1.5rem;line-height:1.5;padding:1rem 0"></div>
+				<div id="cooking-mode-ingredients" class="cooking-mode-ingredients" style="margin-top:0.5rem"></div>
+				<div id="cooking-mode-controls" class="cooking-mode-controls">
+					<button id="cook-prev" data-action="prev" class="btn btn-secondary btn-md" aria-label="Previous step">Back</button>
+					<span id="cook-step-count" aria-live="polite" style="margin:0 1rem"></span>
+					<button id="cook-next" data-action="next" class="btn btn-primary btn-md" aria-label="Next step">Next</button>
+				</div>
+				<div class="cooking-mode-footer" style="margin-top:0.5rem;display:flex;gap:.5rem;align-items:center">
+					<button id="cook-wake-toggle" data-action="toggle-wake" class="btn btn-ghost btn-sm" aria-pressed="false">Keep awake</button>
+					<span id="cook-timer" aria-live="polite"></span>
+				</div>
+			</div>
+		</div>
 		</div><!-- /main-content -->
 
+		<div id="pwa-update" class="pwa-banner" role="status" hidden>
+			<span>A fresh cookbook update is ready.</span>
+			<button class="btn btn-primary btn-sm" type="button">Update now</button>
+		</div>
+		<div id="pwa-install-guide" class="pwa-banner" role="status" hidden></div>
+		<div id="sync-status" class="pwa-banner" role="status" aria-live="polite" hidden>
+			<span data-sync-message>Syncing saved changes…</span>
+			<span class="sync-status-actions">
+				<button class="btn btn-primary btn-sm" data-action="retry-sync" type="button" hidden>Retry</button>
+				<button class="btn btn-ghost btn-sm" data-action="discard-sync" type="button" hidden>Discard</button>
+			</span>
+		</div>
+		<div id="recipe-sync-status" class="pwa-banner" role="status" aria-live="polite" hidden>
+			<span data-recipe-sync-message>Syncing saved recipe changes…</span>
+			<span class="sync-status-actions">
+				<button class="btn btn-primary btn-sm" data-action="retry-recipe-sync" type="button" hidden>Retry</button>
+				<button class="btn btn-ghost btn-sm" data-action="discard-recipe-sync" type="button" hidden>Discard</button>
+			</span>
+		</div>
 		<div
 			id="aria-live"
 			class="aria-live"

@@ -61,3 +61,18 @@ test('authorize 401 when token invalid', async () => {
   assert.equal(res.ok, false);
   assert.equal(res.status, 401);
 });
+
+test('authorization failures never log bearer or session-secret fragments', async () => {
+  const logs = [];
+  const original = console.error;
+  console.error = (...parts) => logs.push(parts.join(' '));
+  try {
+    const req = { headers: { get: () => 'Bearer uniquely-sensitive-bearer-token' } };
+    await authorize(req, env, { ...goodDeps, verifySession: async () => null });
+    const output = logs.join('\n');
+    assert.doesNotMatch(output, /uniquely-sensitive/);
+    assert.doesNotMatch(output, /sec(?:ret)?/i);
+  } finally {
+    console.error = original;
+  }
+});

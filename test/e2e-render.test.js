@@ -78,6 +78,9 @@ const GLOBAL_KEYS = [
   'HTMLElement', 'Node', 'Event', 'CustomEvent', 'crypto', 'fetch',
 ];
 const savedDescriptors = {};
+let importedApp;
+let householdFetches = 0;
+let recipeFetches = 0;
 
 function installGlobal(key, value) {
   Object.defineProperty(globalThis, key, {
@@ -115,12 +118,20 @@ before(async () => {
     fetch: async (url, init) => {
       const u = typeof url === 'string' ? url : url?.url || '';
       if (u.includes('/household') && (!init || init.method === undefined || init.method === 'GET')) {
+        householdFetches += 1;
         return new Response(JSON.stringify({
           household: { id: 'our-home', name: 'Our Home' },
           member: { id: 'test-sub', displayName: 'Test Cook', picture: null, role: 'member' },
         }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
+      if (u.includes('/workspace') && (!init || init.method === undefined || init.method === 'GET')) {
+        return new Response(JSON.stringify({
+          householdId: 'our-home', revision: 0, plan: [], cart: [], pantry: [],
+          shoppingChecked: {}, manualItems: [], recentMutations: [], updatedAt: 0,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
       if (u.includes('/community') && (!init || init.method === undefined || init.method === 'GET')) {
+        recipeFetches += 1;
         return new Response(JSON.stringify({ recipes: SEED_RECIPES, nextCursor: null }), {
           status: 200, headers: { 'Content-Type': 'application/json' },
         });
@@ -155,8 +166,8 @@ before(async () => {
   overrides.localStorage.setItem('cb_email', 'test@example.com');
 
   // Import app.js and wait for the async boot to complete.
-  const app = await import('../docs/js/app.js');
-  await app.ready;
+  importedApp = await import('../docs/js/app.js');
+  await importedApp.ready;
 });
 
 after(() => {
@@ -170,13 +181,10 @@ after(() => {
   }
 });
 
-test('recipe grid renders on boot (seed recipes)', () => {
-  const grid = globalThis.document.getElementById('recipe-grid');
-  assert.ok(grid, '#recipe-grid exists in the DOM');
-  assert.ok(
-    grid.children.length > 0,
-    'recipe grid populated — render wiring works (recipes.render registered + showPanel("recipes") called it)'
-  );
+test('Tonight-first week renders on boot', () => {
+  const grid = globalThis.document.getElementById('week-grid');
+  assert.ok(grid, '#week-grid exists in the DOM');
+  assert.equal(grid.querySelectorAll('.week-day').length, 7);
 });
 
 test('auth zone renders on boot', () => {
@@ -193,17 +201,32 @@ test('auth zone renders on boot', () => {
   );
 });
 
-test('panel router marked the recipes panel active on boot', () => {
-  const panel = globalThis.document.getElementById('panel-recipes');
-  assert.ok(panel, '#panel-recipes exists');
+test('panel router marks Week active on boot and Recipes remains one tap away', () => {
+  const panel = globalThis.document.getElementById('panel-week');
+  assert.ok(panel, '#panel-week exists');
   assert.ok(
     panel.classList.contains('active'),
-    'recipes panel has .active after panels.showPanel("recipes")'
+    'Week panel has .active after panels.showPanel("week")'
   );
+  document.querySelector('[data-panel="recipes"]').click();
+  assert.ok(document.getElementById('panel-recipes').classList.contains('active'));
+  assert.ok(document.getElementById('recipe-grid').children.length > 0);
+  document.querySelector('[data-panel="week"]').click();
 });
 
 test('recipe count label reflects seeded library', () => {
   const countEl = globalThis.document.getElementById('recipe-count');
-  assert.ok(countEl, '#recipe-count exists');
+  assert.ok(countEl, '#recipe-count exists in the DOM');
   assert.match(countEl.textContent, /recipe/i, 'recipe-count label populated');
+});
+
+test('repeated authenticated boot signals do not reload data or initialize the app twice', async () => {
+  assert.equal(typeof importedApp.startAuthenticatedApp, 'function');
+  await Promise.all([
+    importedApp.startAuthenticatedApp(),
+    importedApp.startAuthenticatedApp(),
+  ]);
+  assert.equal(householdFetches, 1, 'household membership resolves once');
+  assert.equal(recipeFetches, 1, 'recipes load once');
+  assert.equal(document.querySelectorAll('#recipe-grid').length, 1);
 });

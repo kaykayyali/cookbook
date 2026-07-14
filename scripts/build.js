@@ -14,6 +14,7 @@ import { writeFile, mkdir, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildServiceWorker } from './build-service-worker.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -70,6 +71,7 @@ async function buildCSS() {
 async function buildAll() {
   await ensureDirs();
   await Promise.all([buildJS(), buildCSS()]);
+  await buildServiceWorker();
   console.log(`✓ built ${JS_BUNDLE.replace(ROOT + '/', '')}`);
   console.log(`✓ built ${CSS_BUNDLE.replace(ROOT + '/', '')}`);
 }

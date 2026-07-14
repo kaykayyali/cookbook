@@ -11,7 +11,9 @@ import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const APP_JS = resolve(__dirname, '..', 'docs', 'js', 'app.js');
-const source = readFileSync(APP_JS, 'utf8');
+const appSource = readFileSync(APP_JS, 'utf8');
+const uiSource = readFileSync(resolve(__dirname, '..', 'docs', 'js', 'lib', 'authenticated-ui.js'), 'utf8');
+const source = `${appSource}\n${uiSource}`;
 
 const CONTROLLER_INITS = [
   'initPanels',
@@ -24,29 +26,30 @@ const CONTROLLER_INITS = [
   'initSettings',
   'initFab',
   'initSearch',
+  'initWeek',
 ];
 
-test('app.js imports every controller init function', () => {
+test('authenticated bootstrap imports every controller init function', () => {
   for (const name of CONTROLLER_INITS) {
     assert.match(
       source,
       new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from`),
-      `app.js must import { ${name} } from a controllers/* module`
+      `authenticated bootstrap must import { ${name} } from a controllers/* module`
     );
   }
 });
 
-test('app.js calls every controller init function', () => {
+test('authenticated bootstrap calls every controller init function', () => {
   for (const name of CONTROLLER_INITS) {
     assert.match(
       source,
       new RegExp(`\\b${name}\\s*\\(\\s*\\{`),
-      `app.js must call ${name}({ ... })`
+      `authenticated bootstrap must call ${name}({ ... })`
     );
   }
 });
 
 test('app.js stays under 130 lines (auth-gate + login screen allowance)', () => {
-  const lines = source.split('\n').length;
+  const lines = appSource.split('\n').length;
   assert.ok(lines <= 130, `app.js should be ≤ 130 lines (currently ${lines})`);
 });

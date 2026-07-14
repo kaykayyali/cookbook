@@ -98,3 +98,36 @@ test('openDetail with unknown id is a no-op (no callback fired)', () => {
   ctrl.openDetail('does-not-exist');
   assert.equal(opened, null);
 });
+
+test('cached offline mode blocks recipe deletion before confirmation or network write', async () => {
+  const { document } = makeDom();
+  let confirms = 0;
+  let writes = 0;
+  const state = { recipes: [SAMPLE_RECIPE], pantry: [], offlineCache: true };
+  const ctrl = mod.initRecipes({
+    state,
+    document,
+    confirmDelete: () => { confirms += 1; return true; },
+    removeRecipe: async () => { writes += 1; return { ok: true }; },
+    notify: () => {},
+  });
+  const result = await ctrl._delete('r1');
+  assert.equal(result.ok, false);
+  assert.match(result.error, /offline/i);
+  assert.equal(confirms, 0);
+  assert.equal(writes, 0);
+});
+
+test('durable recipe outbox allows confirmed deletion while offline', async () => {
+  const { document } = makeDom();
+  let writes = 0;
+  const state = { recipes: [SAMPLE_RECIPE], pantry: [], offlineCache: true };
+  const ctrl = mod.initRecipes({
+    state, document, offlineMutations: true, confirmDelete: () => true,
+    removeRecipe: async () => { writes += 1; return { ok: true }; }, notify: () => {},
+  });
+  const result = await ctrl._delete('r1');
+  assert.equal(result.ok, true);
+  assert.equal(writes, 1);
+  assert.equal(state.recipes.length, 0);
+});

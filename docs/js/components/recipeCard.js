@@ -18,7 +18,7 @@ const STATUS_TEXT = {
  * @param {string[]} pantry
  * @returns {string}
  */
-export function recipeCardHTML(r, pantry, { currentUserSub = null } = {}) {
+export function recipeCardHTML(r, pantry, { currentUserSub = null, history = null } = {}) {
   const e = eligibility(r, pantry);
   const ings = r.recipeIngredient || [];
   const { have, total } = ingredientCounts(r, pantry);
@@ -57,6 +57,7 @@ export function recipeCardHTML(r, pantry, { currentUserSub = null } = {}) {
           </div>
         </div>
         ${author ? `<p class="recipe-author">added by ${esc(author.name || 'someone')}</p>` : ''}
+        ${history?.cookCount ? `<p class="recipe-cook-meta">Cooked ${history.cookCount} time${history.cookCount === 1 ? '' : 's'} · Last cooked ${new Date(history.lastCookedAt).toLocaleDateString()}</p>` : ''}
         ${metaPills ? `<div class="card-meta">${metaPills}</div>` : ''}
         <div class="card-ingredients">
           <p class="ingredients-label">Ingredients</p>

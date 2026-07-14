@@ -23,6 +23,32 @@ import {
   nutritionHTML,
 } from '../components/recipeDetail.js';
 
+const reactionLabel = { loved: 'Loved it', good: 'Good', not_for_us: 'Not for us' };
+
+export function historyHTML(events = [], reactions = [], actorSub = '') {
+  if (!events.length) return '<p class="empty-state">Not cooked yet — your first memory will appear here.</p>';
+  return events.map((event) => {
+    const eventReactions = reactions.filter((reaction) => reaction.cookEventId === event.id);
+    const own = eventReactions.find((reaction) => reaction.memberSub === actorSub);
+    const memories = eventReactions.map((reaction) => `<p class="cook-memory"><strong>${reaction.memberSub === actorSub ? 'You' : 'Partner'} · ${reactionLabel[reaction.reaction] || 'Memory'}</strong>${reaction.note ? ` — ${esc(reaction.note)}` : ''}</p>`).join('');
+    return `<article class="cook-history-card" data-event-id="${esc(event.id)}">
+      <p><strong>${new Date(event.cookedAt).toLocaleDateString()}</strong>${event.notes ? ` — ${esc(event.notes)}` : ''}</p>
+      ${memories}
+      <div class="cook-reaction-actions" role="group" aria-label="Your reaction">
+        <button class="btn btn-ghost btn-sm" data-reaction="loved">Loved it</button>
+        <button class="btn btn-ghost btn-sm" data-reaction="good">Good</button>
+        <button class="btn btn-ghost btn-sm" data-reaction="not_for_us">Not for us</button>
+      </div>
+      <label>Shared memory <textarea class="input" data-memory maxlength="1000">${esc(own?.note || '')}</textarea></label>
+      <div class="cook-history-actions">
+        <button class="btn btn-primary btn-sm" data-action="save-reaction">Save my memory</button>
+        <button class="btn btn-ghost btn-sm" data-action="edit-history">Edit history</button>
+        <button class="btn btn-ghost btn-sm" data-action="delete-history">Delete</button>
+      </div>
+    </article>`;
+  }).join('');
+}
+
 /**
  * Detail modal controller.
  *
@@ -41,8 +67,18 @@ export function initDetail({
   onEdit = null,
   onSchema = null,
   onChange = null,
+  mutate = null,
   normalizeIngredients = normalizeRecipeIngredients,
   notify = toast,
+  getHistory = () => [],
+  getReactions = () => [],
+  onMarkCooked = async () => false,
+  onCookMode = () => {},
+  onReact = async () => false,
+  onCorrectHistory = async () => false,
+  onDeleteHistory = async () => false,
+  prompt = globalThis.prompt,
+  confirm = globalThis.confirm,
 }) {
   let current = null;
   let addQueue = Promise.resolve();
@@ -90,6 +126,7 @@ export function initDetail({
       if (nutWrap) nutWrap.style.display = '';
     } else if (nutWrap) nutWrap.style.display = 'none';
 
+    renderHistory();
     openSheet();
   }
 
@@ -118,6 +155,12 @@ export function initDetail({
       note.style.display = html ? '' : 'none';
       if (html) note.innerHTML = html;
     }
+  }
+
+  function renderHistory() {
+    const target = document.getElementById('dm-history');
+    const recipeId = current ? String(current.r._id || current.r.id || '') : '';
+    if (target) target.innerHTML = historyHTML(getHistory(recipeId), getReactions(), state.auth?.sub || '');
   }
 
   function openSheet() {
@@ -202,6 +245,8 @@ export function initDetail({
         ingredients: result.ingredients.map((item) => ({ ...item })),
       };
       state.cart = addRecipeSelection(state.cart || [], entry.recipe, result.ingredients);
+      const selection = state.cart.find((item) => item.recipeId === entry.recipeId);
+      if (mutate && selection) void mutate('cart.upsertSelection', { selection });
     });
     state.cartMutationGeneration = generation + 1;
     state.normalizationAudit = { signature };
@@ -236,6 +281,34 @@ export function initDetail({
     if (schemaBtn) schemaBtn.addEventListener('click', () => { if (state.detailId && onSchema) onSchema(state.detailId); });
     const allBtn = document.getElementById('dm-add-all-btn');
     if (allBtn) allBtn.addEventListener('click', () => { void addToCartHandler(); });
+    document.getElementById('dm-mark-cooked-btn')?.addEventListener('click', async () => {
+      if (current && await onMarkCooked(current.r)) renderHistory();
+    });
+    document.getElementById('dm-cook-mode-btn')?.addEventListener('click', () => {
+      if (current) onCookMode(current.r);
+    });
+    document.getElementById('dm-history')?.addEventListener('click', async (event) => {
+      const card = event.target.closest('[data-event-id]');
+      if (!card) return;
+      const eventId = card.dataset.eventId;
+      const reaction = event.target.closest('[data-reaction]')?.dataset.reaction;
+      if (reaction) {
+        card.dataset.selectedReaction = reaction;
+        card.querySelectorAll('[data-reaction]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.reaction === reaction)));
+        return;
+      }
+      const action = event.target.closest('[data-action]')?.dataset.action;
+      if (action === 'save-reaction') {
+        const selected = card.dataset.selectedReaction || getReactions().find((item) => item.cookEventId === eventId && item.memberSub === state.auth?.sub)?.reaction;
+        if (selected && await onReact(eventId, selected, { note: card.querySelector('[data-memory]')?.value || '', wouldMakeAgain: selected !== 'not_for_us' })) renderHistory();
+      } else if (action === 'edit-history') {
+        const existing = getHistory(String(current?.r?._id || current?.r?.id || '')).find((item) => item.id === eventId);
+        const notes = prompt?.('Edit this cooking memory', existing?.notes || '');
+        if (notes != null && await onCorrectHistory(eventId, { notes })) renderHistory();
+      } else if (action === 'delete-history' && confirm?.('Delete this cooking history entry?')) {
+        if (await onDeleteHistory(eventId)) renderHistory();
+      }
+    });
     // Pantry note "Add to cart" button (shown only when missing > 0) —
     // replaces the old section-label "Add missing to cart" button.
     const note = document.getElementById('dm-pantry-note');
@@ -249,6 +322,7 @@ export function initDetail({
         if (!item || !item.dataset.ing) return;
         const { pantry, added, name } = togglePantry(state.pantry, item.dataset.ing.toLowerCase());
         state.pantry = pantry;
+        if (mutate) void mutate(added ? 'pantry.add' : 'pantry.remove', { name });
         persist();
         renderIngredients();
         if (onChange) onChange();

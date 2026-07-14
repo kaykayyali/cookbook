@@ -34,7 +34,11 @@ export function initDrawer({
   onSaved = null,
   onOpenDetail = null,
   onSchema = null,
+  create = createRecipe,
+  update = updateRecipe,
+  mutateRecipe = null,
 }) {
+  let customSave = null;
   function openSheet() {
     const drawer = document.getElementById('recipe-drawer');
     const overlay = document.getElementById('drawer-overlay');
@@ -59,6 +63,8 @@ export function initDrawer({
     if (title) title.textContent = state.editingId ? 'Edit Recipe' : 'New Recipe';
     const idEl = document.getElementById('f-id');
     if (idEl) idEl.value = state.editingId || '';
+    const saveBtn = document.getElementById('save-recipe-btn');
+    if (saveBtn) saveBtn.disabled = state.offlineCache === true && !mutateRecipe;
     for (const [elId, key] of Object.entries(FIELD_MAP)) {
       const el = document.getElementById(elId);
       if (el) el.value = r ? r[key] || '' : '';
@@ -75,19 +81,29 @@ export function initDrawer({
   }
 
   function open(id) {
+    customSave = null;
     const r = id ? state.recipes.find((x) => x._id === id) : null;
     fillFromRecipe(r);
     openSheet();
   }
 
-  function openPrefilled(recipe) {
+  function openPrefilled(recipe, { onSave = null, uncertainFields = [] } = {}) {
+    customSave = onSave;
     if (recipe) delete recipe._id;
     fillFromRecipe(recipe);
+    const uncertainTargets = { name: 'f-name', recipeIngredient: 'ing-editor', recipeInstructions: 'steps-list' };
+    Object.values(uncertainTargets).forEach((id) => document.getElementById(id)?.classList.remove('field-uncertain'));
+    uncertainFields.forEach((field) => document.getElementById(uncertainTargets[field])?.classList.add('field-uncertain'));
     openSheet();
   }
 
 
   async function save() {
+    if (state.offlineCache && !mutateRecipe) {
+      const error = 'Recipe changes are unavailable while offline';
+      toast(error);
+      return { ok: false, error };
+    }
     const r = collectForm(state);
     const err = validateRecipe(r);
     if (err) {
@@ -96,10 +112,28 @@ export function initDrawer({
       return { ok: false, error: err };
     }
 
+    if (customSave) {
+      const result = await customSave(r);
+      if (!result?.ok) { toast(result?.error || 'Could not publish reviewed draft'); return { ok: false, error: result?.error }; }
+      customSave = null;
+      closeSheet();
+      if (onSaved) onSaved();
+      toast('Reviewed recipe published');
+      return { ok: true, recipe: r, isNew: true, ...result };
+    }
+
     const idx = state.editingId ? state.recipes.findIndex((x) => x._id === state.editingId) : -1;
     const isNew = idx === -1;
-    if (isNew) {
-      const res = await createRecipe(r);
+    if (mutateRecipe) {
+      const id = isNew
+        ? (globalThis.crypto?.randomUUID?.() || `recipe-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+        : state.recipes[idx]._id;
+      const item = { ...(isNew ? {} : state.recipes[idx]), ...r, id, _id: id };
+      const ok = await mutateRecipe(isNew ? 'recipe.create' : 'recipe.update', { id, recipe: r, item });
+      if (!ok) { toast('Could not queue recipe change'); return { ok: false, error: 'recipe_queue_failed' }; }
+      Object.assign(r, state.recipes.find((entry) => entry._id === id) || item);
+    } else if (isNew) {
+      const res = await create(r);
       if (!res.ok) { toast(res.error || 'Could not save recipe'); return { ok: false, error: res.error }; }
       const saved = mapCommunityItem(res.item);
       state.recipes.unshift(saved);
@@ -107,7 +141,7 @@ export function initDrawer({
     } else {
       const existing = state.recipes[idx];
       const serverId = existing._id;
-      const res = await updateRecipe(serverId, r);
+      const res = await update(serverId, r);
       if (!res.ok) { toast(res.error || 'Could not save recipe'); return { ok: false, error: res.error }; }
       const saved = mapCommunityItem(res.item);
       state.recipes[idx] = saved;

@@ -1,0 +1,125 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import {
+  normalizeCookInput, normalizeReaction, summarizeRecipeHistory, recordCookEvent, saveMemberReaction,
+  correctCookEvent, deleteCookEvent,
+} from '../functions/_lib/cooks.js';
+
+const migration = readFileSync(new URL('../docs/superpowers/migrations/0007_cooking_history.sql', import.meta.url), 'utf8');
+const auditMigration = readFileSync(new URL('../docs/superpowers/migrations/0009_cook_history_audit.sql', import.meta.url), 'utf8');
+
+test('cooking-history migration stores auditable events and one reaction per member', () => {
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS cook_events/);
+  assert.match(migration, /plan_entry_id/);
+  assert.match(migration, /deleted_at/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS cook_event_reactions/);
+  assert.match(migration, /PRIMARY KEY \(cook_event_id, member_sub\)/);
+});
+
+test('cook history completion migration preserves prior plan state and append-only audit records', () => {
+  assert.match(auditMigration, /prior_plan_status/);
+  assert.match(auditMigration, /CREATE TABLE IF NOT EXISTS cook_event_audit/);
+  assert.match(auditMigration, /corrected.*deleted/);
+});
+
+test('cook input is bounded, idempotent, and preserves plan linkage', () => {
+  const event = normalizeCookInput({
+    eventId: 'event-1', recipeId: 'recipe-1', planEntryId: 'plan-1', cookedAt: 1000,
+    participants: ['kay', 'gloria', 'kay'], servings: 4, notes: 'Friday night',
+  }, 2000);
+  assert.deepEqual(event.participants, ['kay', 'gloria']);
+  assert.equal(event.servings, 4);
+  assert.equal(event.planEntryId, 'plan-1');
+  assert.throws(() => normalizeCookInput({ eventId: 'x', recipeId: '', participants: [] }, 2000), /invalid_cook_event/);
+});
+
+test('reactions use the concise vocabulary and preserve member-owned notes', () => {
+  assert.deepEqual(normalizeReaction({ reaction: 'loved', wouldMakeAgain: true, note: 'Crispy edges' }), {
+    reaction: 'loved', wouldMakeAgain: true, note: 'Crispy edges', dismissed: false,
+  });
+  assert.throws(() => normalizeReaction({ reaction: 'five-stars' }), /invalid_reaction/);
+});
+
+test('recipe history excludes deleted events and reports shared reaction memory', () => {
+  const summary = summarizeRecipeHistory('r1', [
+    { id: 'old', recipeId: 'r1', cookedAt: 100, deletedAt: null },
+    { id: 'new', recipeId: 'r1', cookedAt: 200, deletedAt: null },
+    { id: 'deleted', recipeId: 'r1', cookedAt: 300, deletedAt: 400 },
+  ], [
+    { cookEventId: 'new', memberSub: 'kay', reaction: 'loved', note: 'Keep this one' },
+    { cookEventId: 'new', memberSub: 'gloria', reaction: 'good', note: '' },
+  ]);
+  assert.equal(summary.cookCount, 2);
+  assert.equal(summary.lastCookedAt, 200);
+  assert.equal(summary.reactions.length, 2);
+});
+
+test('recording a planned cook is idempotent and atomically marks the plan cooked', async () => {
+  const commits = [];
+  const existing = new Map();
+  const store = {
+    getEvent: async (id) => existing.get(id) || null,
+    hasRecipe: async () => true,
+    listMemberSubs: async () => ['kay', 'gloria'],
+    getWorkspace: async () => ({ revision: 2, plan: [{ id: 'plan-1', recipeId: 'r1', status: 'active' }] }),
+    commitCook: async ({ event, workspace }) => {
+      if (existing.has(event.id)) return existing.get(event.id);
+      existing.set(event.id, event);
+      commits.push({ event, workspace });
+      return event;
+    },
+  };
+  const input = { eventId: 'event-1', recipeId: 'r1', planEntryId: 'plan-1', cookedAt: 1000, participants: ['kay', 'gloria'], servings: 2 };
+  const first = await recordCookEvent(store, { householdId: 'our-home', actorSub: 'kay', input, now: 2000 });
+  const second = await recordCookEvent(store, { householdId: 'our-home', actorSub: 'kay', input, now: 2000 });
+  assert.equal(first.id, second.id);
+  assert.equal(commits.length, 1);
+  assert.equal(commits[0].workspace.plan[0].status, 'cooked');
+});
+
+test('reaction writes are always attributed to the authenticated member', async () => {
+  let saved;
+  const store = {
+    getEvent: async () => ({ id: 'event-1', householdId: 'our-home', deletedAt: null }),
+    saveReaction: async (reaction) => { saved = reaction; return reaction; },
+  };
+  await saveMemberReaction(store, {
+    householdId: 'our-home', actorSub: 'kay', eventId: 'event-1',
+    input: { memberSub: 'gloria', reaction: 'loved', wouldMakeAgain: true }, now: 2000,
+  });
+  assert.equal(saved.memberSub, 'kay');
+});
+
+test('history corrections use event revision CAS and preserve immutable identity', async () => {
+  let committed;
+  const before = { id: 'e1', householdId: 'home', recipeId: 'r1', planEntryId: 'p1', createdBySub: 'kay', createdAt: 1, revision: 2, deletedAt: null };
+  const store = {
+    getEvent: async () => before,
+    listMemberSubs: async () => ['kay', 'gloria'],
+    commitCorrection: async (change) => { committed = change; return change.event; },
+  };
+  const corrected = await correctCookEvent(store, { householdId: 'home', actorSub: 'gloria', input: {
+    eventId: 'e1', eventRevision: 2, cookedAt: 1000, participants: ['kay', 'gloria'], cookSub: 'gloria', servings: 4, notes: 'Crispier',
+  }, now: 2000 });
+  assert.equal(corrected.recipeId, 'r1');
+  assert.equal(corrected.revision, 3);
+  assert.equal(committed.before, before);
+  await assert.rejects(() => correctCookEvent(store, { householdId: 'home', actorSub: 'kay', input: { eventId: 'e1', eventRevision: 1 }, now: 2000 }), /event_revision_conflict/);
+});
+
+test('history deletion is idempotent and restores the linked plan prior status', async () => {
+  let committed;
+  const before = { id: 'e1', householdId: 'home', recipeId: 'r1', planEntryId: 'p1', priorPlanStatus: 'skipped', revision: 2, deletedAt: null };
+  const store = {
+    getEvent: async () => before,
+    getWorkspace: async () => ({ revision: 4, plan: [{ id: 'p1', status: 'cooked' }] }),
+    commitDeletion: async (change) => { committed = change; return change.event; },
+  };
+  const deleted = await deleteCookEvent(store, { householdId: 'home', actorSub: 'kay', input: { eventId: 'e1', eventRevision: 2 }, now: 3000 });
+  assert.equal(deleted.deletedAt, 3000);
+  assert.equal(committed.workspace.plan[0].status, 'skipped');
+  const alreadyDeleted = { ...deleted };
+  store.getEvent = async () => alreadyDeleted;
+  assert.equal(await deleteCookEvent(store, { householdId: 'home', actorSub: 'gloria', input: { eventId: 'e1', eventRevision: 3 }, now: 4000 }), alreadyDeleted);
+});

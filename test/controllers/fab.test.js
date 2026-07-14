@@ -112,6 +112,14 @@ test('handleAction("url") calls extract.open when signed in', () => {
   assert.equal(drawerCalled, false);
 });
 
+test('handleAction("image") opens signed-in image capture', () => {
+  const { document } = makeDom();
+  let opened = false;
+  const ctrl = mod.initFab({ document, imageCapture: { open: () => { opened = true; } }, getToken: () => 'token' });
+  ctrl.handleAction('image', { stopPropagation: () => {} });
+  assert.equal(opened, true);
+});
+
 test('handleAction("url") when signed out sets pendingOpenUrlModal and clicks the sign-in button', async () => {
   if (!mod.initFab) return;
   const { document, elements } = makeDom();

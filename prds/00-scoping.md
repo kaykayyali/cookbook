@@ -42,7 +42,7 @@ Our Cookbook is a private household cooking companion for Kaysser and Gloria: **
 9. Camera/image import creates an editable draft with confidence cues; it never silently publishes.
 10. Romantic tone stays subtle: “Tonight at home,” “planned by Gloria,” “you both loved this,” and shared meal memories.
 11. PWA installation is delivered without an App Store release; offline and update behavior are explicit.
-12. Features ship as test-first, independently working slices in the order below.
+12. Features ship as test-first, cohesive product waves. Each wave closes a meaningful user loop rather than landing isolated plumbing.
 
 ## Core information model
 
@@ -76,26 +76,21 @@ Our Cookbook is a private household cooking companion for Kaysser and Gloria: **
 - Automatic publication of OCR/vision output.
 - Relationship streaks, guilt-based reminders, or excessive romantic decoration.
 
-## PRD tree
+## Delivery waves
 
-| Slice | Working outcome |
-|---|---|
-| 01 | Household identity and membership |
-| 02 | Household-owned recipe migration |
-| 03 | Weekly planner and Week home |
-| 04 | Shared shopping and pantry synchronization |
-| 05 | Plan-to-shopping generation |
-| 06 | Installable PWA shell |
-| 07 | IndexedDB cache, outbox, and offline recovery |
-| 08 | Cooking history |
-| 09 | Personal ratings and recipe memories |
-| 10 | Explainable “Pick for us” suggestions |
-| 11 | Camera/image recipe capture |
-| 12 | Cooking mode, optional reminders, and final household polish |
+The numbered PRDs remain detailed contracts, but adjacent contracts ship together as larger product waves.
 
-## Slicing rule
+| Wave | Included PRDs | Working outcome |
+|---|---|---|
+| 01 — Household foundation | 01 | Both admitted identities enter one permanent private household. |
+| 02 — Plan and shop together | 02–05 | Sign in without refresh, share the recipe library, plan the week from a Tonight-first home, and generate one synchronized shopping list. |
+| 03 — App-like and offline-safe | 06–07 | Installable iPhone PWA with cached reads, durable optimistic mutations, and recovery. |
+| 04 — Remember and choose better | 08–10 | Cooking history, individual ratings/shared memories, and explainable suggestions. |
+| 05 — Capture and cook | 11–12 | Reviewable image capture, focused cooking mode, reminders, and final household polish. |
 
-Every slice is one independently verifiable working behavior and one commit. Tests are written RED first. Persisted schema additions include migration/backfill before validation. No later slice is required to keep an earlier slice usable.
+## Delivery rule
+
+Each wave is one independently verifiable product loop and release. Tests are written RED first for each behavior inside the wave. Persisted schema additions include migration/backfill before validation. Intermediate checkpoints may verify independently, but the release gate covers the complete wave end to end.
 
 ## Out-of-band dependencies
 
@@ -109,3 +104,4 @@ Every slice is one independently verifiable working behavior and one commit. Tes
 | Date | Decision |
 |---|---|
 | 2026-07-13 | Kaysser accepted all proposed defaults, including Week as home and the complete delivery order above. |
+| 2026-07-14 | Kaysser asked for fewer, more substantial releases. The 12 detailed contracts are grouped into five cohesive delivery waves; the active Wave 02 combines PRDs 02–05. |

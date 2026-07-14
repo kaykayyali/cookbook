@@ -1,14 +1,12 @@
 // ════════════════════════════════════════════════════════
 // store.js — app state + persistence
 //
-// Recipes are stored only in the shared community D1 cookbook.
-// Pantry and cart remain local (localStorage) — they're device-specific.
+// Shared recipes and workspace state are authoritative in D1 and cached in IndexedDB.
+// localStorage is used only for derived ingredient-normalization data.
 // ════════════════════════════════════════════════════════
 
 import { STORAGE_KEYS } from './constants.js';
-import { normalizePantry } from './pantry.js';
-import { normalizeCart } from './cart.js';
-import { ensureHouseholdMembership, fetchRecipes } from './api.js';
+import { ensureHouseholdMembership, fetchRecipes, fetchWorkspace } from './api.js';
 
 export const state = {
   household: null,
@@ -19,6 +17,12 @@ export const state = {
   normalizations: {},
   normalizationAudit: {},
   shoppingChecked: {},
+  plan: [],
+  manualItems: [],
+  cookEvents: [],
+  cookReactions: [],
+  workspaceRevision: 0,
+  workspaceLoaded: false,
   editingId: null,
   detailId: null,
   searchTerm: '',
@@ -41,29 +45,14 @@ export async function loadHousehold({ onUnauthorized, resolve = ensureHouseholdM
   return true;
 }
 
-/** Persist pantry + cart to localStorage (recipes are server-side). */
+/** Persist device-local derived normalization data. */
 export function save() {
-  localStorage.setItem(STORAGE_KEYS.pantry, JSON.stringify(state.pantry));
-  localStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(state.cart));
   localStorage.setItem(STORAGE_KEYS.normalizations, JSON.stringify(state.normalizations));
   localStorage.setItem(STORAGE_KEYS.normalizationAudit, JSON.stringify(state.normalizationAudit));
-  localStorage.setItem(STORAGE_KEYS.shoppingChecked, JSON.stringify(state.shoppingChecked));
 }
 
-/** Load pantry + cart from localStorage. */
+/** Load device-local derived normalization data. */
 export function load() {
-  try {
-    state.pantry = normalizePantry(JSON.parse(localStorage.getItem(STORAGE_KEYS.pantry) || '[]'));
-  } catch {
-    state.pantry = [];
-  }
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.cart);
-    const parsed = raw ? JSON.parse(raw) : [];
-    state.cart = normalizeCart(parsed);
-  } catch {
-    state.cart = [];
-  }
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.normalizations) || '{}');
     state.normalizations = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
@@ -76,13 +65,7 @@ export function load() {
   } catch {
     state.normalizationAudit = {};
   }
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.shoppingChecked) || '{}');
-    state.shoppingChecked = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? Object.fromEntries(Object.entries(parsed).filter(([name, checked]) => name && checked === true)) : {};
-  } catch {
-    state.shoppingChecked = {};
-  }
+
 }
 
 /**
@@ -101,7 +84,28 @@ export async function loadRecipes({ onUnauthorized } = {}) {
   return true;
 }
 
-/** Initialize localStorage data (pantry + cart). Recipes loaded later via loadRecipes(). */
+export function applyWorkspace(workspace, target = state) {
+  if (!workspace || workspace.revision < target.workspaceRevision) return false;
+  target.workspaceRevision = workspace.revision;
+  target.plan = workspace.plan;
+  target.cart = workspace.cart;
+  target.pantry = workspace.pantry;
+  target.shoppingChecked = workspace.shoppingChecked;
+  target.manualItems = workspace.manualItems;
+  target.workspaceLoaded = true;
+  return true;
+}
+
+export async function loadWorkspace({ onUnauthorized, fetch = fetchWorkspace } = {}) {
+  const result = await fetch({ onUnauthorized });
+  if (!result.ok || !result.workspace) {
+    state.workspaceLoaded = false;
+    return false;
+  }
+  return applyWorkspace(result.workspace);
+}
+
+/** Initialize device-local derived data. Shared state loads from D1/IndexedDB later. */
 export function init() {
   load();
 }

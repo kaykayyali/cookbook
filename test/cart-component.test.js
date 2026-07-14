@@ -59,3 +59,19 @@ test('checked rows move to a collapsed completed section with restore controls',
   assert.doesNotMatch(html, /<details class="cart-completed" open/);
   assert.match(html, /aria-label="Mark Egg as not completed"/);
 });
+
+test('manual household items render independently from recipe normalization', () => {
+  const html = cartGroupsHTML([], [], { 'manual:m1': true }, [{ id: 'm1', name: 'Flowers' }]);
+  assert.match(html, /Flowers/);
+  assert.match(html, /data-action="toggle-manual"/);
+  assert.match(html, /data-action="remove-manual"/);
+  assert.match(html, /Completed \(1\)/);
+});
+
+test('shopping filter narrows recipe and manual rows without mutating the cart', () => {
+  const manual = [{ id: 'm1', name: 'Flowers' }];
+  const html = cartGroupsHTML(cart, [], {}, manual, 'flow');
+  assert.match(html, /Flowers/);
+  assert.doesNotMatch(html, />Egg</);
+  assert.equal(cart.length, 1);
+});

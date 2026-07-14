@@ -31,7 +31,10 @@ function makeContext({ data }) {
 }
 
 test('community POST shares (201) when context.data.auth is present', async () => {
-  const ctx = makeContext({ data: { auth: { sub: 's1', email: 'you@example.com', name: 'You', picture: null } } });
+  const ctx = makeContext({ data: {
+    auth: { sub: 's1', email: 'you@example.com', name: 'You', picture: null },
+    household: { household: { id: 'our-home', name: 'Our Home' }, member: { id: 's1' } },
+  } });
   const res = await onRequestPost(ctx);
   assert.equal(res.status, 201);
   const body = await res.json();
@@ -45,4 +48,14 @@ test('community POST 401 invalid_token when context.data.auth is absent', async 
   assert.equal(res.status, 401);
   const body = await res.json();
   assert.equal(body.error, 'invalid_token');
+});
+
+test('community POST fails closed when auth exists without resolved household membership', async () => {
+  const ctx = makeContext({ data: {
+    auth: { sub: 's1', email: 'you@example.com', name: 'You', picture: null },
+    household: null,
+  } });
+  const res = await onRequestPost(ctx);
+  assert.equal(res.status, 403);
+  assert.deepEqual(await res.json(), { error: 'household_required' });
 });

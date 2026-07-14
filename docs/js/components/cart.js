@@ -41,13 +41,30 @@ function itemRow(item, pantry, completed) {
   </li>`;
 }
 
-export function cartGroupsHTML(cart, pantry = [], shoppingChecked = {}) {
+function manualRow(item, completed) {
+  const name = esc(item.name);
+  const key = `manual:${item.id}`;
+  return `<li class="cart-row cart-row-manual${completed ? ' is-completed' : ''}" data-manual-id="${esc(item.id)}">
+    <button class="cart-check" data-action="toggle-manual" data-id="${esc(item.id)}" data-key="${esc(key)}" aria-label="Mark ${name} as ${completed ? 'not completed' : 'completed'}" aria-pressed="${completed}">${completed ? '✓' : ''}</button>
+    <span class="cart-name">${name}<small>manual</small></span><span class="cart-total"></span>
+    <details class="cart-item-menu"><summary aria-label="More options for ${name}">⋯</summary><button class="btn btn-ghost btn-sm" data-action="remove-manual" data-id="${esc(item.id)}">Remove item</button></details>
+  </li>`;
+}
+
+export function cartGroupsHTML(cart, pantry = [], shoppingChecked = {}, manualItems = [], filter = '') {
   const selections = (Array.isArray(cart) ? cart : []).map(recipeRow).join('');
   const active = [];
   const completed = [];
+  const needle = String(filter || '').trim() ? canonicalName(filter) : '';
   for (const item of aggregateCart(cart)) {
+    if (needle && !canonicalName(item.displayName || item.name).includes(needle)) continue;
     const isCompleted = shoppingChecked?.[item.name] === true;
     (isCompleted ? completed : active).push(itemRow(item, pantry, isCompleted));
+  }
+  for (const item of Array.isArray(manualItems) ? manualItems : []) {
+    if (needle && !canonicalName(item.name).includes(needle)) continue;
+    const isCompleted = shoppingChecked?.[`manual:${item.id}`] === true;
+    (isCompleted ? completed : active).push(manualRow(item, isCompleted));
   }
   const completedHTML = completed.length
     ? `<details class="cart-completed"><summary>Completed (${completed.length})</summary><ul class="shopping-list shopping-list-completed">${completed.join('')}</ul></details>`

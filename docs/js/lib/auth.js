@@ -94,6 +94,7 @@ export async function authFetch(path, init = {}, { onUnauthorized } = {}) {
 // existing button (idempotent).
 let gisInitialized = false;
 let gisClientId = null;
+let gisCallbacks = { onSignedIn: null, onError: null };
 
 /**
  * Render a "Sign in with Google" button. On success, exchange the Google ID
@@ -101,12 +102,16 @@ let gisClientId = null;
  * @param {object} opts buttonEl, clientId, onSignedIn(email), onError(msg)
  */
 export async function initGoogleSignIn({ buttonEl, clientId, onSignedIn, onError }) {
+  // GIS keeps the callback passed to its one-shot initialize call. Keep the
+  // active surface's handlers separately so a later render (for example the
+  // login gate after signing out from Settings) receives the credential.
+  gisCallbacks = { onSignedIn, onError };
   if (!clientId || clientId.includes('replace-me')) {
     // Loud, deploy-time-blocker error so a forgotten client-id swap surfaces
     // immediately rather than as silent GIS failures.
     const msg = 'Google client ID not configured — set window.COOKBOOK_GOOGLE_CLIENT_ID before deploying';
     console.error(`[auth] ${msg}`);
-    onError?.(msg);
+    gisCallbacks.onError?.(msg);
     return;
   }
   try {
@@ -115,7 +120,7 @@ export async function initGoogleSignIn({ buttonEl, clientId, onSignedIn, onError
       g.accounts.id.initialize({
         client_id: clientId,
         callback: async (resp) => {
-          if (!resp.credential) { onError?.('No credential returned'); return; }
+          if (!resp.credential) { gisCallbacks.onError?.('No credential returned'); return; }
           try {
             const res = await fetch(`${API_BASE}/auth`, {
               method: 'POST',
@@ -123,12 +128,12 @@ export async function initGoogleSignIn({ buttonEl, clientId, onSignedIn, onError
               body: JSON.stringify({ idToken: resp.credential }),
             });
             const data = await res.json();
-            if (!res.ok) { onError?.(data.error || 'auth_failed'); return; }
-            if (!data || !data.token) { onError?.('auth_failed'); return; }
+            if (!res.ok) { gisCallbacks.onError?.(data.error || 'auth_failed'); return; }
+            if (!data || !data.token) { gisCallbacks.onError?.('auth_failed'); return; }
             saveAuth(data.token, data.email);
-            onSignedIn?.(data.email);
+            gisCallbacks.onSignedIn?.(data.email);
           } catch (e) {
-            onError?.(e.message || 'network');
+            gisCallbacks.onError?.(e.message || 'network');
           }
         },
       });
@@ -137,6 +142,6 @@ export async function initGoogleSignIn({ buttonEl, clientId, onSignedIn, onError
     }
     g.accounts.id.renderButton(buttonEl, { type: 'standard', size: 'medium', theme: 'outline' });
   } catch (e) {
-    onError?.(e.message || 'gis_load_failed');
+    gisCallbacks.onError?.(e.message || 'gis_load_failed');
   }
 }

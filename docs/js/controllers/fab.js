@@ -26,6 +26,7 @@ export function initFab({
   document = globalThis.document,
   openDrawer = null,
   extract = null,
+  imageCapture = null,
   getToken: getTokenDep = getToken,
   showPanel = null,
   toast: toastDep = toast,
@@ -71,6 +72,12 @@ export function initFab({
     if (action === 'manual') {
       close();
       if (openDrawer) openDrawer(null);
+      return;
+    }
+    if (action === 'image') {
+      close();
+      if (getTokenDep()) imageCapture?.open?.();
+      else showPanel?.('settings');
       return;
     }
     if (action !== 'url') return;
