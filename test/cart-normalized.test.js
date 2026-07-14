@@ -20,13 +20,13 @@ test('parseServings reads recipeYield text and falls back safely', () => {
 
 test('local normalization converts cooking units to canonical units and preserves raw text', () => {
   assert.deepEqual(normalizeIngredient('1 cup olive oil'), {
-    raw: '1 cup olive oil', name: 'olive oil', quantity: 8, unit: 'ounce', kind: 'divisible', confidence: 0.9,
+    raw: '1 cup olive oil', name: 'olive oil', displayName: 'Olive Oil', countLabel: '', category: 'pantry', quantity: 8, unit: 'ounce', kind: 'divisible', confidence: 0.9,
   });
   assert.deepEqual(normalizeIngredient('1 dozen large eggs'), {
-    raw: '1 dozen large eggs', name: 'egg', quantity: 12, unit: 'count', kind: 'indivisible', confidence: 0.85,
+    raw: '1 dozen large eggs', name: 'egg', displayName: 'Egg', countLabel: '', category: 'dairy-eggs', quantity: 12, unit: 'count', kind: 'indivisible', confidence: 0.85,
   });
   assert.deepEqual(normalizeIngredient('salt to taste'), {
-    raw: 'salt to taste', name: 'salt', quantity: null, unit: 'qualitative', kind: 'qualitative', confidence: 0.4,
+    raw: 'salt to taste', name: 'salt', displayName: 'Salt', countLabel: '', category: 'pantry', quantity: null, unit: 'qualitative', kind: 'qualitative', confidence: 0.4,
   });
 });
 
@@ -44,7 +44,7 @@ test('local normalization implements the approved water-equivalent conversion ta
 test('local normalization handles ranges, cloves, and package weights conservatively', () => {
   for (const raw of ['1-2 cups milk', '1 1/2-2 cups milk']) {
     assert.deepEqual(normalizeIngredient(raw), {
-      raw, name: 'milk', quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 0.8,
+      raw, name: 'milk', displayName: 'Milk', countLabel: '', category: 'dairy-eggs', quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 0.8,
     });
   }
   assert.equal(normalizeIngredient('1/2-1 cup milk').quantity, 8);
@@ -56,7 +56,7 @@ test('local normalization handles ranges, cloves, and package weights conservati
     ['1 (28-oz) can whole peeled tomatoes', 28],
   ]) {
     assert.deepEqual(normalizeIngredient(raw), {
-      raw, name: 'tomato', quantity, unit: 'ounce', kind: 'divisible', confidence: 0.75,
+      raw, name: 'tomato', displayName: 'Tomato', countLabel: '', category: 'produce', quantity, unit: 'ounce', kind: 'divisible', confidence: 0.75,
     });
   }
 });
@@ -66,7 +66,7 @@ test('selection stores source and target servings with canonical ingredients', (
   const cart = addRecipeSelection([], recipe, normalizeIngredientsLocal(recipe.recipeIngredient));
   assert.equal(cart[0].sourceServings, 8);
   assert.equal(cart[0].targetServings, 8);
-  assert.equal(cart[0].normalizationVersion, 1);
+  assert.equal(cart[0].normalizationVersion, 2);
   assert.equal(cart[0].ingredients[0].unit, 'ounce');
   assert.equal(cart[0].ingredients[0].raw, '2 cups flour');
 });
@@ -77,7 +77,7 @@ test('re-adding a normalized recipe preserves its selected serving amount', () =
   cart = setTargetServings(cart, 'r1', 3);
   cart = addRecipeSelection(cart, recipe, cart[0].ingredients);
   assert.equal(cart[0].targetServings, 3);
-  assert.equal(cart[0].normalizationVersion, 1);
+  assert.equal(cart[0].normalizationVersion, 2);
 });
 
 test('removing one aggregate item keeps selected recipes and other ingredients', () => {
@@ -88,6 +88,10 @@ test('removing one aggregate item keeps selected recipes and other ingredients',
   const next = removeShoppingItem(cart, 'egg');
   assert.equal(next.length, 1);
   assert.deepEqual(next[0].ingredients.map((item) => item.name), ['milk']);
+  assert.deepEqual(next[0].removedIngredientNames, ['egg']);
+
+  const refreshed = addRecipeSelection(next, { _id: 'a', name: 'A', recipeYield: '1' }, cart[0].ingredients);
+  assert.deepEqual(refreshed[0].ingredients.map((item) => item.name), ['milk'], 'later normalization must preserve explicit removals');
 });
 
 test('serving changes scale and merge canonical names before applying one safety buffer', () => {

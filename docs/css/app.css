@@ -1238,6 +1238,10 @@
 		display: none;
 	}
 
+	body[data-panel="cart"] .fab-stack {
+		display: none;
+	}
+
 	.fab-stack {
 		position: fixed;
 		right: 16px;

@@ -1,6 +1,10 @@
-// Pure Workers AI ingredient-normalization interpretation and validation.
+// Pure Workers AI whole-recipe-set ingredient interpretation and validation.
 const UNITS = new Set(['count', 'ounce', 'qualitative']);
 const KINDS = new Set(['indivisible', 'divisible', 'qualitative']);
+const CATEGORIES = new Set(['produce', 'meat-seafood', 'dairy-eggs', 'bakery', 'pantry', 'frozen', 'other']);
+const COUNT_LABELS = new Set(['', 'clove', 'slice', 'sheet', 'portion', 'can', 'jar', 'bottle', 'package', 'piece']);
+const MAX_INGREDIENTS = 100;
+const MAX_INPUT_CHARS = 30_000;
 
 function canonicalName(value) {
   let name = String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -10,18 +14,39 @@ function canonicalName(value) {
   return name;
 }
 
-export function buildNormalizationPrompt(ingredients, { recipeName = '', recipeYield = '' } = {}) {
+function safeDisplayName(value) {
+  if (typeof value !== 'string' || value !== value.trim() || value.length === 0 || value.length > 80
+      || /[<>\x00-\x1f\x7f]/.test(value)) return false;
+  if (/^(?:\d|[¼½¾⅓⅔⅛⅜⅝⅞])|^(?:as desired|to serve|for serving|cloves?|slices?|sheets?|servings?|portions?)\b/i.test(value)) return false;
+  if ((value.match(/\(/g) || []).length !== (value.match(/\)/g) || []).length) return false;
+  const firstLetter = value.match(/[A-Za-z]/)?.[0];
+  return !firstLetter || firstLetter === firstLetter.toUpperCase();
+}
+
+function validRecipes(value) {
+  if (!Array.isArray(value) || !value.length || value.length > 50) return false;
+  let count = 0;
+  for (const recipe of value) {
+    if (!recipe || typeof recipe !== 'object' || typeof recipe.recipeId !== 'string' || !recipe.recipeId.trim() || recipe.recipeId.length > 200) return false;
+    if (!Array.isArray(recipe.ingredients) || !recipe.ingredients.length) return false;
+    count += recipe.ingredients.length;
+    if (count > MAX_INGREDIENTS || recipe.ingredients.some((line) => typeof line !== 'string' || !line.trim() || line.length > 500)) return false;
+  }
+  return JSON.stringify(value).length <= MAX_INPUT_CHARS;
+}
+
+export function buildNormalizationPrompt(recipes) {
   return [
     {
       role: 'system',
-      content: 'Interpret ingredient lines only. Return one JSON array item per input, in order, with name, quantity, unit, kind, and confidence from 0 to 1. Use a lowercase singular canonical grocery name so equivalent ingredients merge across recipes. Remove size and preparation descriptors such as large, chopped, diced, or divided unless they change the product identity; preserve meaningful names such as olive oil or brown sugar. Never scale, aggregate, round, add a safety buffer, or change serving sizes. Canonical unit must be count, ounce, or qualitative. Use ounce for both mass and volume with cooking water-equivalence (1 mL≈1 g, 1 fl oz≈1 oz, 1 cup=8 oz, tbsp=.5 oz, tsp=1/6 oz, lb=16 oz, kg=35.274 oz). kind must be indivisible, divisible, or qualitative. Use null quantity for uncertain qualitative amounts. Return JSON only.',
+      content: 'Interpret the complete combined ingredient list across all recipes. Return one JSON array item for every input line with recipeIndex, ingredientIndex, name, displayName, countLabel, category, quantity, unit, kind, and confidence. name is a lowercase singular canonical merge key. displayName is safe, concise, properly cased grocery display text and may preserve culinary or proper casing. countLabel must be empty or one of clove, slice, sheet, portion, can, jar, bottle, package, piece; preserve useful count nouns. category must be one of produce, meat-seafood, dairy-eggs, bakery, pantry, frozen, other. Remove size, preparation, purpose, count, and serving prefixes from names. Never scale, aggregate, round, add a safety buffer, perform arithmetic, or change serving sizes. unit must be count, ounce, or qualitative; kind must be indivisible, divisible, or qualitative. Use cooking water-equivalence only to interpret each raw line. Use null quantity for qualitative amounts. Return JSON only.',
     },
-    { role: 'user', content: JSON.stringify({ recipeName, recipeYield, ingredients }) },
+    { role: 'user', content: JSON.stringify({ recipes }) },
   ];
 }
 
-export function parseNormalizedIngredients(output, rawIngredients) {
-  if (typeof output !== 'string' || !Array.isArray(rawIngredients)) return null;
+export function parseNormalizedIngredients(output, recipes) {
+  if (typeof output !== 'string' || !validRecipes(recipes)) return null;
   let text = output.trim();
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) text = fence[1].trim();
@@ -30,37 +55,50 @@ export function parseNormalizedIngredients(output, rawIngredients) {
   if (start < 0 || end < start) return null;
   let parsed;
   try { parsed = JSON.parse(text.slice(start, end + 1)); } catch { return null; }
-  if (!Array.isArray(parsed) || parsed.length !== rawIngredients.length) return null;
-  const normalized = [];
-  for (let i = 0; i < parsed.length; i++) {
-    const item = parsed[i];
-    if (!item || typeof item !== 'object') return null;
+  const expectedCount = recipes.reduce((sum, recipe) => sum + recipe.ingredients.length, 0);
+  if (!Array.isArray(parsed) || parsed.length !== expectedCount) return null;
+  const result = recipes.map((recipe) => ({ recipeId: recipe.recipeId, ingredients: Array(recipe.ingredients.length) }));
+  const seen = new Set();
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object' || !Number.isInteger(item.recipeIndex) || !Number.isInteger(item.ingredientIndex)) return null;
+    const recipe = recipes[item.recipeIndex];
+    if (!recipe || item.ingredientIndex < 0 || item.ingredientIndex >= recipe.ingredients.length) return null;
+    const key = `${item.recipeIndex}:${item.ingredientIndex}`;
+    if (seen.has(key)) return null;
+    seen.add(key);
     const name = canonicalName(item.name);
-    if (!name || !UNITS.has(item.unit) || !KINDS.has(item.kind)) return null;
+    if (!name || name.length > 100 || /[<>\x00-\x1f\x7f]/.test(name)) return null;
+    if (!safeDisplayName(item.displayName) || !COUNT_LABELS.has(item.countLabel) || !CATEGORIES.has(item.category)) return null;
+    if (!UNITS.has(item.unit) || !KINDS.has(item.kind)) return null;
     if (!Number.isFinite(item.confidence) || item.confidence < 0 || item.confidence > 1) return null;
     if (item.unit === 'qualitative') {
-      if (item.quantity != null || item.kind !== 'qualitative') return null;
+      if (item.quantity != null || item.kind !== 'qualitative' || item.countLabel !== '') return null;
     } else if (!Number.isFinite(item.quantity) || item.quantity < 0) return null;
     if (item.unit === 'count' && item.kind !== 'indivisible') return null;
-    if (item.unit === 'ounce' && item.kind !== 'divisible') return null;
-    normalized.push({ raw: rawIngredients[i], name, quantity: item.quantity, unit: item.unit, kind: item.kind, confidence: item.confidence });
+    if (item.unit === 'ounce' && (item.kind !== 'divisible' || item.countLabel !== '')) return null;
+    result[item.recipeIndex].ingredients[item.ingredientIndex] = {
+      raw: recipe.ingredients[item.ingredientIndex], name, displayName: item.displayName,
+      countLabel: item.countLabel, category: item.category, quantity: item.quantity,
+      unit: item.unit, kind: item.kind, confidence: item.confidence,
+    };
   }
-  return normalized;
+  if (result.some((recipe) => recipe.ingredients.some((item) => !item))) return null;
+  return result;
 }
 
 export async function handleNormalize(body, deps) {
-  const ingredients = body?.ingredients;
-  if (!Array.isArray(ingredients) || !ingredients.length || ingredients.length > 100
-      || ingredients.some((item) => typeof item !== 'string' || !item.trim() || item.length > 500)) {
-    return { status: 400, body: { error: 'invalid_ingredients' } };
-  }
+  const recipes = body?.recipes;
+  if (!validRecipes(recipes)) return { status: 400, body: { error: 'invalid_ingredients' } };
+  const safeRecipes = recipes.map((recipe) => ({
+    recipeId: recipe.recipeId,
+    recipeName: typeof recipe.recipeName === 'string' ? recipe.recipeName.slice(0, 200) : '',
+    recipeYield: typeof recipe.recipeYield === 'string' || typeof recipe.recipeYield === 'number' ? String(recipe.recipeYield).slice(0, 100) : '',
+    ingredients: [...recipe.ingredients],
+  }));
   let output;
-  const recipeName = typeof body?.recipeName === 'string' ? body.recipeName.slice(0, 200) : '';
-  const recipeYield = typeof body?.recipeYield === 'string' || typeof body?.recipeYield === 'number'
-    ? String(body.recipeYield).slice(0, 100) : '';
-  try { output = await deps.runLLM(buildNormalizationPrompt(ingredients, { recipeName, recipeYield })); }
+  try { output = await deps.runLLM(buildNormalizationPrompt(safeRecipes)); }
   catch { return { status: 503, body: { error: 'normalization_unavailable' } }; }
-  const normalized = parseNormalizedIngredients(output, ingredients);
+  const normalized = parseNormalizedIngredients(output, safeRecipes);
   if (!normalized) return { status: 422, body: { error: 'invalid_normalization' } };
-  return { status: 200, body: { ingredients: normalized } };
+  return { status: 200, body: { recipes: normalized, version: 2 } };
 }

@@ -54,3 +54,80 @@ test('cart controller removes a selected recipe rather than ingredient contribut
   assert.deepEqual(state.cart, []);
   assert.deepEqual(state.pantry, ['salt'], 'pantry remains informational');
 });
+
+test('delegated check-off toggles persistent state and restores a completed item', () => {
+  const { document, listeners } = dom();
+  const state = { cart: [{ ...selection, ingredients: [{ raw: '2 eggs', name: 'egg', quantity: 2, unit: 'count', kind: 'indivisible' }] }], pantry: [], shoppingChecked: {} };
+  initCart({ state, document });
+  const click = () => listeners.click({ target: { closest: () => ({ dataset: { action: 'toggle-item', name: 'egg' } }) } });
+  click();
+  assert.equal(state.shoppingChecked.egg, true);
+  click();
+  assert.equal(state.shoppingChecked.egg, undefined);
+});
+
+test('opening Shopping automatically upgrades a stale active cart with a whole-list review', async () => {
+  const { document } = dom();
+  const state = {
+    recipesLoaded: true,
+    recipes: [{ _id: 'r1', name: 'Garlic', recipeYield: '2', recipeIngredient: ['3 cloves garlic'] }],
+    cart: [{ recipeId: 'r1', recipeName: 'Garlic', sourceServings: 2, targetServings: 2, normalizationVersion: 1,
+      ingredients: [{ raw: '3 cloves garlic', name: 'garlic', quantity: 3, unit: 'count', kind: 'indivisible' }] }],
+    pantry: [], shoppingChecked: {}, normalizations: {}, normalizationAudit: {},
+  };
+  let calls = 0;
+  const ctrl = initCart({ state, document, normalizeIngredients: async (recipes) => {
+    calls += 1;
+    return [{ recipeId: 'r1', ingredients: [{ raw: recipes[0].ingredients[0], name: 'garlic', displayName: 'Garlic', countLabel: 'clove', category: 'produce', quantity: 3, unit: 'count', kind: 'indivisible', confidence: .98 }] }];
+  } });
+  await ctrl._refreshNormalization();
+  assert.equal(calls, 1);
+  assert.equal(state.cart[0].normalizationVersion, 2);
+  assert.equal(state.cart[0].ingredients[0].countLabel, 'clove');
+});
+
+test('clear during an in-flight normalization cannot resurrect the cart', async () => {
+  const { document } = dom();
+  let resolve;
+  const state = {
+    recipesLoaded: true,
+    recipes: [{ _id: 'r1', name: 'Eggs', recipeYield: '2', recipeIngredient: ['2 eggs'] }],
+    cart: [{ recipeId: 'r1', recipeName: 'Eggs', sourceServings: 2, targetServings: 2, normalizationVersion: 1,
+      ingredients: [{ raw: '2 eggs', name: 'egg', quantity: 2, unit: 'count', kind: 'indivisible' }] }],
+    pantry: [], shoppingChecked: {}, normalizations: {}, normalizationAudit: {},
+  };
+  const ctrl = initCart({ state, document, normalizeIngredients: () => new Promise((done) => { resolve = done; }) });
+  const pending = ctrl._refreshNormalization();
+  ctrl.clear();
+  resolve([{ recipeId: 'r1', ingredients: [{ raw: '2 eggs', name: 'egg', displayName: 'Eggs', countLabel: '', category: 'dairy-eggs', quantity: 2, unit: 'count', kind: 'indivisible', confidence: .95 }] }]);
+  await pending;
+  assert.deepEqual(state.cart, []);
+});
+
+test('item removal during an in-flight normalization is not undone by a stale response', async () => {
+  const { document } = dom();
+  let resolve;
+  const state = {
+    recipesLoaded: true,
+    recipes: [{ _id: 'r1', name: 'Eggs', recipeYield: '2', recipeIngredient: ['2 eggs'] }],
+    cart: [{ recipeId: 'r1', recipeName: 'Eggs', sourceServings: 2, targetServings: 2, normalizationVersion: 1,
+      ingredients: [{ raw: '2 eggs', name: 'egg', quantity: 2, unit: 'count', kind: 'indivisible' }] }],
+    pantry: [], shoppingChecked: {}, normalizations: {}, normalizationAudit: {},
+  };
+  const ctrl = initCart({ state, document, normalizeIngredients: () => new Promise((done) => { resolve = done; }) });
+  const pending = ctrl._refreshNormalization();
+  ctrl.removeItem('egg');
+  resolve([{ recipeId: 'r1', ingredients: [{ raw: '2 eggs', name: 'egg', displayName: 'Eggs', countLabel: '', category: 'dairy-eggs', quantity: 2, unit: 'count', kind: 'indivisible', confidence: .95 }] }]);
+  await pending;
+  assert.deepEqual(state.cart[0].ingredients, []);
+});
+
+test('recipe removal invalidates whole-set audit but serving changes do not', () => {
+  const { document } = dom();
+  const state = { cart: [selection], pantry: [], normalizationAudit: { signature: 'audited' } };
+  const ctrl = initCart({ state, document });
+  ctrl.changeServings('r1', 1);
+  assert.equal(state.normalizationAudit.signature, 'audited');
+  ctrl.removeRecipe('r1');
+  assert.deepEqual(state.normalizationAudit, {});
+});

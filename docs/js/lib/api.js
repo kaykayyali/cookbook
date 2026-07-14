@@ -11,27 +11,30 @@ import {
 import { authFetch } from './auth.js';
 import { isNormalizedIngredient } from './cart.js';
 
-/** Ask the authenticated Workers AI route to interpret ingredient lines. */
-export async function normalizeRecipeIngredients(lines, recipe = {}, { onUnauthorized } = {}) {
-  const raw = Array.isArray(lines) ? lines : [];
+/** Ask Workers AI to review one complete recipe set in a single interpretation call. */
+export async function normalizeRecipeIngredients(recipes, { onUnauthorized } = {}) {
+  const input = Array.isArray(recipes) ? recipes : [];
+  const totalLines = input.reduce((sum, recipe) => sum + (Array.isArray(recipe?.ingredients) ? recipe.ingredients.length : 0), 0);
+  if (!input.length || totalLines > 100 || JSON.stringify(input).length > 30_000) throw new Error('normalization_input_too_large');
   const res = await authFetch('/normalize', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      ingredients: raw,
-      recipeName: String(recipe?.name || ''),
-      recipeYield: Array.isArray(recipe?.recipeYield) ? recipe.recipeYield.join(', ') : String(recipe?.recipeYield || ''),
-    }),
+    body: JSON.stringify({ recipes: input }),
   }, { onUnauthorized });
   if (!res.ok) throw new Error('normalization_unavailable');
   const data = await res.json();
-  if (!Array.isArray(data.ingredients) || data.ingredients.length !== raw.length
-      || data.ingredients.some((item, index) => !isNormalizedIngredient(item)
-        || !Number.isFinite(item.confidence) || item.confidence < 0 || item.confidence > 1
-        || item.raw !== raw[index])) {
-    throw new Error('invalid_normalization');
-  }
-  return data.ingredients;
+  if (data.version !== 2 || !Array.isArray(data.recipes) || data.recipes.length !== input.length) throw new Error('invalid_normalization');
+  data.recipes.forEach((result, recipeIndex) => {
+    const source = input[recipeIndex];
+    if (result.recipeId !== source.recipeId || !Array.isArray(result.ingredients)
+        || result.ingredients.length !== source.ingredients.length
+        || result.ingredients.some((item, ingredientIndex) => !isNormalizedIngredient(item)
+          || typeof item.displayName !== 'string' || typeof item.countLabel !== 'string' || typeof item.category !== 'string'
+          || !Number.isFinite(item.confidence) || item.raw !== source.ingredients[ingredientIndex])) {
+      throw new Error('invalid_normalization');
+    }
+  });
+  return data.recipes;
 }
 
 /** Fetch the complete shared cookbook and map D1 rows to the internal model. */

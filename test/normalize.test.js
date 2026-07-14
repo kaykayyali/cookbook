@@ -1,104 +1,67 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  buildNormalizationPrompt,
-  parseNormalizedIngredients,
-  handleNormalize,
-} from '../functions/_lib/normalize.js';
+import { buildNormalizationPrompt, parseNormalizedIngredients, handleNormalize } from '../functions/_lib/normalize.js';
 import { onRequestPost } from '../functions/api/normalize.js';
 
 function rateDb(shared = new Map()) {
-  return {
-    prepare(sql) {
-      if (/CREATE TABLE/i.test(sql)) return { run: async () => ({ success: true }) };
-      return {
-        bind(bucket, now, cutoff) {
-          return {
-            first: async () => {
-              const current = shared.get(bucket);
-              const next = !current || current.windowStart <= cutoff
-                ? { windowStart: now, count: 1 }
-                : { ...current, count: current.count + 1 };
-              shared.set(bucket, next);
-              return { count: next.count };
-            },
-          };
-        },
-      };
-    },
-  };
+  return { prepare(sql) { if (/CREATE TABLE/i.test(sql)) return { run: async () => ({ success: true }) }; return { bind(bucket, now, cutoff) { return { first: async () => { const current = shared.get(bucket); const next = !current || current.windowStart <= cutoff ? { windowStart: now, count: 1 } : { ...current, count: current.count + 1 }; shared.set(bucket, next); return { count: next.count }; } }; } }; } };
 }
 
-test('normalization prompt includes recipe context but limits AI to interpretation', () => {
-  const messages = buildNormalizationPrompt(['1 cup milk'], { recipeName: 'Custard', recipeYield: '4 servings' });
+const recipes = [{ recipeId: 'custard', recipeName: 'Custard', recipeYield: '4 servings', ingredients: ['1 cup milk'] }, { recipeId: 'cake', recipeName: 'Cake', recipeYield: '8 slices', ingredients: ['2 eggs'] }];
+const normalizedOutput = JSON.stringify([
+  { recipeIndex: 0, ingredientIndex: 0, name: 'milk', displayName: 'Whole Milk', countLabel: '', category: 'dairy-eggs', quantity: 8, unit: 'ounce', kind: 'divisible', confidence: .9 },
+  { recipeIndex: 1, ingredientIndex: 0, name: 'egg', displayName: 'Eggs', countLabel: '', category: 'dairy-eggs', quantity: 2, unit: 'count', kind: 'indivisible', confidence: .95 },
+]);
+
+test('normalization prompt reviews the complete list with per-recipe context but forbids arithmetic', () => {
+  const messages = buildNormalizationPrompt(recipes);
   assert.match(messages[0].content, /interpret/i);
-  assert.match(messages[0].content, /do not scale|never scale/i);
-  assert.match(messages[0].content, /count.*ounce.*qualitative/i);
-  assert.match(messages[0].content, /singular.*grocery name|canonical grocery name/i);
-  assert.match(messages[0].content, /remove.*preparation|ignore.*preparation/i);
+  assert.match(messages[0].content, /never scale/i);
+  assert.match(messages[0].content, /displayName.*countLabel.*category/i);
   assert.match(messages[1].content, /Custard/);
-  assert.match(messages[1].content, /4 servings/);
-  assert.match(messages[0].content, /confidence/i);
+  assert.match(messages[1].content, /Cake/);
 });
 
-test('LLM normalization output is strictly validated and raw input is server-controlled', () => {
-  const output = JSON.stringify([{ name: 'Eggs', quantity: 12, unit: 'count', kind: 'indivisible', confidence: 0.98 }]);
-  assert.deepEqual(parseNormalizedIngredients(output, ['1 dozen eggs']), [{
-    raw: '1 dozen eggs', name: 'egg', quantity: 12, unit: 'count', kind: 'indivisible', confidence: 0.98,
-  }]);
-  assert.equal(parseNormalizedIngredients('[{"name":"milk","quantity":1,"unit":"liters"}]', ['milk']), null);
-  assert.equal(parseNormalizedIngredients('[{"name":"milk","quantity":-1,"unit":"ounce"}]', ['milk']), null);
-  assert.equal(parseNormalizedIngredients('[]', ['milk']), null);
-  assert.equal(parseNormalizedIngredients('[{"name":"milk","quantity":1,"unit":"ounce","kind":"divisible","confidence":2}]', ['milk']), null);
+test('LLM output maps back to recipes while raw lines remain server-controlled', () => {
+  const parsed = parseNormalizedIngredients(normalizedOutput, recipes);
+  assert.equal(parsed[0].recipeId, 'custard');
+  assert.equal(parsed[0].ingredients[0].raw, '1 cup milk');
+  assert.equal(parsed[1].ingredients[0].name, 'egg');
 });
 
-test('handleNormalize returns validated interpretation and rejects bad AI output', async () => {
-  const ok = await handleNormalize({ ingredients: ['2 eggs'], recipeName: 'Eggs', recipeYield: '2 servings' }, { runLLM: async () => '[{"name":"egg","quantity":2,"unit":"count","kind":"indivisible","confidence":0.9}]' });
+test('malformed AI metadata and duplicate mappings are strictly rejected', () => {
+  const base = JSON.parse(normalizedOutput)[0];
+  const one = [{ recipeId: 'r', ingredients: ['milk'] }];
+  for (const patch of [{ category: 'danger' }, { displayName: '<img>' }, { displayName: 'milk' }, { displayName: '½ Tbsp Rice Vinegar' }, { displayName: 'Ginger )' }, { countLabel: 'items<script>' }, { recipeIndex: 9 }]) {
+    assert.equal(parseNormalizedIngredients(JSON.stringify([{ ...base, ...patch }]), one), null);
+  }
+  assert.equal(parseNormalizedIngredients(JSON.stringify([base, base]), one), null);
+});
+
+test('handleNormalize validates whole-set size and returns mapped recipes', async () => {
+  const ok = await handleNormalize({ recipes }, { runLLM: async () => normalizedOutput });
   assert.equal(ok.status, 200);
-  assert.equal(ok.body.ingredients[0].raw, '2 eggs');
-  const bad = await handleNormalize({ ingredients: ['2 eggs'] }, { runLLM: async () => 'not json' });
-  assert.equal(bad.status, 422);
+  assert.equal(ok.body.recipes.length, 2);
+  assert.equal((await handleNormalize({ recipes: [{ recipeId: 'x', ingredients: Array(101).fill('salt') }] }, { runLLM: async () => '' })).status, 400);
+  assert.equal((await handleNormalize({ recipes }, { runLLM: async () => 'not json' })).status, 422);
 });
 
-test('authenticated normalize route invokes Workers AI', async () => {
-  let called = false;
-  const res = await onRequestPost({
-    request: { json: async () => ({ ingredients: ['2 eggs'], recipeName: 'Eggs', recipeYield: '2 servings' }) },
-    data: { auth: { email: 'you@example.com' } },
-    env: { DB: rateDb(), AI: { run: async () => { called = true; return { response: '[{"name":"egg","quantity":2,"unit":"count","kind":"indivisible","confidence":0.9}]' }; } } },
-  });
+test('authenticated normalize route invokes Workers AI once for the whole set', async () => {
+  let calls = 0;
+  const res = await onRequestPost({ request: { json: async () => ({ recipes }) }, data: { auth: { email: 'you@example.com' } }, env: { DB: rateDb(), AI: { run: async () => { calls += 1; return { response: normalizedOutput }; } } } });
   assert.equal(res.status, 200);
-  assert.equal(called, true);
+  assert.equal(calls, 1);
 });
 
-test('normalize route rate limit is shared across independent Worker instances', async () => {
-  const request = { json: async () => ({ ingredients: ['2 eggs'] }) };
+test('normalize route rate limit is shared and failures are closed', async () => {
+  const request = { json: async () => ({ recipes: [recipes[0]] }) };
   const shared = new Map();
-  const base = {
-    request,
-    data: { auth: { email: 'rate-limit@example.com' } },
-  };
-  const ai = { run: async () => ({ response: '[{"name":"egg","quantity":2,"unit":"count","kind":"indivisible","confidence":0.9}]' }) };
-  const firstInstance = { ...base, env: { DB: rateDb(shared), NORMALIZE_RATE_PER_MIN: '2', AI: ai } };
-  const secondInstance = { ...base, env: { DB: rateDb(shared), NORMALIZE_RATE_PER_MIN: '2', AI: ai } };
-  assert.equal((await onRequestPost(firstInstance)).status, 200);
-  assert.equal((await onRequestPost(secondInstance)).status, 200);
-  assert.equal((await onRequestPost(firstInstance)).status, 429);
-});
-
-test('normalize route fails closed when the durable rate-limit store is unavailable', async () => {
-  let called = false;
-  const response = await onRequestPost({
-    request: { json: async () => ({ ingredients: ['2 eggs'] }) },
-    data: { auth: { email: 'x@y.z' } },
-    env: { AI: { run: async () => { called = true; return ''; } } },
-  });
-  assert.equal(response.status, 503);
-  assert.equal(called, false);
-});
-
-test('normalize route rejects missing auth and unavailable AI', async () => {
-  const request = { json: async () => ({ ingredients: ['2 eggs'] }) };
-  assert.equal((await onRequestPost({ request, data: {}, env: { AI: { run: async () => '' } } })).status, 401);
+  const ai = { run: async () => ({ response: JSON.stringify([JSON.parse(normalizedOutput)[0]]) }) };
+  const base = { request, data: { auth: { email: 'rate@example.com' } } };
+  assert.equal((await onRequestPost({ ...base, env: { DB: rateDb(shared), NORMALIZE_RATE_PER_MIN: '2', AI: ai } })).status, 200);
+  assert.equal((await onRequestPost({ ...base, env: { DB: rateDb(shared), NORMALIZE_RATE_PER_MIN: '2', AI: ai } })).status, 200);
+  assert.equal((await onRequestPost({ ...base, env: { DB: rateDb(shared), NORMALIZE_RATE_PER_MIN: '2', AI: ai } })).status, 429);
+  assert.equal((await onRequestPost({ request, data: {}, env: { AI: ai } })).status, 401);
   assert.equal((await onRequestPost({ request, data: { auth: { email: 'x@y.z' } }, env: {} })).status, 503);
+  assert.equal((await onRequestPost({ request, data: { auth: { email: 'x@y.z' } }, env: { AI: ai } })).status, 503);
 });

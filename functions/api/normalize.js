@@ -19,7 +19,7 @@ export async function onRequestPost({ request, env, data }) {
   try { body = await request.json(); } catch { return json(400, { error: 'bad_json' }); }
   const result = await handleNormalize(body, {
     runLLM: async (messages) => {
-      const output = await env.AI.run(AI_MODEL, { messages, max_tokens: 2048, temperature: 0 });
+      const output = await env.AI.run(AI_MODEL, { messages, max_tokens: 8192, temperature: 0 });
       return typeof output === 'string' ? output : output?.response || '';
     },
   });

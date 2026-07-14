@@ -5,7 +5,13 @@
 import { toast } from '../lib/dom.js';
 import { save as persist } from '../lib/store.js';
 import { togglePantry } from '../lib/pantry.js';
-import { addRecipeSelection, isNormalizedIngredient, normalizeIngredientsLocal } from '../lib/cart.js';
+import {
+  addRecipeSelection,
+  isNormalizedIngredient,
+  normalizeIngredientsLocal,
+  recipeSetSignature,
+  NORMALIZATION_VERSION,
+} from '../lib/cart.js';
 import { normalizeRecipeIngredients } from '../lib/api.js';
 import { esc } from '../lib/format.js';
 
@@ -39,6 +45,7 @@ export function initDetail({
   notify = toast,
 }) {
   let current = null;
+  let addQueue = Promise.resolve();
 
   function openRecipe(r, ctx = { source: 'local' }) {
     if (!r) return;
@@ -131,39 +138,87 @@ export function initDetail({
     current = null;
   }
 
-  async function addToCartHandler() {
-    const r = current && current.r;
-    if (!r) return;
-    const ings = (r.recipeIngredient || []).filter((line) => typeof line === 'string');
-    if (!ings.length) { notify('This recipe has no ingredients'); return; }
-    let normalized;
+  async function performAddToCart(r, queuedCancellationGeneration) {
+    if (queuedCancellationGeneration !== (Number(state.cartCancellationGeneration) || 0)) return false;
+    const generation = Number(state.cartMutationGeneration) || 0;
+    const currentLines = (r.recipeIngredient || []).filter((line) => typeof line === 'string' && line.trim());
+    if (!currentLines.length) { notify('This recipe has no ingredients'); return; }
+
     state.normalizations ||= {};
-    const persisted = state.normalizations[r._id];
-    const persistedMatches = persisted?.version === 1
-      && Array.isArray(persisted.raw)
-      && persisted.raw.length === ings.length
-      && persisted.raw.every((line, index) => line === ings[index])
-      && Array.isArray(persisted.ingredients)
-      && persisted.ingredients.length === ings.length
-      && persisted.ingredients.every(isNormalizedIngredient);
-    const active = (state.cart || []).find((selection) => selection.recipeId === r._id
-      && selection.normalizationVersion === 1
-      && Array.isArray(selection.ingredients)
-      && selection.ingredients.length === ings.length
-      && selection.ingredients.every(isNormalizedIngredient)
-      && selection.ingredients.every((ingredient, index) => ingredient.raw === ings[index]));
-    if (persistedMatches) normalized = persisted.ingredients;
-    else if (active) normalized = active.ingredients;
-    else {
-      try { normalized = await normalizeIngredients(ings, r); }
-      catch { normalized = normalizeIngredientsLocal(ings); }
+    state.normalizationAudit ||= {};
+    const activeRecipes = (state.cart || []).map((selection) => {
+      const source = (state.recipes || []).find((recipe) => String(recipe._id || recipe.id) === selection.recipeId);
+      return {
+        recipeId: selection.recipeId,
+        recipeName: source?.name || selection.recipeName,
+        recipeYield: source?.recipeYield || selection.sourceServings,
+        ingredients: source
+          ? (source.recipeIngredient || []).filter((line) => typeof line === 'string' && line.trim())
+          : (selection.ingredients || []).map((ingredient) => ingredient.raw).filter(Boolean),
+        recipe: source || { _id: selection.recipeId, name: selection.recipeName, recipeYield: selection.sourceServings },
+      };
+    }).filter((entry) => entry.ingredients.length);
+    const recipeId = String(r._id || r.id || r.name);
+    const set = activeRecipes.filter((entry) => entry.recipeId !== recipeId);
+    set.push({ recipeId, recipeName: r.name, recipeYield: r.recipeYield, ingredients: currentLines, recipe: r });
+    const signature = recipeSetSignature(set);
+    const cachesMatch = set.every((entry) => {
+      const cached = state.normalizations[entry.recipeId];
+      return cached?.version === NORMALIZATION_VERSION
+        && Array.isArray(cached.raw) && cached.raw.length === entry.ingredients.length
+        && cached.raw.every((line, index) => line === entry.ingredients[index])
+        && Array.isArray(cached.ingredients) && cached.ingredients.length === entry.ingredients.length
+        && cached.ingredients.every((item) => isNormalizedIngredient(item)
+          && typeof item.displayName === 'string' && typeof item.countLabel === 'string' && typeof item.category === 'string');
+    });
+
+    let normalizedSet;
+    if (state.normalizationAudit.signature === signature && cachesMatch) {
+      normalizedSet = set.map((entry) => ({ recipeId: entry.recipeId, ingredients: state.normalizations[entry.recipeId].ingredients }));
+    } else {
+      const request = set.map(({ recipeId: id, recipeName, recipeYield, ingredients }) => ({ recipeId: id, recipeName, recipeYield, ingredients }));
+      try {
+        normalizedSet = await normalizeIngredients(request);
+        const valid = Array.isArray(normalizedSet) && normalizedSet.length === set.length
+          && normalizedSet.every((result, index) => result?.recipeId === set[index].recipeId
+            && Array.isArray(result.ingredients) && result.ingredients.length === set[index].ingredients.length
+            && result.ingredients.every((item, itemIndex) => isNormalizedIngredient(item)
+              && item.raw === set[index].ingredients[itemIndex]
+              && typeof item.displayName === 'string' && typeof item.countLabel === 'string' && typeof item.category === 'string'));
+        if (!valid) throw new Error('invalid_normalization');
+      } catch {
+        normalizedSet = set.map((entry) => ({ recipeId: entry.recipeId, ingredients: normalizeIngredientsLocal(entry.ingredients) }));
+      }
     }
-    delete state.normalizations[r._id];
-    state.normalizations[r._id] = { version: 1, raw: [...ings], ingredients: normalized.map((item) => ({ ...item })) };
+
+    if (generation !== (Number(state.cartMutationGeneration) || 0)
+        || queuedCancellationGeneration !== (Number(state.cartCancellationGeneration) || 0)) return false;
+
+    normalizedSet.forEach((result, index) => {
+      const entry = set[index];
+      state.normalizations[entry.recipeId] = {
+        version: NORMALIZATION_VERSION,
+        raw: [...entry.ingredients],
+        ingredients: result.ingredients.map((item) => ({ ...item })),
+      };
+      state.cart = addRecipeSelection(state.cart || [], entry.recipe, result.ingredients);
+    });
+    state.cartMutationGeneration = generation + 1;
+    state.normalizationAudit = { signature };
     while (Object.keys(state.normalizations).length > 100) delete state.normalizations[Object.keys(state.normalizations)[0]];
-    state.cart = addRecipeSelection(state.cart || [], r, normalized);
     persist();
     notify(`Added “${r.name}” to shopping list`);
+    return true;
+  }
+
+  function addToCartHandler() {
+    const r = current && current.r;
+    if (!r) return Promise.resolve(false);
+    const queuedCancellationGeneration = Number(state.cartCancellationGeneration) || 0;
+    const run = () => performAddToCart(r, queuedCancellationGeneration);
+    const pending = addQueue.then(run, run);
+    addQueue = pending.catch(() => false);
+    return pending;
   }
 
   function wireDetail() {

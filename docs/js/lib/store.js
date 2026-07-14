@@ -15,6 +15,8 @@ export const state = {
   pantry: [],
   cart: [],
   normalizations: {},
+  normalizationAudit: {},
+  shoppingChecked: {},
   editingId: null,
   detailId: null,
   searchTerm: '',
@@ -29,6 +31,8 @@ export function save() {
   localStorage.setItem(STORAGE_KEYS.pantry, JSON.stringify(state.pantry));
   localStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(state.cart));
   localStorage.setItem(STORAGE_KEYS.normalizations, JSON.stringify(state.normalizations));
+  localStorage.setItem(STORAGE_KEYS.normalizationAudit, JSON.stringify(state.normalizationAudit));
+  localStorage.setItem(STORAGE_KEYS.shoppingChecked, JSON.stringify(state.shoppingChecked));
 }
 
 /** Load pantry + cart from localStorage. */
@@ -50,6 +54,19 @@ export function load() {
     state.normalizations = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   } catch {
     state.normalizations = {};
+  }
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.normalizationAudit) || '{}');
+    state.normalizationAudit = typeof parsed?.signature === 'string' ? { signature: parsed.signature } : {};
+  } catch {
+    state.normalizationAudit = {};
+  }
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.shoppingChecked) || '{}');
+    state.shoppingChecked = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? Object.fromEntries(Object.entries(parsed).filter(([name, checked]) => name && checked === true)) : {};
+  } catch {
+    state.shoppingChecked = {};
   }
 }
 
