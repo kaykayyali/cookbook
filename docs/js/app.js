@@ -1,6 +1,6 @@
 // app.js — orchestration: auth gate → load recipes → wire controllers to the DOM
 import { $ } from './lib/dom.js';
-import { state, init, loadRecipes } from './lib/store.js';
+import { state, init, loadHousehold, loadRecipes } from './lib/store.js';
 import { loadAuth, getToken, initGoogleSignIn, clearAuth } from './lib/auth.js';
 
 import { initPanels } from './controllers/panels.js';
@@ -52,6 +52,20 @@ async function bootAfterAuth() {
   if (MAIN) MAIN.style.display = '';
 
   init(); // load pantry + cart from localStorage
+
+  const householdOk = await loadHousehold({
+    onUnauthorized: async () => {
+      await clearAuth();
+      showLoginGate();
+    },
+  });
+  if (!getToken()) return;
+  if (!householdOk || !state.household) {
+    showLoginGate();
+    const err = LOGIN_GATE?.querySelector('.login-error');
+    if (err) err.textContent = 'We couldn’t open Our Cookbook. Refresh to try again.';
+    return;
+  }
 
   // Load recipes from server; on 401, show login gate and clear auth
   const ok = await loadRecipes({

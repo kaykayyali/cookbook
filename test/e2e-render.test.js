@@ -114,6 +114,12 @@ before(async () => {
     // Mock fetch: return seed recipes for GET /api/community, 200 for everything else
     fetch: async (url, init) => {
       const u = typeof url === 'string' ? url : url?.url || '';
+      if (u.includes('/household') && (!init || init.method === undefined || init.method === 'GET')) {
+        return new Response(JSON.stringify({
+          household: { id: 'our-home', name: 'Our Home' },
+          member: { id: 'test-sub', displayName: 'Test Cook', picture: null, role: 'member' },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
       if (u.includes('/community') && (!init || init.method === undefined || init.method === 'GET')) {
         return new Response(JSON.stringify({ recipes: SEED_RECIPES, nextCursor: null }), {
           status: 200, headers: { 'Content-Type': 'application/json' },

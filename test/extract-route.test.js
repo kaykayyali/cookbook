@@ -29,7 +29,7 @@ test('middleware propagates verified claims via context.data (not request.auth)'
       url: 'https://cookbook.example/api/extract',
       headers: { get: (h) => (h.toLowerCase() === 'authorization' ? `Bearer ${token}` : null) },
     },
-    env: { SESSION_SECRET: SECRET },
+    env: { SESSION_SECRET: SECRET, ALLOWED_EMAILS: 'you@example.com' },
     next: async () => {
       nextSawData = context.data;
       nextSawRequestAuth = context.request.auth;

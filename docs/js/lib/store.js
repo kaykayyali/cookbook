@@ -8,9 +8,11 @@
 import { STORAGE_KEYS } from './constants.js';
 import { normalizePantry } from './pantry.js';
 import { normalizeCart } from './cart.js';
-import { fetchRecipes } from './api.js';
+import { ensureHouseholdMembership, fetchRecipes } from './api.js';
 
 export const state = {
+  household: null,
+  householdEligible: false,
   recipes: [],
   pantry: [],
   cart: [],
@@ -25,6 +27,19 @@ export const state = {
   recipesLoaded: false,
   authChecked: false,
 };
+
+/** Resolve or accept the signed-in user's private household membership. */
+export async function loadHousehold({ onUnauthorized, resolve = ensureHouseholdMembership } = {}) {
+  const result = await resolve({ onUnauthorized });
+  if (!result.ok || !result.membership) {
+    state.household = null;
+    state.householdEligible = false;
+    return false;
+  }
+  state.household = result.membership;
+  state.householdEligible = result.eligible === true;
+  return true;
+}
 
 /** Persist pantry + cart to localStorage (recipes are server-side). */
 export function save() {

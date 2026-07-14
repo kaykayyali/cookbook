@@ -11,6 +11,38 @@ import {
 import { authFetch } from './auth.js';
 import { isNormalizedIngredient } from './cart.js';
 
+function isHouseholdMembership(value) {
+  return typeof value?.household?.id === 'string'
+    && typeof value.household.name === 'string'
+    && typeof value?.member?.id === 'string'
+    && typeof value.member.displayName === 'string'
+    && (value.member.role === 'owner' || value.member.role === 'member');
+}
+
+/** Resolve the signed-in user's household, accepting their private invite once. */
+export async function ensureHouseholdMembership({ onUnauthorized, request = authFetch } = {}) {
+  try {
+    const statusResponse = await request('/household', {}, { onUnauthorized });
+    if (!statusResponse.ok) return { ok: false, error: 'household_unavailable' };
+    const status = await statusResponse.json().catch(() => null);
+    if (isHouseholdMembership(status)) {
+      return { ok: true, membership: status, eligible: true };
+    }
+    const onboarding = status?.household === null && status?.member === null
+      && typeof status?.eligible === 'boolean';
+    if (!onboarding) return { ok: false, error: 'invalid_household' };
+    if (!status.eligible) return { ok: false, error: 'household_not_invited' };
+
+    const joinResponse = await request('/household', { method: 'POST' }, { onUnauthorized });
+    if (!joinResponse.ok) return { ok: false, error: 'household_join_failed' };
+    const membership = await joinResponse.json().catch(() => null);
+    if (!isHouseholdMembership(membership)) return { ok: false, error: 'invalid_household' };
+    return { ok: true, membership, eligible: true };
+  } catch {
+    return { ok: false, error: 'household_unavailable' };
+  }
+}
+
 /** Ask Workers AI to review one complete recipe set in a single interpretation call. */
 export async function normalizeRecipeIngredients(recipes, { onUnauthorized } = {}) {
   const input = Array.isArray(recipes) ? recipes : [];
