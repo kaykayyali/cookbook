@@ -31,7 +31,7 @@ export function buildWeekDays(plan, today = localDate()) {
 }
 
 function entryHTML(entry, recipes) {
-  const recipe = recipes.find((item) => item.id === entry.recipeId);
+  const recipe = recipes.find((item) => String(item._id || item.id) === entry.recipeId);
   const title = entry.type === 'recipe' ? (recipe?.name || 'Recipe unavailable') : LABELS[entry.type];
   const skipped = entry.status === 'skipped';
   const cooked = entry.status === 'cooked';
@@ -49,7 +49,7 @@ function entryHTML(entry, recipes) {
 }
 
 function addHTML(day, recipes) {
-  const options = recipes.map((recipe) => `<option value="${esc(recipe.id)}">${esc(recipe.name)}</option>`).join('');
+  const options = recipes.map((recipe) => `<option value="${esc(String(recipe._id || recipe.id))}">${esc(recipe.name)}</option>`).join('');
   return `<div class="week-add" data-date="${day.date}">
     <select class="input" data-field="meal-type" aria-label="Meal type"><option value="recipe">Recipe</option><option value="leftovers">Leftovers</option><option value="dining-out">Dining out</option><option value="open">Open</option></select>
     <select class="input week-recipe-select" data-field="recipe-id" aria-label="Recipe">${options}</select>
@@ -82,7 +82,7 @@ export function initWeek({ state, mutate, onMarkCooked = async () => false, docu
       const row = target.closest('.week-add');
       const type = row.querySelector('[data-field="meal-type"]').value;
       const recipeId = row.querySelector('[data-field="recipe-id"]').value;
-      const recipe = state.recipes.find((item) => item.id === recipeId);
+      const recipe = state.recipes.find((item) => String(item._id || item.id) === recipeId);
       await mutate('plan.upsert', {
         id: uid(), date: row.dataset.date, type,
         recipeId: type === 'recipe' ? recipeId : null,

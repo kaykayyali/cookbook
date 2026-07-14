@@ -24,15 +24,17 @@ test('mapCommunityItem creates the primary internal recipe with id and ownership
   assert.deepEqual(recipe.recipeInstructions, ['Bake']);
 });
 
-test('primary recipe cards attribute the author and only show author controls to the owner', () => {
+test('primary recipe cards identify the household author compactly and only show author controls to the owner', () => {
   const recipe = mapCommunityItem(item);
   const ownerHtml = recipeCardHTML(recipe, [], { currentUserSub: 'author-1' });
-  assert.match(ownerHtml, /added by Ada/);
+  assert.match(ownerHtml, /class="household-attribution"/);
+  assert.match(ownerHtml, /aria-label="Added by Ada"/);
+  assert.doesNotMatch(ownerHtml, />added by Ada</);
   assert.match(ownerHtml, /data-action="edit"/);
   assert.match(ownerHtml, /data-action="delete"/);
 
   const readerHtml = recipeCardHTML(recipe, [], { currentUserSub: 'reader-1' });
-  assert.match(readerHtml, /added by Ada/);
+  assert.match(readerHtml, /aria-label="Added by Ada"/);
   assert.doesNotMatch(readerHtml, /data-action="edit"/);
   assert.doesNotMatch(readerHtml, /data-action="delete"/);
 });

@@ -107,7 +107,7 @@ before(async () => {
     window: dom.window,
     localStorage: dom.window.localStorage,
     navigator: dom.window.navigator,
-    atob: dom.window.atob,
+    atob: (value) => Buffer.from(value, 'base64').toString('binary'),
     btoa: dom.window.btoa,
     HTMLElement: dom.window.HTMLElement,
     Node: dom.window.Node,

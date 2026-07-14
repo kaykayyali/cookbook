@@ -20,10 +20,13 @@ function makeDom() {
       classList: { _set: new Set(), add(c){this._set.add(c)}, remove(c){this._set.delete(c)}, contains(c){return this._set.has(c)}, toggle(c,on){on??=!this._set.has(c);on?this._set.add(c):this._set.delete(c);return on;}, },
     };
   }
+  const detailBody = { scrollTop: 0 };
   const document = {
     getElementById: (sel) => elements[sel] || null,
+    querySelector: (sel) => sel === '.detail-body' ? detailBody : null,
     body: { style: { overflow: '' } },
   };
+  elements.detailBody = detailBody;
   return { elements, document };
 }
 
@@ -126,4 +129,12 @@ test('open hides nutrition block when recipe has no nutrition', () => {
   const ctrl = mod.initDetail({ state, document });
   ctrl.open('r2');
   assert.equal(elements['dm-nutrition'].style.display, 'none');
+});
+
+test('opening a recipe always starts the detail scroller at the top', () => {
+  const { document, elements } = makeDom();
+  elements.detailBody.scrollTop = 240;
+  const state = { recipes: [SAMPLE], pantry: [] };
+  mod.initDetail({ state, document }).open('r1');
+  assert.equal(elements.detailBody.scrollTop, 0);
 });

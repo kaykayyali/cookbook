@@ -2,9 +2,10 @@
 // components/recipeCard.js — recipe grid card (design-system v1)
 // ════════════════════════════════════════════════════════
 
-import { esc, formatDuration } from '../lib/format.js';
+import { esc, formatDuration, formatListValue } from '../lib/format.js';
 import { Icon, IconButton } from '../lib/ui.js';
 import { eligibility, haveIngredient, ingredientCounts } from '../lib/pantry.js';
+import { householdIdentityHTML } from './householdIdentity.js';
 
 const STATUS_TEXT = {
   complete: 'All ingredients on hand',
@@ -26,13 +27,13 @@ export function recipeCardHTML(r, pantry, { currentUserSub = null, history = nul
 
   const ingTags =
     ings
-      .slice(0, 8)
+      .slice(0, 4)
       .map((i) => {
         const cls = haveIngredient(i, pantry) ? 'ing-tag have' : 'ing-tag missing';
         return `<span class="${cls}">${esc(i)}</span>`;
       })
       .join('') +
-    (ings.length > 8 ? `<span class="ing-tag">+${ings.length - 8} more</span>` : '');
+    (ings.length > 4 ? `<span class="ing-tag ing-tag-more">+${ings.length - 4} more</span>` : '');
 
   const metaPills = [
     r.prepTime && `<span class="meta-pill">${Icon({ name: 'clock' })}Prep ${esc(formatDuration(r.prepTime))}</span>`,
@@ -48,7 +49,7 @@ export function recipeCardHTML(r, pantry, { currentUserSub = null, history = nul
       <div class="card-stripe"></div>
       <div class="card-body">
         <span class="badge ${e === 'complete' ? 'badge-success' : 'badge-accent'}">${esc(r.recipeCategory || 'Recipe')}</span>
-        ${r.recipeCuisine ? `<span class="badge">${esc(r.recipeCuisine)}</span>` : ''}
+        ${r.recipeCuisine ? `<span class="badge">${esc(formatListValue(r.recipeCuisine))}</span>` : ''}
         <div class="card-head">
           <h3 class="card-title">${esc(r.name)}</h3>
           <div class="card-toolbar">
@@ -56,7 +57,7 @@ export function recipeCardHTML(r, pantry, { currentUserSub = null, history = nul
             ${canManage ? IconButton({ label: 'Delete', icon: 'trash', size: 'sm', danger: true, data: { action: 'delete', id: r._id } }) : ''}
           </div>
         </div>
-        ${author ? `<p class="recipe-author">added by ${esc(author.name || 'someone')}</p>` : ''}
+        ${householdIdentityHTML(author)}
         ${history?.cookCount ? `<p class="recipe-cook-meta">Cooked ${history.cookCount} time${history.cookCount === 1 ? '' : 's'} · Last cooked ${new Date(history.lastCookedAt).toLocaleDateString()}</p>` : ''}
         ${metaPills ? `<div class="card-meta">${metaPills}</div>` : ''}
         <div class="card-ingredients">

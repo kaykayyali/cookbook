@@ -40,3 +40,15 @@ export function formatDuration(iso) {
 export function pluralize(n, word) {
   return `${n} ${word}${n !== 1 ? 's' : ''}`;
 }
+
+/** Format schema.org values that may arrive as arrays without leaking JS's
+ * comma-joined coercion into the UI. */
+export function formatListValue(value, { numericServings = false } = {}) {
+  const parts = (Array.isArray(value) ? value : [value])
+    .filter((part) => part !== null && part !== undefined && String(part).trim())
+    .map((part) => String(part).trim());
+  if (numericServings && parts.length && /^\d+(?:\.\d+)?$/.test(parts[0])) {
+    parts[0] = `${parts[0]} serving${parts[0] === '1' ? '' : 's'}`;
+  }
+  return parts.join(' · ');
+}

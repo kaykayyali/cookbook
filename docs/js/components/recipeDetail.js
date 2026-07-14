@@ -2,7 +2,7 @@
 // components/recipeDetail.js — recipe detail sheet (design-system v1)
 // ════════════════════════════════════════════════════════
 
-import { esc, formatDuration } from '../lib/format.js';
+import { esc, formatDuration, formatListValue } from '../lib/format.js';
 import { Icon } from '../lib/ui.js';
 import { haveIngredient, ingredientCounts } from '../lib/pantry.js';
 
@@ -49,7 +49,7 @@ export function metaRowHTML(r) {
     r.prepTime && ['Prep', formatDuration(r.prepTime)],
     r.cookTime && ['Cook', formatDuration(r.cookTime)],
     r.totalTime && ['Total', formatDuration(r.totalTime)],
-    r.recipeYield && ['Serves', r.recipeYield],
+    r.recipeYield && ['Serves', formatListValue(r.recipeYield, { numericServings: true })],
     r.cookingMethod && ['Method', r.cookingMethod],
   ].filter(Boolean);
   if (!meta.length) return '';
@@ -90,7 +90,7 @@ export function nutritionHTML(nutrition) {
     ['Carbs', n.carbohydrateContent],
   ].filter((c) => c[1]);
   if (!cells.length) return null;
-  return cells.map(
-    ([k, v]) => `<div class="nutrition-cell"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`
-  ).join('');
+  return `<dl class="nutrition-strip" aria-label="Nutrition per serving">${cells.map(
+    ([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`
+  ).join('')}</dl>`;
 }

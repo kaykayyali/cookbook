@@ -13,7 +13,8 @@ import {
   NORMALIZATION_VERSION,
 } from '../lib/cart.js';
 import { normalizeRecipeIngredients } from '../lib/api.js';
-import { esc } from '../lib/format.js';
+import { esc, formatListValue } from '../lib/format.js';
+import { householdIdentityHTML } from '../components/householdIdentity.js';
 
 import {
   ingredientListHTML,
@@ -89,7 +90,7 @@ export function initDetail({
     state.detailId = ctx.source === 'local' ? r._id : null;
 
     const eyebrow = document.getElementById('dm-eyebrow');
-    if (eyebrow) eyebrow.textContent = [r.recipeCategory, r.recipeCuisine].filter(Boolean).join(' · ');
+    if (eyebrow) eyebrow.textContent = [r.recipeCategory, formatListValue(r.recipeCuisine)].filter(Boolean).join(' · ');
     const title = document.getElementById('dm-title');
     if (title) title.textContent = r.name;
     const meta = document.getElementById('dm-meta');
@@ -99,11 +100,7 @@ export function initDetail({
     const badge = document.getElementById('dm-author-badge');
     if (badge) {
       if (ctx.author) {
-        const a = ctx.author;
-        const avatar = a.picture
-          ? `<img class="author-avatar" src="${esc(a.picture)}" alt="" width="22" height="22" referrerpolicy="no-referrer" crossorigin="anonymous">`
-          : `<span class="author-avatar author-initial">${esc((a.name || '?').slice(0, 1).toUpperCase())}</span>`;
-        badge.innerHTML = `${avatar}<span class="author-name">added by ${esc(a.name || 'someone')}</span>`;
+        badge.innerHTML = householdIdentityHTML(ctx.author);
         badge.style.display = '';
       } else {
         badge.style.display = 'none';
@@ -166,6 +163,8 @@ export function initDetail({
   function openSheet() {
     const modal = document.getElementById('detail-modal');
     const overlay = document.getElementById('detail-overlay');
+    const scroller = document.querySelector?.('.detail-body');
+    if (scroller) scroller.scrollTop = 0;
     if (modal) modal.classList.add('open');
     if (overlay) overlay.classList.add('open');
     document.body.style.overflow = 'hidden';
