@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { indexedDB } from 'fake-indexeddb';
 import { createWorkspaceOutbox } from '../docs/js/lib/workspace-outbox.js';
+import { openOfflineDb } from '../docs/js/lib/offline-db.js';
 
 const base = (overrides = {}) => ({
   householdId: 'our-home', revision: 0, plan: [], cart: [], pantry: [], shoppingChecked: {},
@@ -27,6 +29,9 @@ function memoryRepo(authority = base()) {
     },
   };
 }
+
+const dbName = () => `cookbook-workspace-outbox-${Date.now()}-${Math.random()}`;
+const availableLocks = { request: (_name, _options, callback) => Promise.resolve(callback({})) };
 
 test('mutation persists before optimistic publication and survives a reload', async () => {
   const repo = memoryRepo();
@@ -113,4 +118,48 @@ test('offline launch reports durable queue status immediately', async () => {
   });
   assert.equal(statuses[0].state, 'offline');
   assert.equal(statuses[0].pending, 0);
+});
+
+test('real IndexedDB repository exposes a newly persisted workspace mutation to the same drain', async () => {
+  const repo = await openOfflineDb({ indexedDB, name: dbName() });
+  const sent = [];
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), locks: availableLocks,
+    makeId: () => 'persisted-v2',
+    send: async (request) => {
+      sent.push(request);
+      return { ok: true, workspace: base({ revision: 1, pantry: ['flour'] }) };
+    },
+  });
+
+  assert.equal(await manager.mutate('pantry.add', { name: 'flour' }), true);
+  assert.deepEqual(sent.map(({ mutationId, op, baseRevision }) => ({ mutationId, op, baseRevision })), [
+    { mutationId: 'persisted-v2', op: 'pantry.add', baseRevision: 0 },
+  ]);
+  assert.deepEqual(manager.current().pantry, ['flour']);
+  assert.deepEqual(await repo.listOutbox('cook-1', 'our-home'), []);
+  repo.close();
+});
+
+test('real IndexedDB repository replays a workspace mutation stranded with schema version 1', async () => {
+  const repo = await openOfflineDb({ indexedDB, name: dbName() });
+  await repo.rawPut('outbox', {
+    schemaVersion: 1, mutationId: 'stranded-v1', authSub: 'cook-1', householdId: 'our-home',
+    scope: 'workspace', op: 'pantry.add', payload: { name: 'salt' }, createdAt: 1,
+    status: 'pending', attempts: 0, nextAttemptAt: 0, lastError: null,
+  });
+  const sent = [];
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), locks: availableLocks,
+    send: async (request) => {
+      sent.push(request);
+      return { ok: true, workspace: base({ revision: 1, pantry: ['salt'] }) };
+    },
+  });
+
+  assert.equal(await manager.drain(), true);
+  assert.deepEqual(sent.map(({ mutationId }) => mutationId), ['stranded-v1']);
+  assert.deepEqual(manager.current().pantry, ['salt']);
+  assert.deepEqual(await repo.listOutbox('cook-1', 'our-home'), []);
+  repo.close();
 });

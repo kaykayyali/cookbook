@@ -127,7 +127,7 @@ export async function createWorkspaceOutbox({
     pending: () => rows.length,
     async mutate(op, payload) {
       const row = await repo.enqueue({
-        schemaVersion: 1, mutationId: makeId(), authSub, householdId, scope: 'workspace',
+        mutationId: makeId(), authSub, householdId, scope: 'workspace',
         op, payload: clone(payload || {}), createdAt: Date.now(), status: 'pending',
         attempts: 0, nextAttemptAt: 0, lastError: null,
       });

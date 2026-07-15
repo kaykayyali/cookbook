@@ -12,8 +12,9 @@ const workspace = (revision = 0) => ({
 test('opens with meta, cache, and ordered unique outbox stores', async () => {
   const repo = await openOfflineDb({ indexedDB, name: dbName() });
   assert.deepEqual([...repo.db.objectStoreNames], ['cache', 'meta', 'outbox']);
-  const first = await repo.enqueue({ mutationId: 'same', authSub: 'cook-1', householdId: 'our-home', op: 'pantry.add', payload: { name: 'flour' } });
+  const first = await repo.enqueue({ schemaVersion: 1, mutationId: 'same', authSub: 'cook-1', householdId: 'our-home', op: 'pantry.add', payload: { name: 'flour' } });
   assert.equal(first.sequence, 1);
+  assert.equal(first.schemaVersion, 2);
   await assert.rejects(() => repo.enqueue({ mutationId: 'same', authSub: 'cook-1', householdId: 'our-home', op: 'pantry.add', payload: {} }));
   repo.close();
 });

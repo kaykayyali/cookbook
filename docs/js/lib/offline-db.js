@@ -101,9 +101,10 @@ export async function openOfflineDb({ indexedDB = globalThis.indexedDB, name = D
         throw new Error('invalid_outbox_mutation');
       }
       const record = {
-        schemaVersion: RECORD_VERSION, scope: 'workspace', payload: {}, createdAt: Date.now(),
+        scope: 'workspace', payload: {}, createdAt: Date.now(),
         status: 'pending', attempts: 0, nextAttemptAt: 0, lastError: null,
         ...mutation,
+        schemaVersion: RECORD_VERSION,
       };
       const tx = db.transaction('outbox', 'readwrite');
       const sequence = await requestResult(tx.objectStore('outbox').add(record));
@@ -114,7 +115,7 @@ export async function openOfflineDb({ indexedDB = globalThis.indexedDB, name = D
       const tx = db.transaction('outbox', 'readonly');
       const rows = await requestResult(tx.objectStore('outbox').getAll());
       await transactionDone(tx);
-      return rows.filter((row) => row.schemaVersion === RECORD_VERSION && row.authSub === authSub
+      return rows.filter((row) => [1, RECORD_VERSION].includes(row.schemaVersion) && row.authSub === authSub
         && row.householdId === householdId && row.scope === scope)
         .sort((a, b) => a.sequence - b.sequence);
     },
