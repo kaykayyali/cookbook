@@ -14,11 +14,17 @@ import { initEngagement } from '../controllers/engagement.js';
 import { initReminders } from '../controllers/reminders.js';
 import { initImageCapture } from '../controllers/image-capture.js';
 import { initCookingMode } from '../controllers/cooking-mode.js';
+import { initTour } from '../controllers/tour.js';
 import { patchImportDraft } from './api.js';
+import { createCookbookTour } from './cookbook-tour.js';
 import { showRecipeSchema, wireSchemaModal, exportRecipesToFile } from './schema-modal.js';
 
 export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, onSignedIn, onSignedOut }) {
   const panels = initPanels({ state });
+  const tour = initTour({
+    tours: [createCookbookTour()], subject: state.auth?.sub,
+    navigate: panels.showPanel, getCurrentPanel: panels._current,
+  });
   let detail;
   const reminders = initReminders();
   const engagement = initEngagement({
@@ -65,6 +71,7 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, onSi
   panels.register('cart', cart.render);
   panels.register('settings', () => { settings.renderSettings(); settings.renderAuth(); });
   settings.renderAuth();
+  $('settings-tour-btn')?.addEventListener('click', () => tour.start('cookbook'));
   initFab({ state, openDrawer: (id) => drawer.open(id), extract, imageCapture, showPanel: panels.showPanel });
   initSearch({ state, onChange: () => recipes.render() });
   wireSchemaModal();
@@ -79,6 +86,7 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, onSi
     else if ($('detail-modal')?.classList.contains('open')) detail.close();
   });
   panels.showPanel('week');
+  tour.maybeStart('cookbook');
   return {
     renderShared: () => { week.render(); pantry.render(); cart.render(); engagement.render(); },
     renderActive: panels.renderActive,
