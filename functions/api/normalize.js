@@ -3,7 +3,7 @@ import { json } from '../_lib/http.js';
 import { handleNormalize } from '../_lib/normalize.js';
 import { durableRateLimited } from '../_lib/rate-limit.js';
 
-const AI_MODEL = '@cf/meta/llama-3.1-8b-instruct';
+const AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 
 export async function onRequestPost({ request, env, data }) {
   if (typeof data?.auth?.email !== 'string' || !data.auth.email) return json(401, { error: 'invalid_token' });
@@ -19,8 +19,16 @@ export async function onRequestPost({ request, env, data }) {
   try { body = await request.json(); } catch { return json(400, { error: 'bad_json' }); }
   const result = await handleNormalize(body, {
     runLLM: async (messages) => {
-      const output = await env.AI.run(AI_MODEL, { messages, max_tokens: 8192, temperature: 0 });
-      return typeof output === 'string' ? output : output?.response || '';
+      try {
+        const output = await env.AI.run(AI_MODEL, { messages, max_tokens: 8192, temperature: 0 });
+        return typeof output === 'string' ? output : output?.response || '';
+      } catch (error) {
+        console.error('[normalize] Workers AI invocation failed', {
+          name: error?.name || 'Error',
+          message: String(error?.message || 'unknown').slice(0, 300),
+        });
+        throw error;
+      }
     },
   });
   return json(result.status, result.body);

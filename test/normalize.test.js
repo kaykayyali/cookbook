@@ -13,11 +13,12 @@ const normalizedOutput = JSON.stringify([
   { recipeIndex: 1, ingredientIndex: 0, name: 'egg', displayName: 'Eggs', countLabel: '', category: 'dairy-eggs', quantity: 2, unit: 'count', kind: 'indivisible', confidence: .95 },
 ]);
 
-test('normalization prompt reviews the complete list with per-recipe context but forbids arithmetic', () => {
+test('normalization prompt reviews the complete list, converts canonical units, and forbids scaling', () => {
   const messages = buildNormalizationPrompt(recipes);
   assert.match(messages[0].content, /interpret/i);
   assert.match(messages[0].content, /never scale/i);
   assert.match(messages[0].content, /displayName.*countLabel.*category/i);
+  assert.match(messages[0].content, /1 cup = 8 ounces/i);
   assert.match(messages[1].content, /Custard/);
   assert.match(messages[1].content, /Cake/);
 });
@@ -46,11 +47,13 @@ test('handleNormalize validates whole-set size and returns mapped recipes', asyn
   assert.equal((await handleNormalize({ recipes }, { runLLM: async () => 'not json' })).status, 422);
 });
 
-test('authenticated normalize route invokes Workers AI once for the whole set', async () => {
+test('authenticated normalize route invokes a supported Workers AI model once for the whole set', async () => {
   let calls = 0;
-  const res = await onRequestPost({ request: { json: async () => ({ recipes }) }, data: { auth: { email: 'you@example.com' } }, env: { DB: rateDb(), AI: { run: async () => { calls += 1; return { response: normalizedOutput }; } } } });
+  let model;
+  const res = await onRequestPost({ request: { json: async () => ({ recipes }) }, data: { auth: { email: 'you@example.com' } }, env: { DB: rateDb(), AI: { run: async (requestedModel) => { calls += 1; model = requestedModel; return { response: normalizedOutput }; } } } });
   assert.equal(res.status, 200);
   assert.equal(calls, 1);
+  assert.equal(model, '@cf/meta/llama-3.1-8b-instruct-fp8');
 });
 
 test('normalize route rate limit is shared and failures are closed', async () => {
