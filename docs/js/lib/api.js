@@ -44,15 +44,16 @@ export async function ensureHouseholdMembership({ onUnauthorized, request = auth
   }
 }
 
-/** Ask Workers AI to review one complete recipe set in a single interpretation call. */
-export async function normalizeRecipeIngredients(recipes, { onUnauthorized } = {}) {
+/** Ask Workers AI to review recipe ingredient lines without blocking cart creation. */
+export async function normalizeRecipeIngredients(recipes, { onUnauthorized, signal, request = authFetch } = {}) {
   const input = Array.isArray(recipes) ? recipes : [];
   const totalLines = input.reduce((sum, recipe) => sum + (Array.isArray(recipe?.ingredients) ? recipe.ingredients.length : 0), 0);
   if (!input.length || totalLines > 100 || JSON.stringify(input).length > 30_000) throw new Error('normalization_input_too_large');
-  const res = await authFetch('/normalize', {
+  const res = await request('/normalize', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipes: input }),
+    signal,
   }, { onUnauthorized });
   if (!res.ok) throw new Error('normalization_unavailable');
   const data = await res.json();
