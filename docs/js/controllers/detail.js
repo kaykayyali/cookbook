@@ -229,7 +229,12 @@ export function initDetail({
     };
     state.cart = addRecipeSelection(state.cart || [], recipe, ingredients);
     state.cartMutationGeneration = (Number(state.cartMutationGeneration) || 0) + 1;
-    state.normalizationAudit = { signature: recipeSetSignature(activeCartEntries()) };
+    const activeEntries = activeCartEntries();
+    const allRecipesCurrent = activeEntries.length === state.cart.length
+      && activeEntries.every((entry) => cacheMatches(entry.recipeId, entry.ingredients));
+    state.normalizationAudit = allRecipesCurrent
+      ? { signature: recipeSetSignature(activeEntries) }
+      : {};
     while (Object.keys(state.normalizations).length > 100) delete state.normalizations[Object.keys(state.normalizations)[0]];
     persist();
     const selection = state.cart.find((item) => item.recipeId === recipeId);
@@ -237,6 +242,14 @@ export function initDetail({
     renderAddButtonState();
     if (onChange) onChange();
     return selection;
+  }
+
+  function currentRecipeForAudit(recipeId, lines) {
+    const recipe = (state.recipes || []).find((item) => String(item._id || item.id || item.name) === recipeId);
+    const currentLines = (recipe?.recipeIngredient || []).filter((line) => typeof line === 'string' && line.trim());
+    return recipe && currentLines.length === lines.length && currentLines.every((line, index) => line === lines[index])
+      ? recipe
+      : null;
   }
 
   async function auditRecipe(recipe, lines, cancellationGeneration) {
@@ -253,9 +266,11 @@ export function initDetail({
           && item.raw === lines[index]
           && typeof item.displayName === 'string' && typeof item.countLabel === 'string' && typeof item.category === 'string');
       if (!valid) return false;
+      const currentRecipe = currentRecipeForAudit(recipeId, lines);
       if (cancellationGeneration !== (Number(state.cartCancellationGeneration) || 0)
-          || !(state.cart || []).some((selection) => selection.recipeId === recipeId)) return false;
-      commitSelection(recipe, lines, result.ingredients);
+          || !(state.cart || []).some((selection) => selection.recipeId === recipeId)
+          || !currentRecipe) return false;
+      commitSelection(currentRecipe, lines, result.ingredients);
       return true;
     } catch {
       return false;

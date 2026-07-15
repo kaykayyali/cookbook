@@ -137,6 +137,66 @@ test('concurrent recipe additions audit each recipe independently without rewrit
   assert.deepEqual(state.cart.map((recipe) => recipe.recipeId).sort(), ['r1', 'r2']);
 });
 
+test('adding one recipe cannot mark an unrelated stale selection as audited', async () => {
+  const staleMilk = { raw: '1 cup milk', name: 'milk', displayName: 'Milk', countLabel: '', category: 'dairy-eggs', quantity: 8, unit: 'ounce', kind: 'divisible', confidence: .9 };
+  const currentMilk = { raw: '2 cups milk', name: 'milk', displayName: 'Milk', countLabel: '', category: 'dairy-eggs', quantity: 16, unit: 'ounce', kind: 'divisible', confidence: .9 };
+  const milkRecipe = { _id: 'r0', name: 'Milk', recipeYield: '1', recipeIngredient: ['2 cups milk'], recipeInstructions: [] };
+  const eggRecipe = { _id: 'r1', name: 'Eggs', recipeYield: '1', recipeIngredient: ['1 egg'], recipeInstructions: [] };
+  const state = {
+    recipes: [milkRecipe, eggRecipe], pantry: [],
+    cart: [{ recipeId: 'r0', recipeName: 'Milk', sourceServings: 1, targetServings: 1, normalizationVersion: 2, ingredients: [staleMilk] }],
+    normalizations: { r0: { version: 2, raw: ['1 cup milk'], ingredients: [staleMilk] } },
+  };
+  const detail = initDetail({
+    state, document: makeDom(), notify() {},
+    normalizeIngredients: async () => [{ recipeId: 'r1', ingredients: [eggResult('1 egg')] }],
+  });
+  detail.open('r1');
+  await detail._addToCart();
+  await detail._waitForAudits();
+
+  let refreshCalls = 0;
+  const cart = initCart({
+    state, document: { getElementById: () => null },
+    normalizeIngredients: async () => {
+      refreshCalls += 1;
+      return [
+        { recipeId: 'r0', ingredients: [currentMilk] },
+        { recipeId: 'r1', ingredients: [eggResult('1 egg')] },
+      ];
+    },
+  });
+  assert.equal(await cart._refreshNormalization(), true, 'the unrelated stale recipe must still require refresh');
+  assert.equal(refreshCalls, 1);
+  assert.equal(state.cart.find((selection) => selection.recipeId === 'r0').ingredients[0].raw, '2 cups milk');
+});
+
+test('an audit for old ingredient lines cannot mark an edited recipe as current', async () => {
+  const original = { _id: 'r1', name: 'Eggs', recipeYield: '1', recipeIngredient: ['1 egg'], recipeInstructions: [] };
+  const state = { recipes: [original], cart: [], pantry: [], normalizations: {} };
+  let resolveOldAudit;
+  const detail = initDetail({
+    state, document: makeDom(), notify() {},
+    normalizeIngredients: () => new Promise((resolve) => { resolveOldAudit = resolve; }),
+  });
+  detail.open('r1');
+  await detail._addToCart();
+
+  state.recipes[0] = { ...original, recipeIngredient: ['2 cups flour'] };
+  resolveOldAudit([{ recipeId: 'r1', ingredients: [eggResult('1 egg')] }]);
+  await detail._waitForAudits();
+
+  let refreshCalls = 0;
+  const flour = { raw: '2 cups flour', name: 'flour', displayName: 'Flour', countLabel: '', category: 'pantry', quantity: 16, unit: 'ounce', kind: 'divisible', confidence: .95 };
+  const cart = initCart({
+    state, document: { getElementById: () => null },
+    normalizeIngredients: async () => { refreshCalls += 1; return [{ recipeId: 'r1', ingredients: [flour] }]; },
+  });
+  assert.equal(await cart._refreshNormalization(), true, 'the edited recipe must remain detectably stale');
+  assert.equal(refreshCalls, 1);
+  assert.equal(state.cart[0].ingredients[0].raw, '2 cups flour');
+});
+
 test('clearing while a detail normalization is in flight cancels the pending recipe addition', async () => {
   const recipe = { _id: 'r1', name: 'Eggs', recipeYield: '1', recipeIngredient: ['1 egg'], recipeInstructions: [] };
   const state = { recipes: [recipe], cart: [], pantry: [], normalizations: {} };
