@@ -38,6 +38,7 @@ function setup({ completed = false, currentPanel = 'week' } = {}) {
     storage, subject: 'member-1',
     navigate: (panel) => { activePanel = panel; navigated.push(panel); },
     getCurrentPanel: () => activePanel,
+    isPresentationReady: () => true,
   });
   return { dom, storage, controller, navigated, key, tour };
 }
@@ -203,6 +204,7 @@ test('missing targets fall back to a centered dialog instead of aborting the gui
   const controller = initTour({
     tours: [tour], document: dom.window.document, window: dom.window,
     storage: dom.window.localStorage, subject: 'member-1',
+    isPresentationReady: () => true,
   });
   assert.equal(controller.start('cookbook'), true);
   assert.equal(dom.window.document.querySelector('.tour-spotlight').hidden, true);
@@ -224,4 +226,90 @@ test('Escape dismisses the tour without trapping the user in onboarding', () => 
   dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(controller.isOpen(), false);
   assert.equal(storage.getItem(key), 'complete');
+});
+
+test('tour startup fails open and restores interaction when a step throws', () => {
+  const { dom, selectors } = fixture();
+  const controller = initTour({
+    tours: [createCookbookTour({ selectors })],
+    document: dom.window.document,
+    window: dom.window,
+    storage: dom.window.localStorage,
+    subject: 'member-1',
+    navigate: () => { throw new Error('panel failed to render'); },
+    isPresentationReady: () => true,
+  });
+
+  let started;
+  assert.doesNotThrow(() => { started = controller.start('cookbook'); });
+  assert.equal(started, false);
+  assert.equal(controller.isOpen(), false);
+  assert.equal(dom.window.document.body.classList.contains('tour-open'), false);
+  assert.equal(dom.window.document.querySelector('.tour-layer').hidden, true);
+  assert.equal([...dom.window.document.body.children].some((node) => node.inert), false);
+});
+
+test('tour does not make the app inert when its presentation styles are unavailable', () => {
+  const { dom, selectors } = fixture();
+  const controller = initTour({
+    tours: [createCookbookTour({ selectors })],
+    document: dom.window.document,
+    window: dom.window,
+    storage: dom.window.localStorage,
+    subject: 'member-1',
+  });
+
+  assert.equal(controller.start('cookbook'), false);
+  assert.equal(controller.isOpen(), false);
+  assert.equal(dom.window.document.querySelector('.tour-layer').hidden, true);
+  assert.equal([...dom.window.document.body.children].some((node) => node.inert), false);
+});
+
+test('tour fails open when its presentation readiness check throws', () => {
+  const { dom, selectors } = fixture();
+  const controller = initTour({
+    tours: [createCookbookTour({ selectors })],
+    document: dom.window.document,
+    window: dom.window,
+    storage: dom.window.localStorage,
+    subject: 'member-1',
+    isPresentationReady: () => { throw new Error('style lookup failed'); },
+  });
+
+  let started;
+  assert.doesNotThrow(() => { started = controller.start('cookbook'); });
+  assert.equal(started, false);
+  assert.equal(controller.isOpen(), false);
+  assert.equal(dom.window.document.querySelector('.tour-layer').hidden, true);
+  assert.equal([...dom.window.document.body.children].some((node) => node.inert), false);
+});
+
+test('tour releases inert state when navigation throws after startup', () => {
+  const { dom, selectors } = fixture();
+  let calls = 0;
+  let activePanel = 'recipes';
+  const controller = initTour({
+    tours: [createCookbookTour({ selectors })],
+    document: dom.window.document,
+    window: dom.window,
+    storage: dom.window.localStorage,
+    subject: 'member-1',
+    navigate: (panel) => {
+      calls += 1;
+      activePanel = panel;
+      if (calls === 2) throw new Error('panel failed to render');
+    },
+    getCurrentPanel: () => activePanel,
+    isPresentationReady: () => true,
+  });
+
+  dom.window.document.getElementById('before').focus();
+  assert.equal(controller.start('cookbook'), true);
+  assert.equal([...dom.window.document.body.children].some((node) => node.inert), true);
+  assert.doesNotThrow(() => controller.next());
+  assert.equal(controller.isOpen(), false);
+  assert.equal(dom.window.document.querySelector('.tour-layer').hidden, true);
+  assert.equal([...dom.window.document.body.children].some((node) => node.inert), false);
+  assert.equal(activePanel, 'recipes');
+  assert.equal(dom.window.document.activeElement.id, 'before');
 });

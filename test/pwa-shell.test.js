@@ -9,6 +9,7 @@ test('installable shell declares manifest, Apple metadata, theme, and standalone
   assert.match(html, /rel="manifest" href="\.\/manifest\.webmanifest"/);
   assert.match(html, /rel="apple-touch-icon" href="\.\/icons\/apple-touch-icon\.png"/);
   assert.match(html, /name="apple-mobile-web-app-capable" content="yes"/);
+  assert.match(html, /name="mobile-web-app-capable" content="yes"/);
   assert.match(html, /name="apple-mobile-web-app-status-bar-style" content="black-translucent"/);
   assert.match(html, /viewport-fit=cover/);
   const manifest = JSON.parse(readFileSync(new URL('../docs/manifest.webmanifest', import.meta.url), 'utf8'));

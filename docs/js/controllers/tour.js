@@ -42,7 +42,7 @@ function buildLayer(document) {
 export function initTour({
   tours = [], document = globalThis.document, window = globalThis.window,
   storage = globalThis.localStorage, subject = 'member', navigate = () => {},
-  getCurrentPanel = () => null,
+  getCurrentPanel = () => null, isPresentationReady = null,
 } = {}) {
   const registry = new Map(tours.map((tour) => [tour.id, tour]));
   const layer = buildLayer(document);
@@ -54,6 +54,13 @@ export function initTour({
   const back = layer.querySelector('.tour-back');
   const nextButton = layer.querySelector('.tour-next');
   const skip = layer.querySelector('.tour-skip');
+  const presentationReady = typeof isPresentationReady === 'function'
+    ? isPresentationReady
+    : () => {
+      if (typeof window?.getComputedStyle !== 'function') return true;
+      return window.getComputedStyle(layer).position === 'fixed'
+        && window.getComputedStyle(dialog).position === 'fixed';
+    };
   let activeTour = null;
   let index = 0;
   let target = null;
@@ -177,9 +184,9 @@ export function initTour({
     dialog.focus();
   }
 
-  function finish({ remember = true } = {}) {
-    if (!activeTour) return;
-    if (remember) safeSet(storage, storageKey(activeTour, subject), 'complete');
+  function cleanup() {
+    const panelToRestore = previousPanel;
+    const focusToRestore = previousFocus;
     target?.classList?.remove('tour-target');
     target = null;
     targetSelector = null;
@@ -189,11 +196,21 @@ export function initTour({
     layer.hidden = true;
     document.body.classList.remove('tour-open');
     activeTour = null;
-    setBackgroundInert(false);
-    if (previousPanel) navigate(previousPanel);
-    previousFocus?.focus?.();
     previousFocus = null;
     previousPanel = null;
+    setBackgroundInert(false);
+    try { if (panelToRestore) navigate(panelToRestore); } catch { /* cleanup must fail open */ }
+    try { focusToRestore?.focus?.(); } catch { /* cleanup must fail open */ }
+  }
+
+  function finish({ remember = true } = {}) {
+    if (!activeTour) return;
+    if (remember) safeSet(storage, storageKey(activeTour, subject), 'complete');
+    cleanup();
+  }
+
+  function abortStart() {
+    cleanup();
   }
 
   function start(id) {
@@ -206,10 +223,16 @@ export function initTour({
     previousPanel = getCurrentPanel?.() || null;
     layer.hidden = false;
     document.body.classList.add('tour-open');
-    setBackgroundInert(true);
-    mutationObserver?.observe(document.body, { childList: true, subtree: true });
-    showStep();
-    return true;
+    try {
+      if (!presentationReady({ layer, dialog })) { abortStart(); return false; }
+      showStep();
+      setBackgroundInert(true);
+      mutationObserver?.observe(document.body, { childList: true, subtree: true });
+      return true;
+    } catch {
+      abortStart();
+      return false;
+    }
   }
 
   function maybeStart(id) {
@@ -222,13 +245,13 @@ export function initTour({
     if (!activeTour) return;
     if (index >= activeTour.steps.length - 1) { finish(); return; }
     index += 1;
-    showStep();
+    try { showStep(); } catch { abortStart(); }
   }
 
   function previous() {
     if (!activeTour || index === 0) return;
     index -= 1;
-    showStep();
+    try { showStep(); } catch { abortStart(); }
   }
 
   function onKeydown(event) {

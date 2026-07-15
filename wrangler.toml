@@ -1,6 +1,12 @@
 name = "cookbook"
-pages_build_output_dir = "docs"
 compatibility_date = "2025-09-01"
+
+# Intentionally no pages_build_output_dir. Adding it makes this file the source
+# of truth for Pages production bindings. Wrangler currently serializes the
+# Pages AI binding without the required project_id, so every Git deployment then
+# replaces the working dashboard binding with an unusable AI = {} binding.
+# Cloudflare Pages build settings and production bindings are dashboard-owned;
+# this file remains the local-development and D1-migration configuration.
 
 # NOTE: the build command is NOT set here — `build_command` is not a valid
 # wrangler.toml field for Pages (wrangler rejects it). Set it in the Cloudflare
@@ -10,12 +16,10 @@ compatibility_date = "2025-09-01"
 # `npm run build` / scripts/build.js via esbuild); without the build the app
 # ships unstyled/JS-less.
 
-# Non-secret config. SESSION_SECRET is the only secret (set separately — see
-# the note at the bottom). GOOGLE_CLIENT_ID is committed here because:
-#   - It is public by design (it already ships in the frontend HTML).
-#   - Git-connected Pages deploys apply [vars] and DELETE any plain-text env
-#     var not listed here, so a dashboard-only GOOGLE_CLIENT_ID would be wiped
-#     on every deploy. Listing it in [vars] makes it durable across deploys.
+# Non-secret local defaults. Production values are mirrored in the Cloudflare
+# Pages dashboard. SESSION_SECRET is the only secret (set separately — see the
+# note at the bottom). GOOGLE_CLIENT_ID is public by design and already ships in
+# the frontend HTML.
 # functions/api/auth.js still rejects a literal "replace-me" client id as a
 # backstop, so a forgotten placeholder surfaces as 500 server_misconfigured
 # rather than silently 401-ing every sign-in.
@@ -32,15 +36,14 @@ HOUSEHOLD_NAME = "Our Home"
 HOUSEHOLD_MEMBER_EMAILS = "kaykayyali@gmail.com,gloriakayyali@gmail.com"
 HOUSEHOLD_OWNER_EMAIL = "kaykayyali@gmail.com"
 
-# Workers AI binding — accessible in Pages Functions as env.AI. Configured
-# here (not the dashboard) because git-connected deploys apply wrangler.toml
-# bindings, same as [vars]. Limited to one AI binding per Pages project.
+# Local Workers AI binding. Production uses the project-scoped AI binding in the
+# Cloudflare Pages dashboard; see the pages_build_output_dir warning above.
 [ai]
 binding = "AI"
 
-# D1 database for the Community feed — accessible in Pages Functions as env.DB.
-# Git-connected deploys apply this binding from wrangler.toml. The table is
-# created by the migration at docs/superpowers/migrations/0001_community_recipes.sql
+# D1 database for local development and migration commands. Production mirrors
+# this DB binding in the Cloudflare Pages dashboard. The table is created by the
+# migration at docs/superpowers/migrations/0001_community_recipes.sql
 # (applied once) AND self-heals via ensureSchema() in functions/_lib/community.js
 # on first request, so a missed migration is non-fatal.
 [[d1_databases]]
