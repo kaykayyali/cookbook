@@ -123,3 +123,47 @@ test('renderActive re-fires the renderer for the current panel', () => {
   ctrl.renderActive();
   assert.equal(n, 2, 'renderActive should re-fire pantry renderer');
 });
+
+test('showPanel persists the active panel to localStorage', () => {
+  if (!mod.initPanels) return;
+  const stored = {};
+  globalThis.localStorage = {
+    getItem: (k) => stored[k] ?? null,
+    setItem: (k, v) => { stored[k] = String(v); },
+    removeItem: (k) => { delete stored[k]; },
+  };
+  const { document } = makeDom();
+  const ctrl = mod.initPanels({ state: {}, document });
+  ctrl.showPanel('pantry');
+  assert.equal(stored['cb_active_panel'], 'pantry');
+  ctrl.showPanel('cart');
+  assert.equal(stored['cb_active_panel'], 'cart');
+});
+
+test('initPanels restores the last active panel from localStorage', () => {
+  if (!mod.initPanels) return;
+  const stored = { cb_active_panel: 'pantry' };
+  globalThis.localStorage = {
+    getItem: (k) => stored[k] ?? null,
+    setItem: (k, v) => { stored[k] = String(v); },
+    removeItem: (k) => { delete stored[k]; },
+  };
+  const { document, panelEls } = makeDom();
+  const ctrl = mod.initPanels({ state: {}, document });
+  ctrl.restore();
+  assert.equal(panelEls[1].classList.contains('active'), true, 'pantry should be restored as active');
+});
+
+test('restore falls back to week when no saved panel exists', () => {
+  if (!mod.initPanels) return;
+  const stored = {};
+  globalThis.localStorage = {
+    getItem: (k) => stored[k] ?? null,
+    setItem: (k, v) => { stored[k] = String(v); },
+    removeItem: (k) => { delete stored[k]; },
+  };
+  const { document } = makeDom(['week', 'recipes', 'pantry', 'cart', 'settings']);
+  const ctrl = mod.initPanels({ state: {}, document });
+  ctrl.restore();
+  assert.equal(document.body.dataset.panel, 'week');
+});

@@ -85,7 +85,8 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, onSi
     else if ($('recipe-drawer')?.classList.contains('open')) drawer.close();
     else if ($('detail-modal')?.classList.contains('open')) detail.close();
   });
-  panels.showPanel('week');
+  panels.restore();
+  detail.restore();
   tour.maybeStart('cookbook');
   return {
     renderShared: () => { week.render(); pantry.render(); cart.render(); engagement.render(); },

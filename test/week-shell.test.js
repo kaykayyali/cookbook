@@ -13,7 +13,7 @@ test('Week is the default authenticated destination with Tonight-first shell', (
   assert.match(html, /id="week-grid"/);
   assert.match(authenticatedUi, /import \{ initWeek \}/);
   assert.match(authenticatedUi, /panels\.register\('week', week\.render\)/);
-  assert.match(authenticatedUi, /panels\.showPanel\('week'\)/);
+  assert.match(authenticatedUi, /panels\.restore\(\)/);
   assert.match(app, /wireAuthenticatedUi/);
 });
 

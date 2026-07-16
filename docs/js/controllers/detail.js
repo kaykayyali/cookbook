@@ -137,6 +137,7 @@ export function initDetail({
     if (!r) return;
     const isAuthor = !r._author || !!(state.auth?.sub && r._author.sub === state.auth.sub);
     openRecipe(r, { source: 'local', author: r._author, isAuthor });
+    try { localStorage.setItem('cb_detail_id', id); } catch { /* private mode */ }
   }
 
 
@@ -194,6 +195,7 @@ export function initDetail({
     if (!isAnyOpen(document)) document.body.style.overflow = '';
     state.detailId = null;
     current = null;
+    try { localStorage.removeItem('cb_detail_id'); } catch { /* private mode */ }
   }
 
   function activeCartEntries() {
@@ -374,9 +376,19 @@ export function initDetail({
 
   }
 
+  function restore() {
+    let saved = null;
+    try { saved = localStorage.getItem('cb_detail_id'); } catch { /* private mode */ }
+    if (!saved) return;
+    const r = state.recipes.find((x) => x._id === saved);
+    if (!r) return;
+    const isAuthor = !r._author || !!(state.auth?.sub && r._author.sub === state.auth.sub);
+    openRecipe(r, { source: 'local', author: r._author, isAuthor });
+  }
+
   wireDetail();
   return {
-    open, close: closeSheet, _renderIngredients: renderIngredients, _addToCart: addToCartHandler,
+    open, close: closeSheet, restore, _renderIngredients: renderIngredients, _addToCart: addToCartHandler,
     _waitForAudits: () => Promise.allSettled([...pendingAudits]),
   };
 }

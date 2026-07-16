@@ -1412,8 +1412,8 @@
 			left: 0;
 			right: 0;
 			bottom: 0;
-			padding: 6px 4px;
-			padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
+			padding: 8px 4px;
+			padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
 			border-top: 1px solid
 				color-mix(in oklab, var(--color-bg-elevated) 12%, transparent);
 			justify-content: space-around;
@@ -1459,7 +1459,8 @@
 
 		.main {
 			margin-left: 0;
-			padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+			padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+			padding-top: env(safe-area-inset-top, 0px);
 		}
 
 		.topbar {
@@ -1523,7 +1524,7 @@
 
 		.fab-stack {
 			right: 16px;
-			bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+			bottom: calc(80px + env(safe-area-inset-bottom, 0px));
 		}
 		.fab-stack .fab {
 			width: 56px;
@@ -1545,7 +1546,7 @@
 		/* Lift the toast above the bottom tab bar. DS .toast has
        bottom: var(--space-6); override for mobile-stacked UI. */
 		#toast {
-			bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+			bottom: calc(88px + env(safe-area-inset-bottom, 0px));
 		}
 	}
 
