@@ -381,7 +381,10 @@ export function initDetail({
     try { saved = localStorage.getItem('cb_detail_id'); } catch { /* private mode */ }
     if (!saved) return;
     const r = state.recipes.find((x) => x._id === saved);
-    if (!r) return;
+    if (!r) {
+      try { localStorage.removeItem('cb_detail_id'); } catch { /* private mode */ }
+      return;
+    }
     const isAuthor = !r._author || !!(state.auth?.sub && r._author.sub === state.auth.sub);
     openRecipe(r, { source: 'local', author: r._author, isAuthor });
   }

@@ -111,6 +111,52 @@ test('close removes .open from modal + overlay and clears state.detailId', () =>
   assert.equal(state.detailId, null);
 });
 
+test('open persists the recipe id and close clears it', () => {
+  const stored = {};
+  globalThis.localStorage = {
+    getItem: (key) => stored[key] ?? null,
+    setItem: (key, value) => { stored[key] = String(value); },
+    removeItem: (key) => { delete stored[key]; },
+  };
+  const { document } = makeDom();
+  const state = { recipes: [SAMPLE], pantry: [] };
+  const ctrl = mod.initDetail({ state, document });
+  ctrl.open('r1');
+  assert.equal(stored.cb_detail_id, 'r1');
+  ctrl.close();
+  assert.equal(stored.cb_detail_id, undefined);
+});
+
+test('restore reopens the persisted recipe detail', () => {
+  const stored = { cb_detail_id: 'r1' };
+  globalThis.localStorage = {
+    getItem: (key) => stored[key] ?? null,
+    setItem: (key, value) => { stored[key] = String(value); },
+    removeItem: (key) => { delete stored[key]; },
+  };
+  const { document, elements } = makeDom();
+  const state = { recipes: [SAMPLE], pantry: [] };
+  const ctrl = mod.initDetail({ state, document });
+  ctrl.restore();
+  assert.equal(state.detailId, 'r1');
+  assert.equal(elements['dm-title'].textContent, 'Carbonara');
+  assert.equal(elements['detail-modal'].classList.contains('open'), true);
+});
+
+test('restore clears a saved recipe id that no longer exists', () => {
+  const stored = { cb_detail_id: 'deleted' };
+  globalThis.localStorage = {
+    getItem: (key) => stored[key] ?? null,
+    setItem: (key, value) => { stored[key] = String(value); },
+    removeItem: (key) => { delete stored[key]; },
+  };
+  const { document, elements } = makeDom();
+  const ctrl = mod.initDetail({ state: { recipes: [SAMPLE], pantry: [] }, document });
+  ctrl.restore();
+  assert.equal(stored.cb_detail_id, undefined);
+  assert.equal(elements['detail-modal'].classList.contains('open'), false);
+});
+
 test('open renders ingredients list when present', () => {
   if (!mod.initDetail) return;
   const { document, elements } = makeDom();
