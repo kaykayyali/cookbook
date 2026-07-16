@@ -39,6 +39,23 @@ test('optimistic replacement and regeneration prune transfer markers and reject 
   }), /invalid_pantry_item/);
 });
 
+test('invalid optimistic mutation does not poison the queue for a later valid mutation', async () => {
+  const sent = [];
+  let sequence = 0;
+  const sync = createWorkspaceSync({
+    initial: workspace(),
+    makeId: () => `m${++sequence}`,
+    send: async (request) => {
+      sent.push(request);
+      return { ok: true, workspace: workspace({ revision: 1, pantry: ['flour'] }) };
+    },
+  });
+  assert.throws(() => sync.mutate('pantry.add', { sourceKey: 'egg', item: {} }), /invalid_pantry_item/);
+  assert.equal(await sync.mutate('pantry.add', { name: 'flour' }), true);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sync.current().pantry.map((item) => item.name), ['flour']);
+});
+
 test('mutation applies optimistically and confirms the authoritative response', async () => {
   let resolveRequest;
   const changes = [];

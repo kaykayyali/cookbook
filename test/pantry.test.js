@@ -170,6 +170,19 @@ test('an invalid explicit count label fails closed instead of broadening removal
   assert.deepEqual(removeFromPantry(pantry, { name: 'water', unit: 'count', countLabel: 'crate' }), pantry);
 });
 
+test('togglePantry fails closed for an invalid explicit count label', () => {
+  const pantry = normalizePantry([
+    '2 bottles water',
+    '3 cans water',
+    { name: 'water', quantity: 4, unit: 'count', kind: 'indivisible', countLabel: '' },
+  ]);
+  const result = togglePantry(pantry, {
+    name: 'water', quantity: 1, unit: 'count', kind: 'indivisible', countLabel: 'crate',
+  });
+  assert.equal(result.added, false);
+  assert.deepEqual(result.pantry, pantry);
+});
+
 test('addToPantry refuses duplicate qualitative entries and blanks', () => {
   const eggs = [normalizePantryEntry('eggs')];
   assert.equal(addToPantry(eggs, 'eggs').added, false);

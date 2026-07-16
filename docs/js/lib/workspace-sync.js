@@ -179,8 +179,15 @@ export function createWorkspaceSync({ initial, send, onChange = () => {}, onErro
   }
 
   function enqueue(request) {
-    if (!pending.includes(request)) pending.push(request);
-    rebuild();
+    const inserted = !pending.includes(request);
+    if (inserted) pending.push(request);
+    try {
+      rebuild();
+    } catch (error) {
+      if (inserted) pending.splice(pending.indexOf(request), 1);
+      rebuild();
+      throw error;
+    }
     publish({ optimistic: true });
     const result = chain.then(() => execute(request));
     chain = result.catch(() => false);

@@ -201,6 +201,13 @@ export function removeFromPantry(pantry, value) {
 /** Pure toggle: add if absent, remove if present. */
 export function togglePantry(pantry, value) {
   const current = normalizePantry(pantry);
+  const invalidCountLabel = value && typeof value === 'object'
+    && value.unit === 'count'
+    && Object.prototype.hasOwnProperty.call(value, 'countLabel')
+    && !COUNT_LABELS.includes(value.countLabel);
+  if (invalidCountLabel) {
+    return { pantry: current, added: false, name: canonicalName(value.name) };
+  }
   const item = normalizePantryEntry(value);
   if (!item) return { pantry: current, added: false, name: '' };
   const precise = item.unit !== 'qualitative';
