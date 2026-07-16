@@ -363,9 +363,15 @@ export function initDetail({
       ings.addEventListener('click', (e) => {
         const item = e.target.closest('.detail-ing-item');
         if (!item || !item.dataset.ing) return;
-        const { pantry, added, name } = togglePantry(state.pantry, item.dataset.ing.toLowerCase());
+        const { pantry, added, name, item: pantryItem } = togglePantry(state.pantry, item.dataset.ing.toLowerCase());
         state.pantry = pantry;
-        if (mutate) void mutate(added ? 'pantry.add' : 'pantry.remove', { name });
+        if (mutate) void mutate(added ? 'pantry.add' : 'pantry.remove', added
+          ? { item: pantryItem }
+          : {
+            name,
+            unit: pantryItem?.unit,
+            ...(pantryItem?.unit === 'count' ? { countLabel: pantryItem.countLabel || '' } : {}),
+          });
         persist();
         renderIngredients();
         if (onChange) onChange();

@@ -1,4 +1,5 @@
 import {
+  aggregateCart,
   canonicalName,
   normalizeIngredientsLocal,
   parseServings,
@@ -11,6 +12,7 @@ const PLAN_TYPES = new Set(['recipe', 'leftovers', 'dining-out', 'open']);
 const PLAN_STATUSES = new Set(['active', 'skipped', 'cooked']);
 const MAX_RECENT_MUTATIONS = 64;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TRANSFER_PREFIX = 'pantry-transfer:';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const text = (value, max = 200) => typeof value === 'string' ? value.trim().slice(0, max) : '';
@@ -20,6 +22,18 @@ function normalizeManualItems(raw) {
     const normalized = normalizePantryEntry(item);
     const id = text(item?.id, 100);
     return id && normalized ? [{ id, ...normalized, checked: item.checked === true }] : [];
+  });
+}
+
+function pruneTransferMarkers(workspace) {
+  const valid = new Set([
+    ...aggregateCart(workspace.cart).map((item) => item.name),
+    ...workspace.manualItems.map((item) => `manual:${item.id}`),
+  ]);
+  Object.keys(workspace.shoppingChecked).forEach((key) => {
+    if (key.startsWith(TRANSFER_PREFIX) && !valid.has(key.slice(TRANSFER_PREFIX.length))) {
+      delete workspace.shoppingChecked[key];
+    }
   });
 }
 
@@ -137,13 +151,21 @@ function applyOperation(workspace, operation, context) {
       workspace.plan = workspace.plan.filter((entry) => entry.id !== text(payload.id, 100));
       break;
     case 'pantry.add': {
+      const sourceKey = text(payload.sourceKey, 300);
+      const marker = sourceKey ? `${TRANSFER_PREFIX}${sourceKey}` : '';
+      if (marker && workspace.shoppingChecked[marker] === true) break;
       const result = addToPantry(workspace.pantry, payload.item || payload.name);
       workspace.pantry = result.pantry;
+      if (marker) workspace.shoppingChecked[marker] = true;
       break;
     }
     case 'pantry.remove': {
       const name = canonicalName(payload.name);
-      workspace.pantry = removeFromPantry(workspace.pantry, payload.unit ? { name, unit: payload.unit } : name);
+      const identity = payload.unit ? { name, unit: payload.unit } : name;
+      if (payload.unit && Object.prototype.hasOwnProperty.call(payload, 'countLabel')) {
+        identity.countLabel = payload.countLabel;
+      }
+      workspace.pantry = removeFromPantry(workspace.pantry, identity);
       break;
     }
     case 'cart.upsertSelection': {
@@ -159,10 +181,12 @@ function applyOperation(workspace, operation, context) {
       break;
     case 'cart.removeSelection':
       workspace.cart = workspace.cart.filter((item) => item.recipeId !== text(payload.recipeId, 200));
+      pruneTransferMarkers(workspace);
       break;
     case 'shopping.removeIngredient': {
       workspace.cart = removeShoppingItem(workspace.cart, payload.name);
       delete workspace.shoppingChecked[canonicalName(payload.name)];
+      pruneTransferMarkers(workspace);
       break;
     }
     case 'shopping.setChecked': {
@@ -186,6 +210,7 @@ function applyOperation(workspace, operation, context) {
       const itemId = text(payload.id, 100);
       workspace.manualItems = workspace.manualItems.filter((item) => item.id !== itemId);
       delete workspace.shoppingChecked[`manual:${itemId}`];
+      pruneTransferMarkers(workspace);
       break;
     }
     case 'shopping.clear':

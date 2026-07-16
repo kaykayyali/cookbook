@@ -69,7 +69,7 @@ test('all 6 theme blocks define the same token set', () => {
     `all 6 themes should define the same number of tokens; got ${JSON.stringify(counts)}`);
 });
 
-test('Summer subtle text meets WCAG AA contrast on both Summer backgrounds', () => {
+test('Summer small-text colors meet WCAG AA contrast on both Summer backgrounds', () => {
   const src = readFileSync(join(ROOT, 'docs/css/tokens.css'), 'utf8');
   const body = src.match(/:root\[data-theme="summer"\]\s*\{([^}]*)\}/)?.[1] || '';
   const token = (name) => body.match(new RegExp(`${name}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1];
@@ -82,6 +82,8 @@ test('Summer subtle text meets WCAG AA contrast on both Summer backgrounds', () 
     const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
     return (values[0] + 0.05) / (values[1] + 0.05);
   };
-  assert.ok(contrast(token('--color-fg-subtle'), token('--color-bg')) >= 4.5);
-  assert.ok(contrast(token('--color-fg-subtle'), token('--color-bg-elevated')) >= 4.5);
+  for (const foreground of ['--color-fg-subtle', '--color-success', '--color-warning']) {
+    assert.ok(contrast(token(foreground), token('--color-bg')) >= 4.5, `${foreground} on Summer background`);
+    assert.ok(contrast(token(foreground), token('--color-bg-elevated')) >= 4.5, `${foreground} on Summer elevated background`);
+  }
 });

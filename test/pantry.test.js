@@ -13,6 +13,7 @@ import {
   togglePantry,
   normalizePantry,
   normalizePantryEntry,
+  formatPantryAmount,
 } from '../docs/js/lib/pantry.js';
 
 test('haveIngredient matches by substring', () => {
@@ -27,6 +28,11 @@ test('haveIngredient matches by substring', () => {
 
 test('haveIngredient is case-insensitive on the recipe side', () => {
   assert.equal(haveIngredient('2 tbsp OLIVE OIL', ['olive oil']), true);
+});
+
+test('haveIngredient matches whole canonical ingredient phrases, not substrings inside other foods', () => {
+  assert.equal(haveIngredient('1 eggplant', normalizePantry(['eggs'])), false);
+  assert.equal(haveIngredient('2 tablespoons extra virgin olive oil', ['olive oil']), true);
 });
 
 test('haveIngredient rejects non-strings', () => {
@@ -123,6 +129,27 @@ test('addToPantry accumulates compatible normalized quantities', () => {
   assert.equal(second.pantry[0].unit, 'count');
 });
 
+test('count package labels are part of Pantry quantity compatibility and removal identity', () => {
+  const bottles = normalizePantryEntry('2 bottles water');
+  const cans = normalizePantryEntry('3 cans water');
+  const unlabeled = normalizePantryEntry({ name: 'water', quantity: 4, unit: 'count', kind: 'indivisible', countLabel: '' });
+  const pantry = normalizePantry([bottles, cans, unlabeled]);
+  assert.deepEqual(pantry.map(({ quantity, countLabel }) => ({ quantity, countLabel })), [
+    { quantity: 2, countLabel: 'bottle' },
+    { quantity: 3, countLabel: 'can' },
+    { quantity: 4, countLabel: '' },
+  ]);
+  assert.deepEqual(removeFromPantry(pantry, bottles).map(({ quantity, countLabel }) => ({ quantity, countLabel })), [
+    { quantity: 3, countLabel: 'can' },
+    { quantity: 4, countLabel: '' },
+  ]);
+  assert.deepEqual(removeFromPantry(pantry, { name: 'water', unit: 'count', countLabel: '' })
+    .map(({ quantity, countLabel }) => ({ quantity, countLabel })), [
+    { quantity: 2, countLabel: 'bottle' },
+    { quantity: 3, countLabel: 'can' },
+  ]);
+});
+
 test('addToPantry refuses duplicate qualitative entries and blanks', () => {
   const eggs = [normalizePantryEntry('eggs')];
   assert.equal(addToPantry(eggs, 'eggs').added, false);
@@ -163,6 +190,12 @@ test('normalizePantryEntry preserves the shared Shopping quantity contract', () 
     name: 'milk', displayName: 'Whole Milk', quantity: 17.6,
     unit: 'ounce', kind: 'divisible', countLabel: '', category: 'dairy-eggs',
   });
+});
+
+test('black pepper normalizes as a Pantry spice and displays in practical teaspoons', () => {
+  const item = normalizePantryEntry('1 1/2 teaspoons black pepper');
+  assert.equal(item.category, 'pantry');
+  assert.equal(formatPantryAmount(item), '1½ tsp');
 });
 
 test('normalizePantry tolerates non-arrays', () => {

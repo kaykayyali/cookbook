@@ -57,7 +57,7 @@ test('shopping controls emit absolute shared-workspace operations', () => {
     { op: 'pantry.add', payload: { item: {
       name: 'egg', displayName: 'Egg', quantity: 6, unit: 'count', kind: 'indivisible',
       countLabel: '', category: 'dairy-eggs',
-    } } },
+    }, sourceKey: 'egg' } },
     { op: 'shopping.removeIngredient', payload: { name: 'egg' } },
     { op: 'shopping.clear', payload: {} },
   ]);

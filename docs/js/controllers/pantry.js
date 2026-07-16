@@ -7,6 +7,7 @@ import {
   addToPantry,
   removeFromPantry,
   normalizePantry,
+  normalizePantryEntry,
   formatPantryAmount,
 } from '../lib/pantry.js';
 import { save as persist } from '../lib/store.js';
@@ -126,11 +127,12 @@ export function initPantry({ state, document = globalThis.document, onChange = n
   }
 
   function add(raw) {
+    const delta = normalizePantryEntry(raw);
     const { pantry, added, name, item } = addToPantry(state.pantry, raw);
     if (!name) return null;
     if (!added) return null;
     state.pantry = pantry;
-    if (mutate) void mutate('pantry.add', { item });
+    if (mutate) void mutate('pantry.add', { item: delta });
     persist();
     render();
     if (onChange) onChange();
@@ -150,7 +152,12 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     state.pantry = removeFromPantry(state.pantry, item);
     const name = typeof item === 'string' ? item : item?.name;
     const unit = typeof item === 'object' ? item?.unit : undefined;
-    if (mutate) void mutate('pantry.remove', { name, ...(unit ? { unit } : {}) });
+    const countLabel = typeof item === 'object' ? item?.countLabel : undefined;
+    if (mutate) void mutate('pantry.remove', {
+      name,
+      ...(unit ? { unit } : {}),
+      ...(unit === 'count' ? { countLabel: countLabel || '' } : {}),
+    });
     persist();
     render();
     if (onChange) onChange();
@@ -164,7 +171,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
         if (e.target.closest('[data-action="clear-pantry-filters"]')) { clearFilters(); return; }
         const btn = e.target.closest('.pantry-remove');
         if (!btn) return;
-        remove({ name: btn.dataset.item, unit: btn.dataset.unit });
+        remove({ name: btn.dataset.item, unit: btn.dataset.unit, countLabel: btn.dataset.countLabel });
       });
     }
     const addBtn = document.getElementById('pantry-add-btn');
@@ -192,6 +199,6 @@ function pantryTagHTML(item, category = pantryCategory(item)) {
   const name = item.displayName || item.name;
   const amount = formatPantryAmount(item);
   return `<span class="pantry-tag" data-category="${category}"><span class="pantry-category-dot" aria-hidden="true"></span><span class="pantry-tag-copy"><span>${esc(name)}</span><small>${esc(amount)}</small></span>
-       <button class="pantry-remove" data-item="${esc(item.name)}" data-unit="${esc(item.unit)}" aria-label="Remove ${esc(name)}, ${esc(amount)}">${'<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>'}</button>
+       <button class="pantry-remove" data-item="${esc(item.name)}" data-unit="${esc(item.unit)}" data-count-label="${esc(item.countLabel)}" aria-label="Remove ${esc(name)}, ${esc(amount)}">${'<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>'}</button>
      </span>`;
 }

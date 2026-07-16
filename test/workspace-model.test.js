@@ -101,6 +101,36 @@ test('authoritative pantry mutations accumulate compatible purchased quantities'
   }]);
 });
 
+test('authoritative Shopping transfer source is idempotent across distinct mutations', () => {
+  const payload = { sourceKey: 'egg', item: {
+    name: 'egg', displayName: 'Egg', quantity: 3, unit: 'count', kind: 'indivisible',
+    countLabel: '', category: 'dairy-eggs',
+  } };
+  let workspace = { ...emptyWorkspace('our-home'), cart: [{ recipeId: 'r1', ingredients: [egg] }] };
+  workspace = applyWorkspaceMutation(workspace, mutation('buy-once', 'pantry.add', payload)).workspace;
+  workspace = applyWorkspaceMutation(workspace, mutation('buy-again', 'pantry.add', payload)).workspace;
+  assert.equal(workspace.pantry[0].quantity, 3);
+  assert.equal(workspace.shoppingChecked['pantry-transfer:egg'], true);
+  workspace = applyWorkspaceMutation(workspace, mutation('remove-egg', 'shopping.removeIngredient', { name: 'egg' })).workspace;
+  assert.equal(workspace.shoppingChecked['pantry-transfer:egg'], undefined, 'removing the row permits a future purchase');
+});
+
+test('authoritative Pantry removal distinguishes incompatible count package labels', () => {
+  const workspace = {
+    ...emptyWorkspace('our-home'),
+    pantry: [
+      { name: 'water', quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle' },
+      { name: 'water', quantity: 3, unit: 'count', kind: 'indivisible', countLabel: 'can' },
+    ],
+  };
+  const removed = applyWorkspaceMutation(workspace, mutation('remove-bottles', 'pantry.remove', {
+    name: 'water', unit: 'count', countLabel: 'bottle',
+  })).workspace;
+  assert.deepEqual(removed.pantry.map(({ quantity, countLabel }) => ({ quantity, countLabel })), [
+    { quantity: 3, countLabel: 'can' },
+  ]);
+});
+
 test('plan generation excludes non-recipe and skipped meals and combines servings per recipe', () => {
   let workspace = emptyWorkspace('our-home');
   const entries = [

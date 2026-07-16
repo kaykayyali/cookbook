@@ -1,4 +1,5 @@
 import {
+  aggregateCart,
   canonicalName,
   removeRecipeSelection,
   removeShoppingItem,
@@ -12,6 +13,19 @@ const SAFE_REBASE = new Set([
   'plan.remove', 'pantry.remove', 'cart.setTargetServings', 'cart.removeSelection',
   'shopping.removeIngredient', 'shopping.removeManual', 'shopping.clear',
 ]);
+const TRANSFER_PREFIX = 'pantry-transfer:';
+
+function pruneTransferMarkers(workspace) {
+  const valid = new Set([
+    ...aggregateCart(workspace.cart).map((item) => item.name),
+    ...workspace.manualItems.map((item) => `manual:${item.id}`),
+  ]);
+  Object.keys(workspace.shoppingChecked).forEach((key) => {
+    if (key.startsWith(TRANSFER_PREFIX) && !valid.has(key.slice(TRANSFER_PREFIX.length))) {
+      delete workspace.shoppingChecked[key];
+    }
+  });
+}
 
 export function normalizeWorkspace(value) {
   const workspace = clone(value);
@@ -49,12 +63,19 @@ export function applyWorkspaceOperation(source, request) {
       workspace.plan = workspace.plan.filter((entry) => entry.id !== payload.id);
       break;
     case 'pantry.add': {
+      const marker = payload.sourceKey ? `${TRANSFER_PREFIX}${payload.sourceKey}` : '';
+      if (marker && workspace.shoppingChecked[marker] === true) break;
       workspace.pantry = addToPantry(workspace.pantry, payload.item || payload.name).pantry;
+      if (marker) workspace.shoppingChecked[marker] = true;
       break;
     }
     case 'pantry.remove': {
       const name = canonicalName(payload.name);
-      workspace.pantry = removeFromPantry(workspace.pantry, payload.unit ? { name, unit: payload.unit } : name);
+      const identity = payload.unit ? { name, unit: payload.unit } : name;
+      if (payload.unit && Object.prototype.hasOwnProperty.call(payload, 'countLabel')) {
+        identity.countLabel = payload.countLabel;
+      }
+      workspace.pantry = removeFromPantry(workspace.pantry, identity);
       break;
     }
     case 'cart.upsertSelection': {
@@ -69,9 +90,12 @@ export function applyWorkspaceOperation(source, request) {
       break;
     case 'cart.removeSelection':
       workspace.cart = removeRecipeSelection(workspace.cart, payload.recipeId);
+      pruneTransferMarkers(workspace);
       break;
     case 'shopping.removeIngredient':
       workspace.cart = removeShoppingItem(workspace.cart, payload.name);
+      delete workspace.shoppingChecked[canonicalName(payload.name)];
+      pruneTransferMarkers(workspace);
       break;
     case 'shopping.setChecked':
       if (payload.checked === true) workspace.shoppingChecked[payload.key] = true;
@@ -88,6 +112,8 @@ export function applyWorkspaceOperation(source, request) {
     }
     case 'shopping.removeManual':
       workspace.manualItems = workspace.manualItems.filter((item) => item.id !== payload.id);
+      delete workspace.shoppingChecked[`manual:${payload.id}`];
+      pruneTransferMarkers(workspace);
       break;
     case 'shopping.clear':
       workspace.cart = [];

@@ -80,6 +80,25 @@ test('the visible Add to cart button responds immediately and changes to In cart
   await ctrl._waitForAudits();
 });
 
+test('recipe-detail Pantry toggle preserves the ingredient quantity in its workspace mutation', async () => {
+  const { JSDOM } = await import('jsdom');
+  const dom = new JSDOM(`<!doctype html><body>
+    <div id="detail-modal"></div><div id="detail-overlay"></div><button id="detail-close-btn"></button>
+    <div id="dm-eyebrow"></div><div id="dm-title"></div><div id="dm-meta"></div><div id="dm-author-badge"></div>
+    <button id="dm-edit-btn"></button><button id="dm-schema-btn"></button><div id="dm-ingredients"></div>
+    <div id="dm-pantry-note"></div><div id="dm-steps"></div><div id="dm-nutrition"><div id="dm-nutrition-grid"></div></div>
+    <button id="dm-add-all-btn">Add recipe to cart</button>
+  </body>`);
+  const recipe = { _id: 'r1', name: 'Dressing', recipeYield: '1', recipeIngredient: ['2 tablespoons olive oil'], recipeInstructions: [] };
+  const state = { recipes: [recipe], cart: [], pantry: [], normalizations: {} };
+  const mutations = [];
+  const ctrl = initDetail({ state, document: dom.window.document, notify() {}, mutate: (op, payload) => mutations.push({ op, payload }) });
+  ctrl.open('r1');
+  dom.window.document.querySelector('.detail-ing-item').click();
+  assert.equal(state.pantry[0].quantity, 1);
+  assert.deepEqual(mutations, [{ op: 'pantry.add', payload: { item: state.pantry[0] } }]);
+});
+
 test('background audit failure keeps the immediate deterministic selection', async () => {
   const recipe = { _id: 'r1', name: 'Milk', recipeYield: '2', recipeIngredient: ['1 cup milk'], recipeInstructions: [] };
   const state = { recipes: [recipe], cart: [], pantry: ['milk'] };

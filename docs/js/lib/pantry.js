@@ -18,17 +18,21 @@ const LEADING_UNIT =
 
 /**
  * True if the given recipe-ingredient string is satisfied by any pantry entry.
- * Matching is substring-based: pantry "olive oil" matches "2 tbsp olive oil".
+ * Matching uses canonical whole phrases: pantry "olive oil" matches
+ * "2 tbsp extra virgin olive oil", but "egg" does not match "eggplant".
  * @param {string} ing recipe ingredient line
  * @param {string[]} pantry lowercase pantry names
  * @returns {boolean}
  */
 export function haveIngredient(ing, pantry) {
   if (typeof ing !== 'string') return false;
-  const low = ing.toLowerCase();
+  const ingredientName = normalizeIngredient(ing).name;
   return (Array.isArray(pantry) ? pantry : []).some((entry) => {
     const name = typeof entry === 'string' ? entry : entry?.name;
-    return typeof name === 'string' && low.includes(name.toLowerCase());
+    if (typeof name !== 'string') return false;
+    const canonical = canonicalName(name);
+    const escaped = canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|\\s)${escaped}(?=\\s|$)`, 'i').test(ingredientName);
   });
 }
 
@@ -151,7 +155,7 @@ export function normalizePantryEntry(value) {
   };
 }
 
-const pantryKey = (item) => `${item.name}\u0000${item.unit}`;
+const pantryKey = (item) => `${item.name}\u0000${item.unit}\u0000${item.unit === 'count' ? item.countLabel : ''}`;
 
 /** Pure add/accumulate for one normalized Pantry entry. */
 export function addToPantry(pantry, value) {
@@ -181,9 +185,16 @@ export function addToPantry(pantry, value) {
 export function removeFromPantry(pantry, value) {
   const current = normalizePantry(pantry);
   const isObject = value && typeof value === 'object';
-  const item = normalizePantryEntry(value);
-  const name = item?.name || canonicalName(value);
-  return current.filter((entry) => entry.name !== name || (isObject && item && entry.unit !== item.unit));
+  const name = canonicalName(isObject ? value.name : value);
+  if (!isObject) return current.filter((entry) => entry.name !== name);
+  const unit = ['count', 'ounce', 'qualitative'].includes(value.unit) ? value.unit : '';
+  const hasCountLabel = unit === 'count'
+    && Object.prototype.hasOwnProperty.call(value, 'countLabel')
+    && COUNT_LABELS.includes(value.countLabel);
+  const countLabel = hasCountLabel ? value.countLabel : '';
+  return current.filter((entry) => entry.name !== name
+    || (unit && entry.unit !== unit)
+    || (hasCountLabel && entry.countLabel !== countLabel));
 }
 
 /** Pure toggle: add if absent, remove if present. */
@@ -192,7 +203,7 @@ export function togglePantry(pantry, value) {
   const item = normalizePantryEntry(value);
   if (!item) return { pantry: current, added: false, name: '' };
   const present = current.some((entry) => entry.name === item.name
-    && (typeof value === 'string' || entry.unit === item.unit));
+    && (typeof value === 'string' || pantryKey(entry) === pantryKey(item)));
   if (present) return { pantry: removeFromPantry(current, value), added: false, name: item.name, item };
   return addToPantry(current, item);
 }

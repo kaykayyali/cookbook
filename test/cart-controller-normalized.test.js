@@ -69,6 +69,9 @@ test('delegated check-off saves the normalized purchase quantity to Pantry', () 
   click();
   assert.equal(state.shoppingChecked.egg, undefined);
   assert.equal(state.pantry[0].quantity, 3, 'unchecking keeps the pantry quantity (non-subtractive)');
+  click();
+  assert.equal(state.shoppingChecked.egg, true);
+  assert.equal(state.pantry[0].quantity, 3, 'rechecking the same Shopping row does not transfer it twice');
 });
 
 test('manual Shopping items use the same quantity contract and transfer it to Pantry', () => {
@@ -84,6 +87,9 @@ test('manual Shopping items use the same quantity contract and transfer it to Pa
   assert.deepEqual(state.pantry.map(({ name, quantity, unit, countLabel }) => ({ name, quantity, unit, countLabel })), [
     { name: 'flower', quantity: 2, unit: 'count', countLabel: 'bottle' },
   ]);
+  ctrl.toggleManual(manual.id);
+  ctrl.toggleManual(manual.id);
+  assert.equal(state.pantry[0].quantity, 2, 'restoring and rechecking one manual row does not transfer it twice');
 });
 
 test('delegated check-off plays a short exit animation before moving the row to Completed', () => {

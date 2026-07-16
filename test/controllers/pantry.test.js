@@ -146,6 +146,18 @@ test('shared pantry add and remove emit absolute workspace operations', () => {
   ]);
 });
 
+test('adding to an existing Pantry quantity sends only the new amount as the workspace delta', () => {
+  const { document } = makeDom();
+  const state = { pantry: [pantryItem('olive oil', {
+    displayName: 'Olive Oil', quantity: 16, unit: 'ounce', kind: 'divisible', category: 'pantry',
+  })], recipes: [] };
+  const calls = [];
+  const ctrl = mod.initPantry({ state, document, mutate: (op, payload) => calls.push({ op, payload }) });
+  ctrl.add('1 cup olive oil');
+  assert.equal(state.pantry[0].quantity, 24, 'local Pantry shows the accumulated total');
+  assert.equal(calls[0].payload.item.quantity, 8, 'authority receives only the new additive amount');
+});
+
 test('render shows each Pantry item with a compatible formatted quantity', () => {
   const { document, grid } = makeDom();
   const state = { pantry: [pantryItem('olive oil', {

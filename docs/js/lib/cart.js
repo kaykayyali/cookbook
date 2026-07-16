@@ -105,6 +105,7 @@ function inferCategory(name) {
   if (/\b(milk|cream|cheese|butter|yogurt|egg|pecorino|parmesan)\b/.test(value)) return 'dairy-eggs';
   if (/\b(bread|roll|bun|tortilla|pita)\b/.test(value)) return 'bakery';
   if (/\b(frozen|ice cream)\b/.test(value)) return 'frozen';
+  if (/\b(black pepper|white pepper|peppercorn|cayenne pepper)\b/.test(value)) return 'pantry';
   if (/\b(onion|garlic|tomato|potato|pepper|parsley|cilantro|lettuce|carrot|celery|apple|lemon|lime|herb|fruit|vegetable)\b/.test(value)) return 'produce';
   if (/\b(flour|sugar|salt|oil|vinegar|spice|paprika|cumin|rice|pasta|stock)\b/.test(value)) return 'pantry';
   return 'other';

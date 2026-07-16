@@ -20,6 +20,8 @@ import { regeneratePlanRangeCart } from '../lib/plan-range.js';
 import { addToPantry } from '../lib/pantry.js';
 
 const uid = () => globalThis.crypto?.randomUUID?.() || `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const TRANSFER_PREFIX = 'pantry-transfer:';
+const transferMarker = (sourceKey) => `${TRANSFER_PREFIX}${sourceKey}`;
 
 export function initCart({
   state,
@@ -37,6 +39,19 @@ export function initCart({
   function markCartMutated() {
     state.cartMutationGeneration = mutationGeneration() + 1;
     state.cartCancellationGeneration = cancellationGeneration() + 1;
+  }
+
+  function pruneLocalTransferMarkers() {
+    if (!state.shoppingChecked) return;
+    const valid = new Set([
+      ...aggregateCart(state.cart).map((item) => item.name),
+      ...(state.manualItems || []).map((item) => `manual:${item.id}`),
+    ]);
+    Object.keys(state.shoppingChecked).forEach((key) => {
+      if (key.startsWith(TRANSFER_PREFIX) && !valid.has(key.slice(TRANSFER_PREFIX.length))) {
+        delete state.shoppingChecked[key];
+      }
+    });
   }
 
   function render({ skipAudit = false } = {}) {
@@ -133,6 +148,7 @@ export function initCart({
     const next = removeRecipeSelection(state.cart, recipeId);
     if (next.length === state.cart.length) return false;
     state.cart = next;
+    pruneLocalTransferMarkers();
     if (mutate) void mutate('cart.removeSelection', { recipeId });
     markCartMutated();
     state.normalizationAudit = {};
@@ -145,7 +161,10 @@ export function initCart({
     state.cart = removeShoppingItem(state.cart, name);
     if (mutate) void mutate('shopping.removeIngredient', { name });
     markCartMutated();
-    if (state.shoppingChecked) delete state.shoppingChecked[name];
+    if (state.shoppingChecked) {
+      delete state.shoppingChecked[name];
+      delete state.shoppingChecked[transferMarker(name)];
+    }
     changed();
     return true;
   }
@@ -156,7 +175,7 @@ export function initCart({
     if (completed) state.shoppingChecked[name] = true;
     else delete state.shoppingChecked[name];
     if (mutate) void mutate('shopping.setChecked', { key: name, checked: completed });
-    if (completed) {
+    if (completed && state.shoppingChecked[transferMarker(name)] !== true) {
       const purchased = aggregateCart(state.cart).find((item) => item.name === name);
       const transfer = purchased ? {
         name: purchased.name,
@@ -168,10 +187,9 @@ export function initCart({
         category: purchased.category,
       } : normalizeIngredient(name);
       const result = addToPantry(state.pantry, transfer);
-      if (result.added) {
-        state.pantry = result.pantry;
-        if (mutate) void mutate('pantry.add', { item: transfer });
-      }
+      state.pantry = result.pantry;
+      state.shoppingChecked[transferMarker(name)] = true;
+      if (mutate) void mutate('pantry.add', { item: transfer, sourceKey: name });
     }
     changed();
     return true;
@@ -222,6 +240,7 @@ export function initCart({
     if (!state.manualItems?.some((item) => item.id === id)) return false;
     state.manualItems = state.manualItems.filter((item) => item.id !== id);
     delete state.shoppingChecked?.[`manual:${id}`];
+    delete state.shoppingChecked?.[transferMarker(`manual:${id}`)];
     if (mutate) void mutate('shopping.removeManual', { id });
     changed();
     return true;
@@ -235,13 +254,12 @@ export function initCart({
     if (checked) state.shoppingChecked[key] = true;
     else delete state.shoppingChecked[key];
     if (mutate) void mutate('shopping.setChecked', { key, checked });
-    if (checked) {
+    if (checked && state.shoppingChecked[transferMarker(key)] !== true) {
       const item = state.manualItems.find((entry) => entry.id === id);
       const result = addToPantry(state.pantry, item);
-      if (result.added) {
-        state.pantry = result.pantry;
-        if (mutate) void mutate('pantry.add', { item });
-      }
+      state.pantry = result.pantry;
+      state.shoppingChecked[transferMarker(key)] = true;
+      if (mutate) void mutate('pantry.add', { item, sourceKey: key });
     }
     changed();
     return true;
