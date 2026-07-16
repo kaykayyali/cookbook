@@ -131,6 +131,40 @@ test('authoritative Pantry removal distinguishes incompatible count package labe
   ]);
 });
 
+test('invalid authoritative transfer payload fails without poisoning its source marker', () => {
+  const workspace = emptyWorkspace('our-home');
+  assert.throws(() => applyWorkspaceMutation(workspace, mutation('bad-buy', 'pantry.add', {
+    sourceKey: 'egg', item: {},
+  })), /invalid_pantry_item/);
+  assert.equal(workspace.shoppingChecked['pantry-transfer:egg'], undefined);
+});
+
+test('selection replacement and plan regeneration prune stale transfer markers', () => {
+  let workspace = {
+    ...emptyWorkspace('our-home'),
+    cart: [{ recipeId: 'r1', ingredients: [egg] }],
+    shoppingChecked: { 'pantry-transfer:egg': true },
+  };
+  workspace = applyWorkspaceMutation(workspace, mutation('replace', 'cart.upsertSelection', {
+    selection: { recipeId: 'r1', ingredients: [] },
+  })).workspace;
+  assert.equal(workspace.shoppingChecked['pantry-transfer:egg'], undefined);
+
+  workspace = {
+    ...emptyWorkspace('our-home'),
+    cart: [{
+      recipeId: 'plan:2026-07-14:2026-07-20:r1', sourceRecipeId: 'r1', ingredients: [egg],
+      origin: { kind: 'plan', rangeStart: '2026-07-14', rangeEnd: '2026-07-20' },
+    }],
+    shoppingChecked: { 'pantry-transfer:egg': true },
+  };
+  workspace = applyWorkspaceMutation(workspace, mutation('regenerate-empty', 'shopping.regeneratePlanRange', {
+    rangeStart: '2026-07-14', rangeEnd: '2026-07-20',
+  }), { recipes: [] }).workspace;
+  assert.deepEqual(workspace.cart, []);
+  assert.equal(workspace.shoppingChecked['pantry-transfer:egg'], undefined);
+});
+
 test('plan generation excludes non-recipe and skipped meals and combines servings per recipe', () => {
   let workspace = emptyWorkspace('our-home');
   const entries = [

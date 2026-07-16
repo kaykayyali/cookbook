@@ -1,4 +1,4 @@
-const CACHE = 'cookbook-shell-4f9229ba35d995ed';
+const CACHE = 'cookbook-shell-d44e0032aab1eee3';
 const APP_SHELL = [
   "./",
   "./index.html",

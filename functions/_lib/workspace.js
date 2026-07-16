@@ -155,6 +155,7 @@ function applyOperation(workspace, operation, context) {
       const marker = sourceKey ? `${TRANSFER_PREFIX}${sourceKey}` : '';
       if (marker && workspace.shoppingChecked[marker] === true) break;
       const result = addToPantry(workspace.pantry, payload.item || payload.name);
+      if (!result.item) throw new Error('invalid_pantry_item');
       workspace.pantry = result.pantry;
       if (marker) workspace.shoppingChecked[marker] = true;
       break;
@@ -174,6 +175,7 @@ function applyOperation(workspace, operation, context) {
       const index = workspace.cart.findIndex((item) => item.recipeId === selection.recipeId);
       if (index >= 0) workspace.cart[index] = selection;
       else workspace.cart.push(selection);
+      pruneTransferMarkers(workspace);
       break;
     }
     case 'cart.setTargetServings':
@@ -220,6 +222,7 @@ function applyOperation(workspace, operation, context) {
       break;
     case 'shopping.regeneratePlanRange':
       regeneratePlanRange(workspace, payload, context.recipes);
+      pruneTransferMarkers(workspace);
       break;
     default:
       throw new Error('unsupported_workspace_operation');

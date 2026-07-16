@@ -114,6 +114,7 @@ export function initCart({
         selection: state.cart.find((item) => item.recipeId === entry.recipeId),
       });
     });
+    pruneLocalTransferMarkers();
     state.normalizationAudit = { signature };
     persist();
     render({ skipAudit: true });

@@ -127,17 +127,18 @@ test('opening Shopping automatically upgrades a stale active cart with a whole-l
     recipes: [{ _id: 'r1', name: 'Garlic', recipeYield: '2', recipeIngredient: ['3 cloves garlic'] }],
     cart: [{ recipeId: 'r1', recipeName: 'Garlic', sourceServings: 2, targetServings: 2, normalizationVersion: 1,
       ingredients: [{ raw: '3 cloves garlic', name: 'garlic', quantity: 3, unit: 'count', kind: 'indivisible' }] }],
-    pantry: [], shoppingChecked: {}, normalizations: {}, normalizationAudit: {},
+    pantry: [], shoppingChecked: { 'pantry-transfer:garlic': true }, normalizations: {}, normalizationAudit: {},
   };
   let calls = 0;
   const ctrl = initCart({ state, document, normalizeIngredients: async (recipes) => {
     calls += 1;
-    return [{ recipeId: 'r1', ingredients: [{ raw: recipes[0].ingredients[0], name: 'garlic', displayName: 'Garlic', countLabel: 'clove', category: 'produce', quantity: 3, unit: 'count', kind: 'indivisible', confidence: .98 }] }];
+    return [{ recipeId: 'r1', ingredients: [{ raw: recipes[0].ingredients[0], name: 'shallot', displayName: 'Shallot', countLabel: '', category: 'produce', quantity: 3, unit: 'count', kind: 'indivisible', confidence: .98 }] }];
   } });
   await ctrl._refreshNormalization();
   assert.equal(calls, 1);
   assert.equal(state.cart[0].normalizationVersion, 2);
-  assert.equal(state.cart[0].ingredients[0].countLabel, 'clove');
+  assert.equal(state.cart[0].ingredients[0].name, 'shallot');
+  assert.equal(state.shoppingChecked['pantry-transfer:garlic'], undefined);
 });
 
 test('clear during an in-flight normalization cannot resurrect the cart', async () => {

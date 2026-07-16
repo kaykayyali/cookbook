@@ -188,9 +188,10 @@ export function removeFromPantry(pantry, value) {
   const name = canonicalName(isObject ? value.name : value);
   if (!isObject) return current.filter((entry) => entry.name !== name);
   const unit = ['count', 'ounce', 'qualitative'].includes(value.unit) ? value.unit : '';
-  const hasCountLabel = unit === 'count'
-    && Object.prototype.hasOwnProperty.call(value, 'countLabel')
-    && COUNT_LABELS.includes(value.countLabel);
+  const countLabelSpecified = unit === 'count'
+    && Object.prototype.hasOwnProperty.call(value, 'countLabel');
+  if (countLabelSpecified && !COUNT_LABELS.includes(value.countLabel)) return current;
+  const hasCountLabel = countLabelSpecified;
   const countLabel = hasCountLabel ? value.countLabel : '';
   return current.filter((entry) => entry.name !== name
     || (unit && entry.unit !== unit)
@@ -202,9 +203,16 @@ export function togglePantry(pantry, value) {
   const current = normalizePantry(pantry);
   const item = normalizePantryEntry(value);
   if (!item) return { pantry: current, added: false, name: '' };
-  const present = current.some((entry) => entry.name === item.name
-    && (typeof value === 'string' || pantryKey(entry) === pantryKey(item)));
-  if (present) return { pantry: removeFromPantry(current, value), added: false, name: item.name, item };
+  const precise = item.unit !== 'qualitative';
+  const present = current.some((entry) => (precise
+    ? pantryKey(entry) === pantryKey(item)
+    : entry.name === item.name));
+  if (present) return {
+    pantry: removeFromPantry(current, precise ? item : item.name),
+    added: false,
+    name: item.name,
+    item,
+  };
   return addToPantry(current, item);
 }
 

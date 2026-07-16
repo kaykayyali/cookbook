@@ -150,6 +150,26 @@ test('count package labels are part of Pantry quantity compatibility and removal
   ]);
 });
 
+test('togglePantry distinguishes count labels for quantity-bearing strings', () => {
+  const cans = normalizePantry(['3 cans water']);
+  const added = togglePantry(cans, '2 bottles water');
+  assert.equal(added.added, true);
+  assert.deepEqual(added.pantry.map(({ quantity, countLabel }) => ({ quantity, countLabel })), [
+    { quantity: 3, countLabel: 'can' },
+    { quantity: 2, countLabel: 'bottle' },
+  ]);
+  const removed = togglePantry(added.pantry, '2 bottles water');
+  assert.equal(removed.added, false);
+  assert.deepEqual(removed.pantry.map(({ quantity, countLabel }) => ({ quantity, countLabel })), [
+    { quantity: 3, countLabel: 'can' },
+  ]);
+});
+
+test('an invalid explicit count label fails closed instead of broadening removal', () => {
+  const pantry = normalizePantry(['2 bottles water', '3 cans water']);
+  assert.deepEqual(removeFromPantry(pantry, { name: 'water', unit: 'count', countLabel: 'crate' }), pantry);
+});
+
 test('addToPantry refuses duplicate qualitative entries and blanks', () => {
   const eggs = [normalizePantryEntry('eggs')];
   assert.equal(addToPantry(eggs, 'eggs').added, false);

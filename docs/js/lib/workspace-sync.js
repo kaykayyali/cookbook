@@ -65,7 +65,9 @@ export function applyWorkspaceOperation(source, request) {
     case 'pantry.add': {
       const marker = payload.sourceKey ? `${TRANSFER_PREFIX}${payload.sourceKey}` : '';
       if (marker && workspace.shoppingChecked[marker] === true) break;
-      workspace.pantry = addToPantry(workspace.pantry, payload.item || payload.name).pantry;
+      const result = addToPantry(workspace.pantry, payload.item || payload.name);
+      if (!result.item) throw new Error('invalid_pantry_item');
+      workspace.pantry = result.pantry;
       if (marker) workspace.shoppingChecked[marker] = true;
       break;
     }
@@ -83,6 +85,7 @@ export function applyWorkspaceOperation(source, request) {
       const index = workspace.cart.findIndex((item) => item.recipeId === selection.recipeId);
       if (index >= 0) workspace.cart[index] = selection;
       else workspace.cart.push(selection);
+      pruneTransferMarkers(workspace);
       break;
     }
     case 'cart.setTargetServings':
@@ -122,6 +125,7 @@ export function applyWorkspaceOperation(source, request) {
       break;
     case 'shopping.regeneratePlanRange':
       if (Array.isArray(payload.optimisticCart)) workspace.cart = clone(payload.optimisticCart);
+      pruneTransferMarkers(workspace);
       break;
     default:
       break;

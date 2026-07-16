@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createWorkspaceSync, isWorkspace } from '../docs/js/lib/workspace-sync.js';
+import { applyWorkspaceOperation, createWorkspaceSync, isWorkspace } from '../docs/js/lib/workspace-sync.js';
 
 const workspace = (overrides = {}) => ({
   householdId: 'our-home', revision: 0, plan: [], cart: [], pantry: [],
@@ -13,6 +13,30 @@ test('workspace response validation rejects partial or malformed authority state
   assert.equal(isWorkspace({ revision: 0 }), false);
   assert.equal(isWorkspace(workspace({ plan: {} })), false);
   assert.equal(isWorkspace(workspace({ revision: -1 })), false);
+});
+
+test('optimistic replacement and regeneration prune transfer markers and reject invalid transfers', () => {
+  const egg = { name: 'egg', quantity: 2, unit: 'count', kind: 'indivisible' };
+  let current = workspace({
+    cart: [{ recipeId: 'r1', ingredients: [egg] }],
+    shoppingChecked: { 'pantry-transfer:egg': true },
+  });
+  current = applyWorkspaceOperation(current, {
+    op: 'cart.upsertSelection', payload: { selection: { recipeId: 'r1', ingredients: [] } },
+  });
+  assert.equal(current.shoppingChecked['pantry-transfer:egg'], undefined);
+
+  current = workspace({
+    cart: [{ recipeId: 'plan:r1', ingredients: [egg], origin: { kind: 'plan' } }],
+    shoppingChecked: { 'pantry-transfer:egg': true },
+  });
+  current = applyWorkspaceOperation(current, {
+    op: 'shopping.regeneratePlanRange', payload: { optimisticCart: [] },
+  });
+  assert.equal(current.shoppingChecked['pantry-transfer:egg'], undefined);
+  assert.throws(() => applyWorkspaceOperation(workspace(), {
+    op: 'pantry.add', payload: { sourceKey: 'egg', item: {} },
+  }), /invalid_pantry_item/);
 });
 
 test('mutation applies optimistically and confirms the authoritative response', async () => {
