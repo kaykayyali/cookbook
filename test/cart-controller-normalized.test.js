@@ -62,8 +62,20 @@ test('delegated check-off toggles persistent state and restores a completed item
   const click = () => listeners.click({ target: { closest: () => ({ dataset: { action: 'toggle-item', name: 'egg' } }) } });
   click();
   assert.equal(state.shoppingChecked.egg, true);
+  assert.deepEqual(state.pantry, ['egg'], 'checking a cart item adds it to the pantry');
   click();
   assert.equal(state.shoppingChecked.egg, undefined);
+  assert.deepEqual(state.pantry, ['egg'], 'unchecking keeps the pantry entry (non-subtractive)');
+});
+
+test('checking a manual cart item adds its name to the pantry', () => {
+  const { document } = dom();
+  const state = { cart: [], pantry: [], shoppingChecked: {}, manualItems: [] };
+  const ctrl = initCart({ state, document });
+  const manual = ctrl.addManual('Flowers');
+  ctrl.toggleManual(manual.id);
+  assert.equal(state.shoppingChecked['manual:' + manual.id], true);
+  assert.deepEqual(state.pantry, ['flowers'], 'checking a manual item adds it to the pantry');
 });
 
 test('delegated check-off plays a short exit animation before moving the row to Completed', () => {

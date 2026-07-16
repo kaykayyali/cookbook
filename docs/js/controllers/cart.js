@@ -15,6 +15,7 @@ import { save as persist } from '../lib/store.js';
 import { toast } from '../lib/dom.js';
 import { cartGroupsHTML, emptyCartHTML } from '../components/cart.js';
 import { regeneratePlanRangeCart } from '../lib/plan-range.js';
+import { addToPantry } from '../lib/pantry.js';
 
 const uid = () => globalThis.crypto?.randomUUID?.() || `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -153,6 +154,13 @@ export function initCart({
     if (completed) state.shoppingChecked[name] = true;
     else delete state.shoppingChecked[name];
     if (mutate) void mutate('shopping.setChecked', { key: name, checked: completed });
+    if (completed) {
+      const result = addToPantry(state.pantry, name);
+      if (result.added) {
+        state.pantry = result.pantry;
+        if (mutate) void mutate('pantry.add', { name: result.name });
+      }
+    }
     changed();
     return true;
   }
@@ -205,6 +213,14 @@ export function initCart({
     if (checked) state.shoppingChecked[key] = true;
     else delete state.shoppingChecked[key];
     if (mutate) void mutate('shopping.setChecked', { key, checked });
+    if (checked) {
+      const item = state.manualItems.find((entry) => entry.id === id);
+      const result = addToPantry(state.pantry, item.name);
+      if (result.added) {
+        state.pantry = result.pantry;
+        if (mutate) void mutate('pantry.add', { name: result.name });
+      }
+    }
     changed();
     return true;
   }

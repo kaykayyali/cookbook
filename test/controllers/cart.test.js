@@ -54,6 +54,7 @@ test('shopping controls emit absolute shared-workspace operations', () => {
   assert.deepEqual(calls, [
     { op: 'cart.setTargetServings', payload: { recipeId: 'r1', targetServings: 5 } },
     { op: 'shopping.setChecked', payload: { key: 'egg', checked: true } },
+    { op: 'pantry.add', payload: { name: 'egg' } },
     { op: 'shopping.removeIngredient', payload: { name: 'egg' } },
     { op: 'shopping.clear', payload: {} },
   ]);
@@ -69,9 +70,9 @@ test('manual additions and plan generation are household workspace mutations', (
   controller.removeManual(manual.id);
   controller.generatePlanRange('2026-07-14', '2026-07-20');
   assert.deepEqual(calls.map((item) => item.op), [
-    'shopping.addManual', 'shopping.setChecked', 'shopping.removeManual', 'shopping.regeneratePlanRange',
+    'shopping.addManual', 'shopping.setChecked', 'pantry.add', 'shopping.removeManual', 'shopping.regeneratePlanRange',
   ]);
-  assert.equal(calls[3].payload.rangeStart, '2026-07-14');
-  assert.equal(calls[3].payload.rangeEnd, '2026-07-20');
-  assert.ok(Array.isArray(calls[3].payload.optimisticCart));
+  assert.equal(calls[4].payload.rangeStart, '2026-07-14');
+  assert.equal(calls[4].payload.rangeEnd, '2026-07-20');
+  assert.ok(Array.isArray(calls[4].payload.optimisticCart));
 });
