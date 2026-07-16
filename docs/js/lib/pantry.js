@@ -1,8 +1,16 @@
 // ════════════════════════════════════════════════════════
 // pantry.js — pantry matching & eligibility (no DOM)
 //
-// Pantry is always string[] of lowercase ingredient names.
+// Pantry entries use the same canonical quantity/unit contract as Shopping.
 // ════════════════════════════════════════════════════════
+
+import {
+  canonicalName,
+  normalizeIngredient,
+  formatCanonicalAmount,
+  COUNT_LABELS,
+  INGREDIENT_CATEGORIES,
+} from './cart.js';
 
 const LEADING_QTY = /^[\d¼½¾⅓⅔⅛⅜⅝⅞\s.,/-]+/;
 const LEADING_UNIT =
@@ -18,7 +26,10 @@ const LEADING_UNIT =
 export function haveIngredient(ing, pantry) {
   if (typeof ing !== 'string') return false;
   const low = ing.toLowerCase();
-  return pantry.some((p) => low.includes(p));
+  return (Array.isArray(pantry) ? pantry : []).some((entry) => {
+    const name = typeof entry === 'string' ? entry : entry?.name;
+    return typeof name === 'string' && low.includes(name.toLowerCase());
+  });
 }
 
 /**
@@ -98,54 +109,118 @@ export function allRecipeIngredients(recipes) {
   return [...seen].sort();
 }
 
-/**
- * Pure add: returns a new pantry array with `name` added (if not present).
- * @param {string[]} pantry
- * @param {string} name
- * @returns {{pantry:string[], added:boolean, name:string}}
- */
-export function addToPantry(pantry, name) {
-  const key = name.trim().toLowerCase();
-  if (!key) return { pantry, added: false, name: key };
-  if (pantry.includes(key)) return { pantry, added: false, name: key };
-  return { pantry: [...pantry, key], added: true, name: key };
+function plainDisplayName(value, fallback) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text && text.length <= 80 && !/[<>\x00-\x1f\x7f]/.test(text) ? text : fallback;
 }
 
-/**
- * Pure remove: returns a new pantry array without `name`.
- * @param {string[]} pantry
- * @param {string} name
- * @returns {string[]}
- */
-export function removeFromPantry(pantry, name) {
-  const key = name.toLowerCase();
-  return pantry.filter((p) => p !== key);
-}
-
-/**
- * Pure toggle: add if absent, remove if present.
- * @param {string[]} pantry
- * @param {string} name
- * @returns {{pantry:string[], added:boolean, name:string}}
- */
-export function togglePantry(pantry, name) {
-  const key = name.toLowerCase();
-  if (pantry.includes(key)) {
-    return { pantry: removeFromPantry(pantry, key), added: false, name: key };
+function legacyIngredient(entry) {
+  if (typeof entry === 'string') return normalizeIngredient(entry.trim());
+  const name = typeof entry?.name === 'string' ? entry.name.trim() : '';
+  if (!name) return null;
+  if (typeof entry.quantity === 'string') return normalizeIngredient(`${entry.quantity} ${name}`);
+  if (!['count', 'ounce', 'qualitative'].includes(entry.unit)) {
+    const unit = typeof entry.unit === 'string' ? entry.unit.trim() : '';
+    if (unit && Number.isFinite(Number(entry.quantity))) {
+      return normalizeIngredient(`${entry.quantity} ${unit} ${name}`);
+    }
+    return normalizeIngredient(name);
   }
-  return { pantry: [...pantry, key], added: true, name: key };
+  return entry;
 }
 
-/**
- * Normalise possibly-legacy persisted pantry data into string[].
- * Older versions stored {name, quantity} objects.
- * @param {Array} raw
- * @returns {string[]}
- */
+/** Normalize a Pantry value into Shopping's canonical quantity/unit shape. */
+export function normalizePantryEntry(value) {
+  if (typeof value === 'string' && !value.trim()) return null;
+  const source = legacyIngredient(value);
+  if (!source || !String(source.name || '').trim()) return null;
+  const fallback = normalizeIngredient(String(source.name));
+  const unit = ['count', 'ounce', 'qualitative'].includes(source.unit) ? source.unit : fallback.unit;
+  const quantity = unit === 'qualitative' ? null : Number(source.quantity);
+  if (unit !== 'qualitative' && (!Number.isFinite(quantity) || quantity < 0)) return null;
+  const name = canonicalName(source.name);
+  if (!name || name === 'uncertain ingredient') return null;
+  return {
+    name,
+    displayName: plainDisplayName(source.displayName, fallback.displayName),
+    quantity,
+    unit,
+    kind: unit === 'count' ? 'indivisible' : unit === 'ounce' ? 'divisible' : 'qualitative',
+    countLabel: COUNT_LABELS.includes(source.countLabel) ? source.countLabel : fallback.countLabel,
+    category: INGREDIENT_CATEGORIES.includes(source.category) ? source.category : fallback.category,
+  };
+}
+
+const pantryKey = (item) => `${item.name}\u0000${item.unit}`;
+
+/** Pure add/accumulate for one normalized Pantry entry. */
+export function addToPantry(pantry, value) {
+  const item = normalizePantryEntry(value);
+  const current = normalizePantry(pantry);
+  if (!item) return { pantry: current, added: false, name: '', item: null };
+  const sameName = current.findIndex((entry) => entry.name === item.name);
+  const exact = current.findIndex((entry) => pantryKey(entry) === pantryKey(item));
+
+  if (item.unit === 'qualitative' && sameName >= 0) {
+    return { pantry: current, added: false, name: item.name, item: current[sameName] };
+  }
+  if (item.unit !== 'qualitative' && sameName >= 0 && current[sameName].unit === 'qualitative') {
+    const next = current.map((entry, index) => index === sameName ? item : entry);
+    return { pantry: next, added: true, name: item.name, item };
+  }
+  if (exact >= 0) {
+    if (item.unit === 'qualitative') return { pantry: current, added: false, name: item.name, item: current[exact] };
+    const merged = { ...current[exact], ...item, quantity: current[exact].quantity + item.quantity };
+    const next = current.map((entry, index) => index === exact ? merged : entry);
+    return { pantry: next, added: true, name: item.name, item: merged };
+  }
+  return { pantry: [...current, item], added: true, name: item.name, item };
+}
+
+/** Remove all entries for a name, or one compatible name/unit entry for an object. */
+export function removeFromPantry(pantry, value) {
+  const current = normalizePantry(pantry);
+  const isObject = value && typeof value === 'object';
+  const item = normalizePantryEntry(value);
+  const name = item?.name || canonicalName(value);
+  return current.filter((entry) => entry.name !== name || (isObject && item && entry.unit !== item.unit));
+}
+
+/** Pure toggle: add if absent, remove if present. */
+export function togglePantry(pantry, value) {
+  const current = normalizePantry(pantry);
+  const item = normalizePantryEntry(value);
+  if (!item) return { pantry: current, added: false, name: '' };
+  const present = current.some((entry) => entry.name === item.name
+    && (typeof value === 'string' || entry.unit === item.unit));
+  if (present) return { pantry: removeFromPantry(current, value), added: false, name: item.name, item };
+  return addToPantry(current, item);
+}
+
+/** Migrate legacy strings/objects and merge compatible entries. */
 export function normalizePantry(raw) {
   if (!Array.isArray(raw)) return [];
-  return raw
-    .map((p) => (p && typeof p === 'object' ? p.name || '' : String(p)))
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
+  const output = [];
+  for (const value of raw) {
+    const item = normalizePantryEntry(value);
+    if (!item) continue;
+    const exact = output.findIndex((entry) => pantryKey(entry) === pantryKey(item));
+    const qualitative = output.findIndex((entry) => entry.name === item.name && entry.unit === 'qualitative');
+    if (exact >= 0 && item.unit !== 'qualitative') {
+      output[exact] = { ...output[exact], ...item, quantity: output[exact].quantity + item.quantity };
+    } else if (exact < 0 && item.unit !== 'qualitative' && qualitative >= 0) {
+      output[qualitative] = item;
+    } else if (exact < 0 && !(item.unit === 'qualitative' && output.some((entry) => entry.name === item.name))) {
+      output.push(item);
+    }
+  }
+  return output.sort((a, b) => a.name.localeCompare(b.name) || a.unit.localeCompare(b.unit));
+}
+
+export function formatPantryAmount(item) {
+  return formatCanonicalAmount(item?.quantity, item?.unit, {
+    requiredQuantity: item?.quantity,
+    countLabel: item?.countLabel,
+    category: item?.category,
+  });
 }

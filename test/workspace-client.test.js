@@ -25,7 +25,7 @@ test('mutation applies optimistically and confirms the authoritative response', 
     onChange: (value, meta) => changes.push({ value, meta }),
   });
   const pending = sync.mutate('pantry.add', { name: 'flour' });
-  assert.deepEqual(sync.current().pantry, ['flour']);
+  assert.deepEqual(sync.current().pantry.map((item) => item.name), ['flour']);
   assert.equal(changes.at(-1).meta.optimistic, true);
   await Promise.resolve();
   resolveRequest({ ok: true, workspace: workspace({ revision: 1, pantry: ['flour'] }) });
@@ -51,7 +51,7 @@ test('revision conflict rebases the absolute operation and retries once', async 
   assert.equal(sent[0].baseRevision, 0);
   assert.equal(sent[1].baseRevision, 4);
   assert.equal(sent[1].mutationId, 'm1');
-  assert.deepEqual(sync.current().pantry, ['salt']);
+  assert.deepEqual(sync.current().pantry.map((item) => item.name), ['salt']);
 });
 
 test('older response cannot overwrite a newer confirmed revision', async () => {
@@ -64,7 +64,7 @@ test('older response cannot overwrite a newer confirmed revision', async () => {
   });
   assert.equal(await sync.mutate('pantry.add', { name: 'flour' }), false);
   assert.equal(sync.current().revision, 3);
-  assert.deepEqual(sync.current().pantry, ['salt']);
+  assert.deepEqual(sync.current().pantry.map((item) => item.name), ['salt']);
   assert.equal(errors[0].code, 'stale_workspace_response');
 });
 
@@ -98,8 +98,8 @@ test('terminal failure rolls back and exposes a retry action', async () => {
     onError: (error) => errors.push(error),
   });
   assert.equal(await sync.mutate('pantry.add', { name: 'flour' }), false);
-  assert.deepEqual(sync.current().pantry, ['salt']);
+  assert.deepEqual(sync.current().pantry.map((item) => item.name), ['salt']);
   assert.equal(typeof errors[0].retry, 'function');
   assert.equal(await errors[0].retry(), true);
-  assert.deepEqual(sync.current().pantry, ['flour', 'salt']);
+  assert.deepEqual(sync.current().pantry.map((item) => item.name), ['flour', 'salt']);
 });

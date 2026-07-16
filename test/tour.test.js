@@ -25,7 +25,7 @@ function fixture() {
   return { dom, selectors };
 }
 
-function setup({ completed = false, currentPanel = 'week' } = {}) {
+function setup({ completed = false, currentPanel = 'week', onClose = () => {} } = {}) {
   const { dom, selectors } = fixture();
   const storage = dom.window.localStorage;
   const tour = createCookbookTour({ selectors });
@@ -39,6 +39,7 @@ function setup({ completed = false, currentPanel = 'week' } = {}) {
     navigate: (panel) => { activePanel = panel; navigated.push(panel); },
     getCurrentPanel: () => activePanel,
     isPresentationReady: () => true,
+    onClose,
   });
   return { dom, storage, controller, navigated, key, tour };
 }
@@ -115,6 +116,15 @@ test('closing after cross-panel navigation returns to the launch panel before re
   assert.equal(navigated.at(-1), 'settings');
   assert.equal(dom.window.document.activeElement, launch);
   assert.equal(launch.inert, false);
+});
+
+test('closing the first-run tour triggers deferred non-modal recommendations', () => {
+  let closed = 0;
+  const { controller } = setup({ onClose: () => { closed += 1; } });
+  controller.start('cookbook');
+  assert.equal(closed, 0);
+  controller.close();
+  assert.equal(closed, 1);
 });
 
 test('mobile target scrolling reserves the area occupied by the bottom sheet', () => {

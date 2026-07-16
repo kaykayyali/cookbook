@@ -17,13 +17,16 @@ import { initCookingMode } from '../controllers/cooking-mode.js';
 import { initTour } from '../controllers/tour.js';
 import { patchImportDraft } from './api.js';
 import { createCookbookTour } from './cookbook-tour.js';
+import { createThemeRecommendation } from './theme-recommendation.js';
 import { showRecipeSchema, wireSchemaModal, exportRecipesToFile } from './schema-modal.js';
 
 export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, onSignedIn, onSignedOut }) {
   const panels = initPanels({ state });
+  const summerTheme = createThemeRecommendation({ subject: state.auth?.sub });
   const tour = initTour({
     tours: [createCookbookTour()], subject: state.auth?.sub,
     navigate: panels.showPanel, getCurrentPanel: panels._current,
+    onClose: () => summerTheme.maybeShow(),
   });
   let detail;
   const reminders = initReminders();
@@ -87,7 +90,8 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, onSi
   });
   panels.restore();
   detail.restore();
-  tour.maybeStart('cookbook');
+  const tourStarted = tour.maybeStart('cookbook');
+  if (!tourStarted) summerTheme.maybeShow();
   return {
     renderShared: () => { week.render(); pantry.render(); cart.render(); engagement.render(); },
     renderActive: panels.renderActive,

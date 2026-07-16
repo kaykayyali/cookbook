@@ -7,6 +7,7 @@
 
 import { STORAGE_KEYS } from './constants.js';
 import { ensureHouseholdMembership, fetchRecipes, fetchWorkspace } from './api.js';
+import { normalizePantry, normalizePantryEntry } from './pantry.js';
 
 export const state = {
   household: null,
@@ -89,9 +90,12 @@ export function applyWorkspace(workspace, target = state) {
   target.workspaceRevision = workspace.revision;
   target.plan = workspace.plan;
   target.cart = workspace.cart;
-  target.pantry = workspace.pantry;
+  target.pantry = normalizePantry(workspace.pantry);
   target.shoppingChecked = workspace.shoppingChecked;
-  target.manualItems = workspace.manualItems;
+  target.manualItems = (Array.isArray(workspace.manualItems) ? workspace.manualItems : []).flatMap((item) => {
+    const normalized = normalizePantryEntry(item);
+    return item?.id && normalized ? [{ id: String(item.id), ...normalized, checked: item.checked === true }] : [];
+  });
   target.workspaceLoaded = true;
   return true;
 }

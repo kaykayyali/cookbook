@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 
-const NEW_THEMES = ['sepia', 'forest', 'ocean'];
+const NEW_THEMES = ['sepia', 'forest', 'ocean', 'summer'];
 
 const REQUIRED_TOKENS = [
   '--color-bg', '--color-bg-elevated', '--color-bg-sunken',
@@ -52,9 +52,9 @@ for (const name of NEW_THEMES) {
   });
 }
 
-test('all 5 theme blocks (light/dark/sepia/forest/ocean) define the same token set', () => {
+test('all 6 theme blocks define the same token set', () => {
   const src = readTokens();
-  const ALL_THEMES = ['light', 'dark', 'sepia', 'forest', 'ocean'];
+  const ALL_THEMES = ['light', 'dark', 'sepia', 'forest', 'ocean', 'summer'];
   // Capture the token count from the first theme as the canonical count.
   const counts = {};
   for (const name of ALL_THEMES) {
@@ -66,5 +66,22 @@ test('all 5 theme blocks (light/dark/sepia/forest/ocean) define the same token s
   }
   const unique = [...new Set(Object.values(counts))];
   assert.equal(unique.length, 1,
-    `all 5 themes should define the same number of tokens; got ${JSON.stringify(counts)}`);
+    `all 6 themes should define the same number of tokens; got ${JSON.stringify(counts)}`);
+});
+
+test('Summer subtle text meets WCAG AA contrast on both Summer backgrounds', () => {
+  const src = readFileSync(join(ROOT, 'docs/css/tokens.css'), 'utf8');
+  const body = src.match(/:root\[data-theme="summer"\]\s*\{([^}]*)\}/)?.[1] || '';
+  const token = (name) => body.match(new RegExp(`${name}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1];
+  const luminance = (hex) => {
+    const channels = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255)
+      .map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+    return (0.2126 * channels[0]) + (0.7152 * channels[1]) + (0.0722 * channels[2]);
+  };
+  const contrast = (foreground, background) => {
+    const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+    return (values[0] + 0.05) / (values[1] + 0.05);
+  };
+  assert.ok(contrast(token('--color-fg-subtle'), token('--color-bg')) >= 4.5);
+  assert.ok(contrast(token('--color-fg-subtle'), token('--color-bg-elevated')) >= 4.5);
 });

@@ -2,7 +2,9 @@
 import {
   NORMALIZATION_VERSION,
   addRecipeSelection,
+  aggregateCart,
   isNormalizedIngredient,
+  normalizeIngredient,
   normalizeIngredientsLocal,
   recipeSetSignature,
   setTargetServings,
@@ -155,10 +157,20 @@ export function initCart({
     else delete state.shoppingChecked[name];
     if (mutate) void mutate('shopping.setChecked', { key: name, checked: completed });
     if (completed) {
-      const result = addToPantry(state.pantry, name);
+      const purchased = aggregateCart(state.cart).find((item) => item.name === name);
+      const transfer = purchased ? {
+        name: purchased.name,
+        displayName: purchased.displayName,
+        quantity: purchased.purchaseQuantity,
+        unit: purchased.unit,
+        kind: purchased.kind,
+        countLabel: purchased.countLabel,
+        category: purchased.category,
+      } : normalizeIngredient(name);
+      const result = addToPantry(state.pantry, transfer);
       if (result.added) {
         state.pantry = result.pantry;
-        if (mutate) void mutate('pantry.add', { name: result.name });
+        if (mutate) void mutate('pantry.add', { item: transfer });
       }
     }
     changed();
@@ -186,9 +198,19 @@ export function initCart({
   }
 
   function addManual(raw) {
-    const name = String(raw || '').trim();
-    if (!name) return null;
-    const item = { id: uid(), name };
+    const text = String(raw || '').trim();
+    if (!text) return null;
+    const normalized = normalizeIngredient(text);
+    const item = {
+      id: uid(),
+      name: normalized.name,
+      displayName: normalized.displayName,
+      quantity: normalized.quantity,
+      unit: normalized.unit,
+      kind: normalized.kind,
+      countLabel: normalized.countLabel,
+      category: normalized.category,
+    };
     state.manualItems ||= [];
     state.manualItems.push(item);
     if (mutate) void mutate('shopping.addManual', item);
@@ -215,10 +237,10 @@ export function initCart({
     if (mutate) void mutate('shopping.setChecked', { key, checked });
     if (checked) {
       const item = state.manualItems.find((entry) => entry.id === id);
-      const result = addToPantry(state.pantry, item.name);
+      const result = addToPantry(state.pantry, item);
       if (result.added) {
         state.pantry = result.pantry;
-        if (mutate) void mutate('pantry.add', { name: result.name });
+        if (mutate) void mutate('pantry.add', { item });
       }
     }
     changed();

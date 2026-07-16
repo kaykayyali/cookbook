@@ -80,7 +80,25 @@ test('duplicate mutation IDs are successful no-ops without another revision', ()
   const duplicate = applyWorkspaceMutation(first.workspace, mutation('same-id', 'pantry.add', { name: 'flour' }));
   assert.equal(duplicate.duplicate, true);
   assert.equal(duplicate.workspace.revision, 1);
-  assert.deepEqual(duplicate.workspace.pantry, ['flour']);
+  assert.deepEqual(duplicate.workspace.pantry.map(({ name, quantity, unit }) => ({ name, quantity, unit })), [
+    { name: 'flour', quantity: null, unit: 'qualitative' },
+  ]);
+});
+
+test('authoritative pantry mutations accumulate compatible purchased quantities', () => {
+  let workspace = { ...emptyWorkspace('our-home'), pantry: ['eggs'] };
+  workspace = applyWorkspaceMutation(workspace, mutation('buy-1', 'pantry.add', { item: {
+    name: 'egg', displayName: 'Eggs', quantity: 9, unit: 'count', kind: 'indivisible',
+    countLabel: '', category: 'dairy-eggs',
+  } })).workspace;
+  workspace = applyWorkspaceMutation(workspace, mutation('buy-2', 'pantry.add', { item: {
+    name: 'eggs', displayName: 'Eggs', quantity: 3, unit: 'count', kind: 'indivisible',
+    countLabel: '', category: 'dairy-eggs',
+  } })).workspace;
+  assert.deepEqual(workspace.pantry, [{
+    name: 'egg', displayName: 'Eggs', quantity: 12, unit: 'count', kind: 'indivisible',
+    countLabel: '', category: 'dairy-eggs',
+  }]);
 });
 
 test('plan generation excludes non-recipe and skipped meals and combines servings per recipe', () => {
@@ -102,7 +120,7 @@ test('plan generation excludes non-recipe and skipped meals and combines serving
   assert.equal(workspace.cart.length, 1);
   assert.equal(workspace.cart[0].targetServings, 6);
   assert.equal(workspace.cart[0].origin.kind, 'plan');
-  assert.deepEqual(workspace.manualItems, [{ id: 'manual-1', name: 'flowers', checked: false }]);
+  assert.deepEqual(workspace.manualItems.map(({ id, name, checked }) => ({ id, name, checked })), [{ id: 'manual-1', name: 'flower', checked: false }]);
   assert.deepEqual(workspace.shoppingChecked, { 'ingredient:egg': true });
   assert.equal(aggregateCart(workspace.cart)[0].quantity, 6);
 });

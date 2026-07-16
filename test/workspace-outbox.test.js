@@ -42,9 +42,9 @@ test('mutation persists before optimistic publication and survives a reload', as
   });
   assert.equal(await first.mutate('pantry.add', { name: 'flour' }), true);
   assert.deepEqual(order.slice(-2), ['persist:offline-1', 'publish']);
-  assert.deepEqual(first.current().pantry, ['flour']);
+  assert.deepEqual(first.current().pantry.map((item) => item.name), ['flour']);
   const reloaded = await createWorkspaceOutbox({ repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => false });
-  assert.deepEqual(reloaded.current().pantry, ['flour']);
+  assert.deepEqual(reloaded.current().pantry.map((item) => item.name), ['flour']);
 });
 
 test('pending mutations replay in sequence and acknowledge one-by-one', async () => {
@@ -66,7 +66,7 @@ test('pending mutations replay in sequence and acknowledge one-by-one', async ()
   assert.equal(await manager.drain(), true);
   assert.deepEqual(sent.map((row) => row.mutationId), ['m1', 'm2']);
   assert.deepEqual(sent.map((row) => row.baseRevision), [0, 1]);
-  assert.deepEqual(manager.current().pantry, ['flour', 'salt']);
+  assert.deepEqual(manager.current().pantry.map((item) => item.name), ['flour', 'salt']);
   assert.deepEqual(await repo.listOutbox(), []);
 });
 
@@ -86,7 +86,7 @@ test('network failure retains stable mutation intent and retry sends the same ID
   assert.equal(await manager.mutate('pantry.add', { name: 'flour' }), false);
   assert.equal((await repo.listOutbox())[0].mutationId, 'stable-id');
   assert.equal(await manager.retry((await repo.listOutbox())[0].sequence), true);
-  assert.deepEqual(manager.current().pantry, ['flour']);
+  assert.deepEqual(manager.current().pantry.map((item) => item.name), ['flour']);
 });
 
 test('remote destructive conflict blocks constructive replay until retry or discard', async () => {
@@ -136,7 +136,7 @@ test('real IndexedDB repository exposes a newly persisted workspace mutation to 
   assert.deepEqual(sent.map(({ mutationId, op, baseRevision }) => ({ mutationId, op, baseRevision })), [
     { mutationId: 'persisted-v2', op: 'pantry.add', baseRevision: 0 },
   ]);
-  assert.deepEqual(manager.current().pantry, ['flour']);
+  assert.deepEqual(manager.current().pantry.map((item) => item.name), ['flour']);
   assert.deepEqual(await repo.listOutbox('cook-1', 'our-home'), []);
   repo.close();
 });
@@ -159,7 +159,7 @@ test('real IndexedDB repository replays a workspace mutation stranded with schem
 
   assert.equal(await manager.drain(), true);
   assert.deepEqual(sent.map(({ mutationId }) => mutationId), ['stranded-v1']);
-  assert.deepEqual(manager.current().pantry, ['salt']);
+  assert.deepEqual(manager.current().pantry.map((item) => item.name), ['salt']);
   assert.deepEqual(await repo.listOutbox('cook-1', 'our-home'), []);
   repo.close();
 });

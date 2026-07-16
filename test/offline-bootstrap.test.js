@@ -18,7 +18,7 @@ test('valid subject-partitioned cache hydrates household recipes and workspace b
   assert.equal(result.cached, true);
   assert.equal(state.household.household.id, 'our-home');
   assert.equal(state.recipes[0].name, 'Saved soup');
-  assert.deepEqual(state.pantry, ['salt']);
+  assert.deepEqual(state.pantry.map((item) => item.name), ['salt']);
   assert.equal(state.workspaceRevision, 4);
   assert.equal(state.offlineCache, true);
 });

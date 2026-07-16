@@ -5,6 +5,7 @@ import {
   removeShoppingItem,
   setTargetServings,
 } from '../../docs/js/lib/cart.js';
+import { addToPantry, normalizePantry, normalizePantryEntry, removeFromPantry } from '../../docs/js/lib/pantry.js';
 
 const PLAN_TYPES = new Set(['recipe', 'leftovers', 'dining-out', 'open']);
 const PLAN_STATUSES = new Set(['active', 'skipped', 'cooked']);
@@ -13,6 +14,14 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const text = (value, max = 200) => typeof value === 'string' ? value.trim().slice(0, max) : '';
+
+function normalizeManualItems(raw) {
+  return (Array.isArray(raw) ? raw : []).flatMap((item) => {
+    const normalized = normalizePantryEntry(item);
+    const id = text(item?.id, 100);
+    return id && normalized ? [{ id, ...normalized, checked: item.checked === true }] : [];
+  });
+}
 
 export function emptyWorkspace(householdId) {
   return {
@@ -128,14 +137,13 @@ function applyOperation(workspace, operation, context) {
       workspace.plan = workspace.plan.filter((entry) => entry.id !== text(payload.id, 100));
       break;
     case 'pantry.add': {
-      const name = canonicalName(payload.name);
-      if (name && !workspace.pantry.includes(name)) workspace.pantry.push(name);
-      workspace.pantry.sort();
+      const result = addToPantry(workspace.pantry, payload.item || payload.name);
+      workspace.pantry = result.pantry;
       break;
     }
     case 'pantry.remove': {
       const name = canonicalName(payload.name);
-      workspace.pantry = workspace.pantry.filter((item) => canonicalName(item) !== name);
+      workspace.pantry = removeFromPantry(workspace.pantry, payload.unit ? { name, unit: payload.unit } : name);
       break;
     }
     case 'cart.upsertSelection': {
@@ -165,8 +173,10 @@ function applyOperation(workspace, operation, context) {
       break;
     }
     case 'shopping.addManual': {
-      const item = { id: text(payload.id, 100), name: text(payload.name, 200), checked: payload.checked === true };
-      if (!item.id || !item.name) throw new Error('invalid_manual_item');
+      const id = text(payload.id, 100);
+      const normalized = normalizePantryEntry({ ...payload, name: text(payload.name, 200) });
+      if (!id || !normalized) throw new Error('invalid_manual_item');
+      const item = { id, ...normalized, checked: payload.checked === true };
       const index = workspace.manualItems.findIndex((current) => current.id === item.id);
       if (index >= 0) workspace.manualItems[index] = item;
       else workspace.manualItems.push(item);
@@ -194,10 +204,15 @@ function applyOperation(workspace, operation, context) {
 export function applyWorkspaceMutation(current, operation, context = {}) {
   const mutationId = text(operation?.mutationId, 200);
   if (!mutationId || !text(operation?.op, 100)) throw new Error('invalid_workspace_mutation');
-  if (current.recentMutations.includes(mutationId)) {
-    return { workspace: current, duplicate: true };
+  const normalized = {
+    ...clone(current),
+    pantry: normalizePantry(current.pantry),
+    manualItems: normalizeManualItems(current.manualItems),
+  };
+  if (normalized.recentMutations.includes(mutationId)) {
+    return { workspace: normalized, duplicate: true };
   }
-  const workspace = clone(current);
+  const workspace = normalized;
   applyOperation(workspace, operation, context);
   workspace.revision += 1;
   workspace.updatedAt = Number(context.now) || Date.now();
@@ -268,9 +283,9 @@ export function workspaceFromRow(row, householdId) {
     revision: Number(row.revision) || 0,
     plan: Array.isArray(plan) ? plan : [],
     cart: Array.isArray(cart) ? cart : [],
-    pantry: Array.isArray(pantry) ? pantry : [],
+    pantry: normalizePantry(pantry),
     shoppingChecked: jsonField(row.shopping_checked_json, {}),
-    manualItems: Array.isArray(manualItems) ? manualItems : [],
+    manualItems: normalizeManualItems(manualItems),
     recentMutations: Array.isArray(recentMutations) ? recentMutations : [],
     updatedAt: Number(row.updated_at) || 0,
   };

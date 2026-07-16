@@ -98,9 +98,11 @@ test('store loads authoritative household workspace into existing cart and pantr
   assert.equal(state.workspaceRevision, 7);
   assert.deepEqual(state.plan, workspace.plan);
   assert.deepEqual(state.cart, workspace.cart);
-  assert.deepEqual(state.pantry, ['flour']);
+  assert.deepEqual(state.pantry.map((item) => item.name), ['flour']);
   assert.deepEqual(state.shoppingChecked, workspace.shoppingChecked);
-  assert.deepEqual(state.manualItems, workspace.manualItems);
+  assert.deepEqual(state.manualItems.map(({ id, name, quantity, unit }) => ({ id, name, quantity, unit })), [
+    { id: 'm1', name: 'flower', quantity: null, unit: 'qualitative' },
+  ]);
   assert.equal(state.workspaceLoaded, true);
 });
 

@@ -16,6 +16,7 @@ const THEME_PALETTES = {
   sepia:  { bg: '#f4ead5', accent: '#9c5a1c', border: '#b8a478' },
   forest: { bg: '#1d2a23', accent: '#7fb069', border: '#4a5e4f' },
   ocean:  { bg: '#0e2333', accent: '#5dbcd2', border: '#2c5070' },
+  summer: { bg: '#fff8df', accent: '#c8483b', border: '#9ccdb5' },
 };
 const THEME_NAMES = Object.keys(THEME_PALETTES);
 const DEFAULT_THEME = 'light';

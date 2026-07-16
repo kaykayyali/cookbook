@@ -4,6 +4,7 @@ import {
   removeShoppingItem,
   setTargetServings,
 } from './cart.js';
+import { addToPantry, normalizePantry, normalizePantryEntry, removeFromPantry } from './pantry.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const id = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
@@ -11,6 +12,18 @@ const SAFE_REBASE = new Set([
   'plan.remove', 'pantry.remove', 'cart.setTargetServings', 'cart.removeSelection',
   'shopping.removeIngredient', 'shopping.removeManual', 'shopping.clear',
 ]);
+
+export function normalizeWorkspace(value) {
+  const workspace = clone(value);
+  workspace.pantry = normalizePantry(workspace.pantry);
+  workspace.manualItems = workspace.manualItems.flatMap((item) => {
+    const normalized = normalizePantryEntry(item);
+    return item?.id && normalized
+      ? [{ id: String(item.id), ...normalized, checked: item.checked === true }]
+      : [];
+  });
+  return workspace;
+}
 
 export function isWorkspace(value) {
   return typeof value?.householdId === 'string'
@@ -21,7 +34,7 @@ export function isWorkspace(value) {
 }
 
 export function applyWorkspaceOperation(source, request) {
-  const workspace = clone(source);
+  const workspace = normalizeWorkspace(source);
   const payload = request.payload || {};
   switch (request.op) {
     case 'plan.upsert': {
@@ -36,14 +49,12 @@ export function applyWorkspaceOperation(source, request) {
       workspace.plan = workspace.plan.filter((entry) => entry.id !== payload.id);
       break;
     case 'pantry.add': {
-      const name = canonicalName(payload.name);
-      if (name && !workspace.pantry.includes(name)) workspace.pantry.push(name);
-      workspace.pantry.sort();
+      workspace.pantry = addToPantry(workspace.pantry, payload.item || payload.name).pantry;
       break;
     }
     case 'pantry.remove': {
       const name = canonicalName(payload.name);
-      workspace.pantry = workspace.pantry.filter((item) => canonicalName(item) !== name);
+      workspace.pantry = removeFromPantry(workspace.pantry, payload.unit ? { name, unit: payload.unit } : name);
       break;
     }
     case 'cart.upsertSelection': {
@@ -67,7 +78,9 @@ export function applyWorkspaceOperation(source, request) {
       else delete workspace.shoppingChecked[payload.key];
       break;
     case 'shopping.addManual': {
-      const item = { id: payload.id, name: payload.name, checked: payload.checked === true };
+      const normalized = normalizePantryEntry(payload);
+      if (!payload.id || !normalized) break;
+      const item = { id: payload.id, ...normalized, checked: payload.checked === true };
       const index = workspace.manualItems.findIndex((current) => current.id === item.id);
       if (index >= 0) workspace.manualItems[index] = item;
       else workspace.manualItems.push(item);
@@ -92,8 +105,8 @@ export function applyWorkspaceOperation(source, request) {
 
 export function createWorkspaceSync({ initial, send, onChange = () => {}, onError = () => {}, makeId = id }) {
   if (!isWorkspace(initial)) throw new Error('invalid_workspace');
-  let confirmed = clone(initial);
-  let optimistic = clone(initial);
+  let confirmed = normalizeWorkspace(initial);
+  let optimistic = normalizeWorkspace(initial);
   let chain = Promise.resolve();
   const pending = [];
 
@@ -105,7 +118,7 @@ export function createWorkspaceSync({ initial, send, onChange = () => {}, onErro
   async function execute(request) {
     let response = await send({ ...request, baseRevision: confirmed.revision });
     if (!response.ok && response.status === 409 && isWorkspace(response.workspace)) {
-      confirmed = clone(response.workspace);
+      confirmed = normalizeWorkspace(response.workspace);
       rebuild();
       publish({ optimistic: true, rebased: true });
       if (SAFE_REBASE.has(request.op)) response = await send({ ...request, baseRevision: confirmed.revision });
@@ -115,7 +128,7 @@ export function createWorkspaceSync({ initial, send, onChange = () => {}, onErro
       if (response.workspace.revision < confirmed.revision) {
         response = { ok: false, status: 409, stale: true };
       } else {
-        confirmed = clone(response.workspace);
+        confirmed = normalizeWorkspace(response.workspace);
       }
     }
     if (response.ok && isWorkspace(response.workspace)) {
@@ -148,7 +161,7 @@ export function createWorkspaceSync({ initial, send, onChange = () => {}, onErro
     current: () => clone(optimistic),
     replace(value) {
       if (!isWorkspace(value) || value.revision < confirmed.revision) return false;
-      confirmed = clone(value);
+      confirmed = normalizeWorkspace(value);
       rebuild();
       publish({ optimistic: pending.length > 0 });
       return true;

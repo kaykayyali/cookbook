@@ -55,27 +55,35 @@ test('cart controller removes a selected recipe rather than ingredient contribut
   assert.deepEqual(state.pantry, ['salt'], 'pantry remains informational');
 });
 
-test('delegated check-off toggles persistent state and restores a completed item', () => {
+test('delegated check-off saves the normalized purchase quantity to Pantry', () => {
   const { document, listeners } = dom();
   const state = { cart: [{ ...selection, ingredients: [{ raw: '2 eggs', name: 'egg', quantity: 2, unit: 'count', kind: 'indivisible' }] }], pantry: [], shoppingChecked: {} };
   initCart({ state, document });
   const click = () => listeners.click({ target: { closest: () => ({ dataset: { action: 'toggle-item', name: 'egg' } }) } });
   click();
   assert.equal(state.shoppingChecked.egg, true);
-  assert.deepEqual(state.pantry, ['egg'], 'checking a cart item adds it to the pantry');
+  assert.deepEqual(state.pantry, [{
+    name: 'egg', displayName: 'Egg', quantity: 3, unit: 'count', kind: 'indivisible',
+    countLabel: '', category: 'dairy-eggs',
+  }], 'checking a cart item transfers its buffered purchase quantity');
   click();
   assert.equal(state.shoppingChecked.egg, undefined);
-  assert.deepEqual(state.pantry, ['egg'], 'unchecking keeps the pantry entry (non-subtractive)');
+  assert.equal(state.pantry[0].quantity, 3, 'unchecking keeps the pantry quantity (non-subtractive)');
 });
 
-test('checking a manual cart item adds its name to the pantry', () => {
+test('manual Shopping items use the same quantity contract and transfer it to Pantry', () => {
   const { document } = dom();
   const state = { cart: [], pantry: [], shoppingChecked: {}, manualItems: [] };
   const ctrl = initCart({ state, document });
-  const manual = ctrl.addManual('Flowers');
+  const manual = ctrl.addManual('2 bottles flowers');
+  assert.equal(manual.quantity, 2);
+  assert.equal(manual.unit, 'count');
+  assert.equal(manual.countLabel, 'bottle');
   ctrl.toggleManual(manual.id);
   assert.equal(state.shoppingChecked['manual:' + manual.id], true);
-  assert.deepEqual(state.pantry, ['flowers'], 'checking a manual item adds it to the pantry');
+  assert.deepEqual(state.pantry.map(({ name, quantity, unit, countLabel }) => ({ name, quantity, unit, countLabel })), [
+    { name: 'flower', quantity: 2, unit: 'count', countLabel: 'bottle' },
+  ]);
 });
 
 test('delegated check-off plays a short exit animation before moving the row to Completed', () => {

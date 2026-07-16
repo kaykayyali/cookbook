@@ -34,7 +34,7 @@ test('workspace runtime refreshes newer D1 authority for the other signed-in hou
   });
   assert.equal(interval.ms, 15_000);
   assert.equal(await runtime.refresh(), true);
-  assert.deepEqual(state.pantry, ['flour', 'salt']);
+  assert.deepEqual(state.pantry.map((item) => item.name), ['flour', 'salt']);
   assert.equal(state.workspaceRevision, 2);
   assert.equal(typeof listeners.visibilitychange, 'function');
 });

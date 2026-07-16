@@ -114,15 +114,15 @@ test('index.html has no <style> blocks (layered CSS only)', async () => {
   assert.equal((body.match(/<style/gi) || []).length, 0, 'no inline styles allowed');
 });
 
-test('index.html pre-paint script reads the v2 storage key (5 themes, not the old 2)', async () => {
+test('index.html pre-paint script reads the v2 storage key and all 6 themes', async () => {
   const res = await fetch(`${baseUrl}/`);
   const body = await res.text();
   // The pre-paint script must read the new key. Catches drift if anyone
   // reverts the storage key without updating the script.
   assert.match(body, /localStorage\.getItem\(\s*['"]cb_theme_v2['"]\s*\)/,
     'pre-paint script must read cb_theme_v2');
-  // Must accept all 5 valid theme names (no 2-value whitelist left over).
-  for (const name of ['light', 'dark', 'sepia', 'forest', 'ocean']) {
+  // Must accept all valid theme names before first paint.
+  for (const name of ['light', 'dark', 'sepia', 'forest', 'ocean', 'summer']) {
     assert.match(body, new RegExp(`v\\s*!==?\\s*['"]${name}['"]`),
       `pre-paint script must accept theme '${name}'`);
   }

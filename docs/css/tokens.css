@@ -222,6 +222,27 @@
     --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.62);
   }
 
+  /* Summer — lemon cream, garden green, coral, and pool blue. */
+  :root[data-theme="summer"] {
+    --color-bg:            #fff8df;
+    --color-bg-elevated:   #fffdf5;
+    --color-bg-sunken:     #f3edc7;
+    --color-fg:            #24352e;
+    --color-fg-muted:      #587166;
+    --color-fg-subtle:     #60766b;
+    --color-border:        #d8e5ce;
+    --color-border-strong: #9ccdb5;
+    --color-accent:        #c8483b;
+    --color-accent-fg:     #ffffff;
+    --color-accent-soft:   #ffe1d3;
+    --color-success:       #3f8f6b;
+    --color-warning:       #b8790f;
+    --color-danger:        #b33a3a;
+    --color-focus-ring:    #0f7183;
+    --shadow-sm: 0 1px 3px rgba(36, 83, 66, 0.10);
+    --shadow-lg: 0 14px 36px rgba(36, 83, 66, 0.18);
+  }
+
   /* Reduced motion (§10 / §5.7). */
   @media (prefers-reduced-motion: reduce) {
     :root {

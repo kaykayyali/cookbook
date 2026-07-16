@@ -22,7 +22,7 @@ function fakeDocument() {
   };
 }
 
-const THEMES = ['light', 'dark', 'sepia', 'forest', 'ocean'];
+const THEMES = ['light', 'dark', 'sepia', 'forest', 'ocean', 'summer'];
 
 test('createTheme reads stored value via injected storage', () => {
   const storage = fakeStorage({ cb_theme_v2: 'dark' });
@@ -35,7 +35,7 @@ test('createTheme returns null when storage is empty', () => {
   assert.equal(t.getStored(), null);
 });
 
-test('createTheme normalizes only valid values (5 themes)', () => {
+test('createTheme normalizes only valid values (6 themes)', () => {
   const storage = fakeStorage({ cb_theme_v2: 'pink' });
   const t = createTheme({ storage, document: fakeDocument() });
   assert.equal(t.getStored(), null);

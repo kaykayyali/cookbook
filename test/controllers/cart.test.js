@@ -54,7 +54,10 @@ test('shopping controls emit absolute shared-workspace operations', () => {
   assert.deepEqual(calls, [
     { op: 'cart.setTargetServings', payload: { recipeId: 'r1', targetServings: 5 } },
     { op: 'shopping.setChecked', payload: { key: 'egg', checked: true } },
-    { op: 'pantry.add', payload: { name: 'egg' } },
+    { op: 'pantry.add', payload: { item: {
+      name: 'egg', displayName: 'Egg', quantity: 6, unit: 'count', kind: 'indivisible',
+      countLabel: '', category: 'dairy-eggs',
+    } } },
     { op: 'shopping.removeIngredient', payload: { name: 'egg' } },
     { op: 'shopping.clear', payload: {} },
   ]);

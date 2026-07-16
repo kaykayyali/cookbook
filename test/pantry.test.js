@@ -12,10 +12,14 @@ import {
   removeFromPantry,
   togglePantry,
   normalizePantry,
+  normalizePantryEntry,
 } from '../docs/js/lib/pantry.js';
 
 test('haveIngredient matches by substring', () => {
-  const pantry = ['olive oil', 'eggs'];
+  const pantry = [
+    { name: 'olive oil', quantity: 8, unit: 'ounce', kind: 'divisible' },
+    { name: 'egg', quantity: 6, unit: 'count', kind: 'indivisible' },
+  ];
   assert.equal(haveIngredient('2 tablespoons olive oil', pantry), true);
   assert.equal(haveIngredient('6 large eggs', pantry), true);
   assert.equal(haveIngredient('1 cup flour', pantry), false);
@@ -91,39 +95,74 @@ test('allRecipeIngredients dedupes and sorts base + full forms', () => {
 });
 
 test('addToPantry adds a new lowercase item immutably', () => {
-  const before = ['eggs'];
-  const { pantry, added, name } = addToPantry(before, '  Olive Oil ');
+  const before = [normalizePantryEntry('eggs')];
+  const { pantry, added, name, item } = addToPantry(before, {
+    name: 'Olive Oil', displayName: 'Olive Oil', quantity: 8,
+    unit: 'ounce', kind: 'divisible', category: 'pantry',
+  });
   assert.equal(added, true);
   assert.equal(name, 'olive oil');
-  assert.deepEqual(pantry, ['eggs', 'olive oil']);
-  assert.deepEqual(before, ['eggs'], 'original array unchanged');
+  assert.deepEqual(item, {
+    name: 'olive oil', displayName: 'Olive Oil', quantity: 8,
+    unit: 'ounce', kind: 'divisible', countLabel: '', category: 'pantry',
+  });
+  assert.equal(pantry.length, 2);
+  assert.deepEqual(before, [normalizePantryEntry('eggs')], 'original array unchanged');
 });
 
-test('addToPantry refuses duplicates and blanks', () => {
-  assert.equal(addToPantry(['eggs'], 'eggs').added, false);
-  assert.equal(addToPantry(['eggs'], '   ').added, false);
+test('addToPantry accumulates compatible normalized quantities', () => {
+  const first = addToPantry([], {
+    name: 'egg', quantity: 9, unit: 'count', kind: 'indivisible', category: 'dairy-eggs',
+  });
+  const second = addToPantry(first.pantry, {
+    name: 'eggs', quantity: 3, unit: 'count', kind: 'indivisible', category: 'dairy-eggs',
+  });
+  assert.equal(second.added, true);
+  assert.equal(second.pantry.length, 1);
+  assert.equal(second.pantry[0].quantity, 12);
+  assert.equal(second.pantry[0].unit, 'count');
+});
+
+test('addToPantry refuses duplicate qualitative entries and blanks', () => {
+  const eggs = [normalizePantryEntry('eggs')];
+  assert.equal(addToPantry(eggs, 'eggs').added, false);
+  assert.equal(addToPantry(eggs, '   ').added, false);
 });
 
 test('removeFromPantry removes case-insensitively and immutably', () => {
-  const before = ['eggs', 'olive oil'];
+  const before = normalizePantry(['eggs', { name: 'olive oil', quantity: 8, unit: 'ounce', kind: 'divisible' }]);
   const after = removeFromPantry(before, 'EGGS');
-  assert.deepEqual(after, ['olive oil']);
-  assert.deepEqual(before, ['eggs', 'olive oil'], 'original unchanged');
+  assert.deepEqual(after.map((item) => item.name), ['olive oil']);
+  assert.equal(before.length, 2, 'original unchanged');
 });
 
 test('togglePantry adds when absent, removes when present', () => {
-  const add = togglePantry(['eggs'], 'flour');
+  const add = togglePantry(normalizePantry(['eggs']), 'flour');
   assert.equal(add.added, true);
-  assert.deepEqual(add.pantry, ['eggs', 'flour']);
+  assert.deepEqual(add.pantry.map((item) => item.name), ['egg', 'flour']);
 
-  const remove = togglePantry(['eggs', 'flour'], 'flour');
+  const remove = togglePantry(normalizePantry(['eggs', 'flour']), 'flour');
   assert.equal(remove.added, false);
-  assert.deepEqual(remove.pantry, ['eggs']);
+  assert.deepEqual(remove.pantry.map((item) => item.name), ['egg']);
 });
 
-test('normalizePantry migrates legacy object entries to strings', () => {
+test('normalizePantry migrates strings and legacy quantity objects to normalized entries', () => {
   const legacy = [{ name: 'Olive Oil', quantity: '2 tbsp' }, 'EGGS', '  ', { name: '' }];
-  assert.deepEqual(normalizePantry(legacy), ['olive oil', 'eggs']);
+  const pantry = normalizePantry(legacy);
+  assert.deepEqual(pantry.map(({ name, quantity, unit }) => ({ name, quantity, unit })), [
+    { name: 'egg', quantity: null, unit: 'qualitative' },
+    { name: 'olive oil', quantity: 1, unit: 'ounce' },
+  ]);
+});
+
+test('normalizePantryEntry preserves the shared Shopping quantity contract', () => {
+  assert.deepEqual(normalizePantryEntry({
+    name: 'Milk', displayName: 'Whole Milk', quantity: 17.6,
+    unit: 'ounce', kind: 'divisible', countLabel: '', category: 'dairy-eggs',
+  }), {
+    name: 'milk', displayName: 'Whole Milk', quantity: 17.6,
+    unit: 'ounce', kind: 'divisible', countLabel: '', category: 'dairy-eggs',
+  });
 });
 
 test('normalizePantry tolerates non-arrays', () => {

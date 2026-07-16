@@ -42,7 +42,7 @@ function buildLayer(document) {
 export function initTour({
   tours = [], document = globalThis.document, window = globalThis.window,
   storage = globalThis.localStorage, subject = 'member', navigate = () => {},
-  getCurrentPanel = () => null, isPresentationReady = null,
+  getCurrentPanel = () => null, isPresentationReady = null, onClose = () => {},
 } = {}) {
   const registry = new Map(tours.map((tour) => [tour.id, tour]));
   const layer = buildLayer(document);
@@ -201,6 +201,7 @@ export function initTour({
     setBackgroundInert(false);
     try { if (panelToRestore) navigate(panelToRestore); } catch { /* cleanup must fail open */ }
     try { focusToRestore?.focus?.(); } catch { /* cleanup must fail open */ }
+    try { onClose(); } catch { /* follow-up UI must not break tour cleanup */ }
   }
 
   function finish({ remember = true } = {}) {

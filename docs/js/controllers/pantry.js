@@ -3,9 +3,44 @@
 // ════════════════════════════════════════════════════════
 
 import { esc } from '../lib/format.js';
-import { addToPantry, removeFromPantry } from '../lib/pantry.js';
+import {
+  addToPantry,
+  removeFromPantry,
+  normalizePantry,
+  formatPantryAmount,
+} from '../lib/pantry.js';
 import { save as persist } from '../lib/store.js';
 import { toast } from '../lib/dom.js';
+
+const PANTRY_CATEGORIES = [
+  ['produce', 'Produce'],
+  ['fridge', 'Fridge'],
+  ['proteins', 'Proteins'],
+  ['staples', 'Staples'],
+  ['other', 'Other'],
+];
+const CATEGORY_IDS = new Set(PANTRY_CATEGORIES.map(([id]) => id));
+
+const PRODUCE = /\b(apples?|apricots?|avocados?|bananas?|basil|bell peppers?|berries|berry|broccoli|cabbage|carrots?|cauliflower|celery|cilantro|coriander|cucumbers?|eggplants?|fruits?|garlic|ginger|grapes?|herbs?|kale|lemons?|limes?|mango|mangos|mangoes|mint|mushrooms?|onions?|oranges?|parsley|peaches?|pears?|potatoes?|scallions?|spinach|squash|tomatoes?|vegetables?|zucchini)\b/;
+const FRIDGE = /\b(butter|cheese|cream|egg|eggs|half and half|milk|tofu|yogurt|yoghurt)\b/;
+const PROTEINS = /\b(bacon|beef|chicken|fish|ham|lamb|meat|pancetta|pork|salmon|sausage|shrimp|steak|tuna|turkey)\b/;
+const STAPLES = /\b(beans?|black pepper|bread|broth|cereal|chickpeas?|cornstarch|flour|grains?|lentils?|noodles?|oats?|oil|paprika|pasta|peppercorns?|rice|salt|spices?|stock|sugar|vinegar|white pepper)\b/;
+
+/** Display-only grouping over normalized Pantry entries. */
+export function pantryCategory(item) {
+  const name = String(item?.name || item || '').toLowerCase();
+  if (STAPLES.test(name)) return 'staples';
+  if (PRODUCE.test(name)) return 'produce';
+  if (FRIDGE.test(name)) return 'fridge';
+  if (PROTEINS.test(name)) return 'proteins';
+  if (item && typeof item === 'object') {
+    if (item.category === 'produce') return 'produce';
+    if (['dairy-eggs', 'frozen'].includes(item.category)) return 'fridge';
+    if (item.category === 'meat-seafood') return 'proteins';
+    if (['pantry', 'bakery'].includes(item.category)) return 'staples';
+  }
+  return 'other';
+}
 
 /**
  * Pantry controller. Owns the pantry grid, add/remove handlers, and the
@@ -18,31 +53,89 @@ import { toast } from '../lib/dom.js';
  * @returns {{ render: () => void, add: (raw) => string|null, remove: (item) => void }}
  */
 export function initPantry({ state, document = globalThis.document, onChange = null, mutate = null }) {
+  state.pantry = normalizePantry(state.pantry);
+  let query = '';
+  let category = 'all';
+
   function render() {
     const grid = document.getElementById('pantry-grid');
     if (!grid) return;
+    const total = state.pantry.length;
+    const normalizedQuery = query.trim().toLowerCase();
+    const visible = [...state.pantry]
+      .filter((item) => !normalizedQuery
+        || item.name.includes(normalizedQuery)
+        || item.displayName.toLowerCase().includes(normalizedQuery))
+      .filter((item) => category === 'all' || pantryCategory(item) === category)
+      .sort((a, b) => a.name.localeCompare(b.name) || a.unit.localeCompare(b.unit));
+
+    renderFilters();
+    const summary = document.getElementById('pantry-summary');
+    if (summary) summary.textContent = visible.length === total
+      ? `${total} ${total === 1 ? 'item' : 'items'}`
+      : `${visible.length} of ${total} items`;
+
     if (!state.pantry.length) {
-      grid.innerHTML =
-        '<p style="color:var(--ink-light);font-size:.85rem">Your pantry is empty. Add ingredients above to see which recipes you can make.</p>';
+      grid.innerHTML = '<div class="pantry-empty"><span aria-hidden="true">🫙</span><strong>Your pantry is ready.</strong><p>Add a few things you usually cook with.</p></div>';
       return;
     }
-    grid.innerHTML = [...state.pantry]
-      .sort()
-      .map((item) => pantryTagHTML(item))
-      .join('');
+    if (!visible.length) {
+      grid.innerHTML = '<div class="pantry-empty"><span aria-hidden="true">✨</span><strong>Nothing here yet.</strong><p>Try another search or category.</p><button class="btn btn-ghost btn-sm" data-action="clear-pantry-filters">Show everything</button></div>';
+      return;
+    }
+
+    grid.innerHTML = PANTRY_CATEGORIES.map(([id, label]) => {
+      const items = visible.filter((item) => pantryCategory(item) === id);
+      if (!items.length) return '';
+      return `<section class="pantry-group" data-category="${id}">
+        <div class="pantry-group-heading"><span class="pantry-category-dot" aria-hidden="true"></span><h3>${label}</h3><span>${items.length}</span></div>
+        <div class="pantry-items">${items.map((item) => pantryTagHTML(item, id)).join('')}</div>
+      </section>`;
+    }).join('');
+  }
+
+  function renderFilters() {
+    const zone = document.getElementById('pantry-filters');
+    if (!zone) return;
+    const options = [['all', 'All'], ...PANTRY_CATEGORIES];
+    zone.innerHTML = options.map(([id, label]) => {
+      const count = id === 'all'
+        ? state.pantry.length
+        : state.pantry.filter((item) => pantryCategory(item) === id).length;
+      const active = category === id;
+      return `<button type="button" class="pantry-filter${active ? ' is-active' : ''}" data-category="${id}" aria-pressed="${active}">${label}<span>${count}</span></button>`;
+    }).join('');
+  }
+
+  function setQuery(value) {
+    query = String(value || '');
+    render();
+  }
+
+  function setCategory(value) {
+    category = value === 'all' || CATEGORY_IDS.has(value) ? value : 'all';
+    render();
+  }
+
+  function clearFilters() {
+    query = '';
+    category = 'all';
+    const search = document.getElementById('pantry-search');
+    if (search) search.value = '';
+    render();
   }
 
   function add(raw) {
-    const { pantry, added, name } = addToPantry(state.pantry, raw);
+    const { pantry, added, name, item } = addToPantry(state.pantry, raw);
     if (!name) return null;
     if (!added) return null;
     state.pantry = pantry;
-    if (mutate) void mutate('pantry.add', { name });
+    if (mutate) void mutate('pantry.add', { item });
     persist();
     render();
     if (onChange) onChange();
     toast(`Added "${name}"`);
-    return name;
+    return item;
   }
 
   function addFromInput() {
@@ -55,20 +148,23 @@ export function initPantry({ state, document = globalThis.document, onChange = n
 
   function remove(item) {
     state.pantry = removeFromPantry(state.pantry, item);
-    if (mutate) void mutate('pantry.remove', { name: item });
+    const name = typeof item === 'string' ? item : item?.name;
+    const unit = typeof item === 'object' ? item?.unit : undefined;
+    if (mutate) void mutate('pantry.remove', { name, ...(unit ? { unit } : {}) });
     persist();
     render();
     if (onChange) onChange();
-    toast(`Removed "${item}"`);
+    toast(`Removed "${name}"`);
   }
 
   function wireGrid() {
     const grid = document.getElementById('pantry-grid');
     if (grid) {
       grid.addEventListener('click', (e) => {
+        if (e.target.closest('[data-action="clear-pantry-filters"]')) { clearFilters(); return; }
         const btn = e.target.closest('.pantry-remove');
         if (!btn) return;
-        remove(btn.dataset.item);
+        remove({ name: btn.dataset.item, unit: btn.dataset.unit });
       });
     }
     const addBtn = document.getElementById('pantry-add-btn');
@@ -79,14 +175,23 @@ export function initPantry({ state, document = globalThis.document, onChange = n
         if (e.key === 'Enter') { e.preventDefault(); addFromInput(); }
       });
     }
+    const search = document.getElementById('pantry-search');
+    if (search) search.addEventListener('input', (e) => setQuery(e.target.value));
+    const filters = document.getElementById('pantry-filters');
+    if (filters) filters.addEventListener('click', (e) => {
+      const btn = e.target.closest('.pantry-filter');
+      if (btn) setCategory(btn.dataset.category);
+    });
   }
 
   wireGrid();
-  return { render, add, addFromInput, remove };
+  return { render, add, addFromInput, remove, setQuery, setCategory };
 }
 
-function pantryTagHTML(item) {
-  return `<span class="pantry-tag">${esc(item)}
-       <button class="pantry-remove" data-item="${esc(item)}" aria-label="Remove ${esc(item)}">${'<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>'}</button>
+function pantryTagHTML(item, category = pantryCategory(item)) {
+  const name = item.displayName || item.name;
+  const amount = formatPantryAmount(item);
+  return `<span class="pantry-tag" data-category="${category}"><span class="pantry-category-dot" aria-hidden="true"></span><span class="pantry-tag-copy"><span>${esc(name)}</span><small>${esc(amount)}</small></span>
+       <button class="pantry-remove" data-item="${esc(item.name)}" data-unit="${esc(item.unit)}" aria-label="Remove ${esc(name)}, ${esc(amount)}">${'<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>'}</button>
      </span>`;
 }

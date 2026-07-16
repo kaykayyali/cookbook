@@ -175,9 +175,9 @@ function makePickerDom() {
   return { elements, document };
 }
 
-const FIVE_THEMES = ['light', 'dark', 'sepia', 'forest', 'ocean'];
+const SIX_THEMES = ['light', 'dark', 'sepia', 'forest', 'ocean', 'summer'];
 
-test('renderThemePicker mounts 5 swatch buttons in role=radiogroup', () => {
+test('renderThemePicker mounts 6 swatch buttons in role=radiogroup', () => {
   if (!mod.initSettings) return;
   const { document, elements } = makePickerDom();
   const ctrl = mod.initSettings({
@@ -187,12 +187,12 @@ test('renderThemePicker mounts 5 swatch buttons in role=radiogroup', () => {
   ctrl.renderThemePicker();
   const zone = elements['settings-theme-zone'];
   assert.match(zone.innerHTML, /role="radiogroup"/);
-  for (const name of FIVE_THEMES) {
+  for (const name of SIX_THEMES) {
     const re = new RegExp(`data-theme="${name}"`);
     assert.match(zone.innerHTML, re, `expected swatch for ${name}`);
   }
   const swatchCount = (zone.innerHTML.match(/class="theme-swatch[^"]*"/g) || []).length;
-  assert.equal(swatchCount, 5, 'expected 5 .theme-swatch buttons');
+  assert.equal(swatchCount, 6, 'expected 6 .theme-swatch buttons');
 });
 
 test('renderThemePicker marks the stored theme as active and aria-checked', () => {
@@ -268,9 +268,9 @@ test('keyboard nav: arrow keys move focus, Enter activates', () => {
   const keyListeners = zone.listeners.keydown || [];
   assert.ok(keyListeners.length > 0, 'picker should have a keydown listener');
 
-  // Build a fake radiogroup with 5 swatches, each with a .focus() and a
+  // Build a fake radiogroup with all swatches, each with a .focus() and a
   // .click() method that the keyboard handler can call.
-  const swatches = ['light', 'dark', 'sepia', 'forest', 'ocean'].map((name) => {
+  const swatches = SIX_THEMES.map((name) => {
     const el = {
       dataset: { theme: name },
       focus() { this.focused = true; },

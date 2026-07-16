@@ -95,7 +95,7 @@ test('workspace PATCH applies an absolute operation with revision CAS', async ()
   assert.equal(response.status, 200);
   const workspace = await response.json();
   assert.equal(workspace.revision, 1);
-  assert.deepEqual(workspace.pantry, ['flour']);
+  assert.deepEqual(workspace.pantry.map((item) => item.name), ['flour']);
   assert.equal(store.current().revision, 1);
 });
 
@@ -132,7 +132,7 @@ test('stale revision returns 409 with the current authoritative workspace', asyn
   const body = await stale.json();
   assert.equal(body.error, 'revision_conflict');
   assert.equal(body.workspace.revision, 1);
-  assert.deepEqual(body.workspace.pantry, ['flour']);
+  assert.deepEqual(body.workspace.pantry.map((item) => item.name), ['flour']);
 });
 
 test('planner attribution comes from authenticated membership, not client payload', async () => {

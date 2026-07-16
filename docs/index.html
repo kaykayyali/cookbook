@@ -47,7 +47,7 @@
 			// has no flash of light theme. Mirrors docs/js/lib/theme.js (which is too
 			// late: modules are deferred by default and would paint first).
 			// Reads through STORAGE_KEYS.theme; the key was bumped to cb_theme_v2
-			// (was cb_theme) when the 5-theme picker shipped, so existing dark-mode
+			// (was cb_theme) when the expanded picker shipped, so existing dark-mode
 			// users fell back to OS auto on first load after that deploy.
 			(function () {
 				try {
@@ -57,7 +57,8 @@
 						v !== "dark" &&
 						v !== "sepia" &&
 						v !== "forest" &&
-						v !== "ocean"
+						v !== "ocean" &&
+						v !== "summer"
 					)
 						return;
 					document.documentElement.setAttribute("data-theme", v);
@@ -379,35 +380,37 @@
 					<div>
 						<h2>Pantry</h2>
 						<p>
-							What you have on hand — used to show which recipes
-							you can make
+							Your shared kitchen shelf — a simple log of what’s around.
 						</p>
 					</div>
 				</div>
-				<div class="pantry-add">
-					<input
-						type="text"
-						class="input"
-						id="pantry-input"
-						placeholder="Add ingredient, e.g. olive oil"
-						list="pantry-suggestions"
-						autocomplete="off"
-					/>
-					<datalist id="pantry-suggestions"></datalist>
-					<button
-						class="btn btn-primary"
-						id="pantry-add-btn"
-					>
-						Add
-					</button>
+				<div class="pantry-add-card">
+					<div class="pantry-add">
+						<input
+							type="text"
+							class="input"
+							id="pantry-input"
+							placeholder="Add something, e.g. 2 cups olive oil"
+							list="pantry-suggestions"
+							autocomplete="off"
+						/>
+						<datalist id="pantry-suggestions"></datalist>
+						<button class="btn btn-primary" id="pantry-add-btn">Add item</button>
+					</div>
+					<p class="pantry-hint">Add an amount when it’s useful. Bought shopping amounts add up here; Pantry never changes your shopping list.</p>
 				</div>
-				<p class="pantry-hint">
-					Matching is flexible — <em>olive oil</em> in your pantry
-					matches <em>2 tablespoons olive oil</em> in a recipe.
-				</p>
+				<div class="pantry-tools">
+					<label class="pantry-search-wrap">
+						<span aria-hidden="true">⌕</span>
+						<input class="input" type="search" id="pantry-search" placeholder="Search your pantry" aria-label="Search your pantry" autocomplete="off" />
+					</label>
+					<div class="pantry-filters" id="pantry-filters" role="group" aria-label="Filter pantry by category"></div>
+					<p class="pantry-summary" id="pantry-summary" aria-live="polite"></p>
+				</div>
 				<div
 					class="pantry-grid"
 					id="pantry-grid"
+					aria-label="Pantry items"
 				></div>
 			</section>
 
@@ -433,7 +436,7 @@
 				<div class="shopping-tools">
 					<input class="input" type="search" id="shopping-filter" placeholder="Filter this list" aria-label="Filter shopping list" />
 					<div class="shopping-manual-add">
-						<input class="input" id="shopping-manual-input" placeholder="Add anything — flowers, foil, milk" autocomplete="off" />
+						<input class="input" id="shopping-manual-input" placeholder="Add anything — 2 bottles, foil, milk" autocomplete="off" />
 						<button class="btn btn-primary" id="shopping-manual-add">Add item</button>
 					</div>
 					<div class="plan-shop-tools">
@@ -1227,6 +1230,18 @@
 			</div>
 		</div>
 		</div><!-- /main-content -->
+
+		<aside id="summer-theme-recommendation" class="theme-recommendation" aria-labelledby="summer-theme-title" aria-live="polite" hidden>
+			<div class="theme-recommendation-sun" aria-hidden="true">☀️</div>
+			<div class="theme-recommendation-copy">
+				<strong id="summer-theme-title">A little more sunshine?</strong>
+				<span>Try Summer — lemon cream, coral, and pool blue.</span>
+			</div>
+			<div class="theme-recommendation-actions">
+				<button class="btn btn-primary btn-sm" type="button" data-action="try-summer-theme">Try Summer</button>
+				<button class="btn btn-ghost btn-sm" type="button" data-action="dismiss-summer-theme">Not now</button>
+			</div>
+		</aside>
 
 		<div id="pwa-update" class="pwa-banner" role="status" hidden>
 			<span>A fresh cookbook update is ready.</span>

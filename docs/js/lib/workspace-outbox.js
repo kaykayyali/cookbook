@@ -1,4 +1,4 @@
-import { applyWorkspaceOperation, isWorkspace } from './workspace-sync.js';
+import { applyWorkspaceOperation, isWorkspace, normalizeWorkspace } from './workspace-sync.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const makeMutationId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
@@ -21,7 +21,9 @@ export async function createWorkspaceOutbox({
 } = {}) {
   if (!repo || !authSub || !householdId || !isWorkspace(initial)) throw new Error('invalid_outbox_configuration');
   const cached = await repo.getWorkspace(authSub, householdId);
-  let confirmed = isWorkspace(cached) && cached.revision >= initial.revision ? clone(cached) : clone(initial);
+  let confirmed = normalizeWorkspace(
+    isWorkspace(cached) && cached.revision >= initial.revision ? cached : initial,
+  );
   let rows = await repo.listOutbox(authSub, householdId);
   let optimistic = clone(confirmed);
   let draining = null;
@@ -66,7 +68,7 @@ export async function createWorkspaceOutbox({
         return false;
       }
       if (response?.ok && isWorkspace(response.workspace) && response.workspace.revision >= confirmed.revision) {
-        confirmed = clone(response.workspace);
+        confirmed = normalizeWorkspace(response.workspace);
         await repo.acknowledge(authSub, householdId, row.mutationId, confirmed);
         rows = rows.filter((item) => item.sequence !== row.sequence);
         publish({ acknowledged: row.mutationId });
@@ -79,13 +81,13 @@ export async function createWorkspaceOutbox({
         return false;
       }
       if (response?.status === 409 && isWorkspace(response.workspace)) {
-        confirmed = clone(response.workspace);
+        confirmed = normalizeWorkspace(response.workspace);
         await repo.putWorkspace(authSub, householdId, confirmed);
         publish({ rebased: true, queued: true });
         if (SAFE_REBASE.has(row.op)) {
           try { response = await sendOnce(row); } catch { response = { ok: false, status: 0 }; }
           if (response?.ok && isWorkspace(response.workspace) && response.workspace.revision >= confirmed.revision) {
-            confirmed = clone(response.workspace);
+            confirmed = normalizeWorkspace(response.workspace);
             await repo.acknowledge(authSub, householdId, row.mutationId, confirmed);
             rows = rows.filter((item) => item.sequence !== row.sequence);
             publish({ acknowledged: row.mutationId });
@@ -152,7 +154,7 @@ export async function createWorkspaceOutbox({
     },
     async refresh(workspace) {
       if (!isWorkspace(workspace) || workspace.revision < confirmed.revision) return false;
-      confirmed = clone(workspace);
+      confirmed = normalizeWorkspace(workspace);
       await repo.putWorkspace(authSub, householdId, confirmed);
       rows = await repo.listOutbox(authSub, householdId);
       publish({ refreshed: true, queued: rows.length > 0 });

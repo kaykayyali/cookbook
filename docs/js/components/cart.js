@@ -4,7 +4,7 @@ import { aggregateCart, canonicalName, formatCanonicalAmount } from '../lib/cart
 
 function pantryContains(name, pantry) {
   const needle = canonicalName(name);
-  return (Array.isArray(pantry) ? pantry : []).some((item) => canonicalName(item) === needle);
+  return (Array.isArray(pantry) ? pantry : []).some((item) => canonicalName(item?.name || item) === needle);
 }
 
 function recipeRow(selection) {
@@ -42,11 +42,16 @@ function itemRow(item, pantry, completed) {
 }
 
 function manualRow(item, completed) {
-  const name = esc(item.name);
+  const name = esc(item.displayName || item.name);
   const key = `manual:${item.id}`;
+  const amount = formatCanonicalAmount(item.quantity, item.unit, {
+    requiredQuantity: item.quantity,
+    countLabel: item.countLabel,
+    category: item.category,
+  });
   return `<li class="cart-row cart-row-manual${completed ? ' is-completed' : ''}" data-manual-id="${esc(item.id)}">
     <button class="cart-check" data-action="toggle-manual" data-id="${esc(item.id)}" data-key="${esc(key)}" aria-label="Mark ${name} as ${completed ? 'not completed' : 'completed'}" aria-pressed="${completed}">${completed ? '✓' : ''}</button>
-    <span class="cart-name">${name}<small>manual</small></span><span class="cart-total"></span>
+    <span class="cart-name">${name}<small>manual</small></span><span class="cart-total">${esc(amount)}</span>
     <details class="cart-item-menu"><summary aria-label="More options for ${name}">⋯</summary><button class="btn btn-ghost btn-sm" data-action="remove-manual" data-id="${esc(item.id)}">Remove item</button></details>
   </li>`;
 }
