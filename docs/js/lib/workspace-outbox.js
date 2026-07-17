@@ -46,18 +46,22 @@ export async function createWorkspaceOutbox({
 
   const rebuild = () => {
     let next = clone(confirmed);
+    const invalid = [];
     for (const row of rows) {
       try {
         next = applyWorkspaceOperation(next, row);
       } catch (error) {
-        if (row.status !== 'failed') throw error;
+        if (row.status !== 'failed') invalid.push({ row, error });
       }
     }
     optimistic = next;
+    return invalid;
   };
   const publish = (meta = {}) => {
-    rebuild();
-    onChange(clone(optimistic), { pending: rows.length, ...meta });
+    const invalid = rebuild();
+    try { onChange(clone(optimistic), { pending: rows.length, ...meta }); }
+    catch { /* UI publication cannot reject durable replay. */ }
+    return invalid;
   };
   const status = (state, extra = {}) => onStatus({ state, pending: rows.length, ...extra });
   const preserveDeliveryState = (row, fallback) => {
@@ -110,6 +114,43 @@ export async function createWorkspaceOutbox({
     }
   }
 
+  const reducerConflictCode = (error) => (
+    ['pantry_record_conflict', 'pantry_restore_conflict'].includes(error?.message)
+      ? error.message : 'invalid_mutation'
+  );
+
+  async function reconcileInvalidRows() {
+    let next = clone(confirmed);
+    const conflicts = [];
+    for (let row of rows) {
+      try {
+        next = applyWorkspaceOperation(next, row);
+      } catch (error) {
+        if (row.status === 'failed') continue;
+        const dependency = row.undoOf
+          ? rows.find((item) => item.mutationId === row.undoOf)
+          : null;
+        const definitivelyUnsent = neverAttempted.has(row.mutationId)
+          || (dependency?.status === 'failed' && !row.deliveryState);
+        if (!definitivelyUnsent && (restored.has(row.mutationId)
+            || ['attempting', 'accepted', 'uncertain'].includes(row.deliveryState))) {
+          continue;
+        }
+        const code = reducerConflictCode(error);
+        const deliveryState = preserveDeliveryState(row, 'rejected');
+        const failed = { ...row, status: 'failed', lastError: code, deliveryState };
+        try { row = await setRow(row, failed); }
+        catch {
+          rows = rows.map((item) => item.sequence === row.sequence ? failed : item);
+          row = failed;
+        }
+        conflicts.push({ row, code });
+      }
+    }
+    optimistic = next;
+    return conflicts;
+  }
+
   async function acknowledgeResponse(row, response) {
     const authority = normalizeWorkspace(response.workspace);
     acceptedMutationId = row.mutationId;
@@ -147,8 +188,9 @@ export async function createWorkspaceOutbox({
   async function processRows() {
     if (!isOnline()) { status('offline'); return false; }
     await reloadRows();
+    await reconcileInvalidRows();
     publish({ queued: rows.length > 0 });
-    for (let row of rows) {
+    for (let row of rows.filter((item) => item.sequence != null)) {
       if (row.status === 'failed') {
         blockedSequence = row.sequence;
         discardable = row.deliveryState === 'rejected' && !restored.has(row.mutationId);
@@ -259,6 +301,7 @@ export async function createWorkspaceOutbox({
         const failed = { ...row, status: 'failed', lastError: conflictCode, deliveryState };
         try { row = await setRow(row, failed); }
         catch { rows = rows.map((item) => item.sequence === row.sequence ? failed : item); row = failed; }
+        await reconcileInvalidRows();
         blockedSequence = row.sequence;
         discardable = deliveryState === 'rejected' && !restored.has(row.mutationId);
         status('failed', {
@@ -277,6 +320,7 @@ export async function createWorkspaceOutbox({
         const failed = { ...row, status: 'failed', lastError: code, deliveryState };
         try { row = await setRow(row, failed); }
         catch { rows = rows.map((item) => item.sequence === row.sequence ? failed : item); row = failed; }
+        await reconcileInvalidRows();
       } else {
         row = await retainForReconciliation(row, code, deliveryState);
       }
@@ -306,10 +350,13 @@ export async function createWorkspaceOutbox({
     const row = rows.find((item) => item.sequence != null) || rows[0];
     blockedSequence = row?.sequence ?? null;
     discardable = false;
-    status('failed', {
-      sequence: blockedSequence, code: 'local_storage_unavailable', discardable: false,
-    });
-    publish({ queued: rows.length > 0 });
+    try {
+      status('failed', {
+        sequence: blockedSequence, code: 'local_storage_unavailable', discardable: false,
+      });
+    } catch { /* failure reporting must terminate the drain rejection. */ }
+    try { publish({ queued: rows.length > 0 }); }
+    catch { /* publication failure must not recursively reject the drain. */ }
     return false;
   }
 
@@ -320,6 +367,15 @@ export async function createWorkspaceOutbox({
         .finally(() => { draining = null; });
     }
     return draining;
+  }
+
+  function drainAfterCurrent() {
+    const active = draining;
+    if (!active) {
+      void drain();
+      return;
+    }
+    void active.then(() => drain(), () => drain()).catch(reportDrainFailure);
   }
 
   return {
@@ -340,13 +396,20 @@ export async function createWorkspaceOutbox({
         createdAt: Date.now(), status: 'pending',
         attempts: 0, nextAttemptAt: 0, lastError: null,
       };
+      if (op === 'pantry.restore' && provisional.payload?.expectedAbsent === true) {
+        const dependency = [...rows].reverse().find((row) => row.op === 'pantry.remove'
+          && row.payload?.id === provisional.payload.item?.id);
+        if (dependency) provisional.undoOf = dependency.mutationId;
+      }
       mutationGeneration += 1;
       localGenerations.set(provisional.mutationId, mutationGeneration);
       persisting.add(provisional.mutationId);
       neverAttempted.add(provisional.mutationId);
       rows.push(provisional);
       try {
-        publish({ queued: true, optimistic: true });
+        const invalid = publish({ queued: true, optimistic: true });
+        const provisionalFailure = invalid.find(({ row }) => row === provisional);
+        if (provisionalFailure) throw provisionalFailure.error;
       } catch (error) {
         rows = rows.filter((item) => item !== provisional);
         persisting.delete(provisional.mutationId);
@@ -387,7 +450,7 @@ export async function createWorkspaceOutbox({
         persisting.delete(provisional.mutationId);
       }
       if (!isOnline()) { status('offline'); return true; }
-      void drain();
+      drainAfterCurrent();
       return true;
     },
     drain,

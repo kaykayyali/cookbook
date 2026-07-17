@@ -223,16 +223,45 @@ export function createWorkspaceSync({ initial, send, onChange = () => {}, onErro
 
   const publish = (meta) => onChange(clone(optimistic), meta);
   const rebuild = () => {
-    optimistic = pending.reduce((state, request) => applyWorkspaceOperation(state, request), clone(confirmed));
+    let next = clone(confirmed);
+    const invalid = [];
+    for (const request of pending) {
+      if (request.cancelledCode) continue;
+      try { next = applyWorkspaceOperation(next, request); }
+      catch (error) { invalid.push({ request, error }); }
+    }
+    optimistic = next;
+    return invalid;
+  };
+  const conflictCode = (error) => (
+    ['pantry_record_conflict', 'pantry_restore_conflict'].includes(error?.message)
+      ? error.message : 'invalid_mutation'
+  );
+  const reconcilePending = () => {
+    const invalid = rebuild();
+    for (const { request, error } of invalid) request.cancelledCode = conflictCode(error);
+    if (invalid.length) rebuild();
+    return invalid;
   };
 
   async function execute(request) {
-    let conflictCode = '';
+    if (request.cancelledCode) {
+      const index = pending.indexOf(request);
+      if (index >= 0) pending.splice(index, 1);
+      rebuild();
+      publish({ optimistic: false, rolledBack: true });
+      onError({
+        code: request.cancelledCode,
+        retry: () => enqueue({ ...request, cancelledCode: '' }),
+      });
+      return false;
+    }
+    let responseConflictCode = '';
     let response = await send({ ...request, baseRevision: confirmed.revision });
     if (!response.ok && response.status === 409 && isWorkspace(response.workspace)) {
       confirmed = normalizeWorkspace(response.workspace);
       const decision = workspaceMutationRebaseDecision(request, confirmed);
-      conflictCode = decision.code;
+      responseConflictCode = decision.code;
       if (decision.safe) {
         rebuild();
         publish({ optimistic: true, rebased: true });
@@ -249,16 +278,16 @@ export function createWorkspaceSync({ initial, send, onChange = () => {}, onErro
     }
     if (response.ok && isWorkspace(response.workspace)) {
       if (index >= 0) pending.splice(index, 1);
-      rebuild();
+      reconcilePending();
       publish({ optimistic: false });
       return true;
     }
     if (index >= 0) pending.splice(index, 1);
-    rebuild();
+    reconcilePending();
     publish({ optimistic: false, rolledBack: true });
     onError({
       code: response.stale ? 'stale_workspace_response'
-        : conflictCode || (response.status === 409 ? 'revision_conflict' : 'workspace_unavailable'),
+        : responseConflictCode || (response.status === 409 ? 'revision_conflict' : 'workspace_unavailable'),
       retry: () => enqueue(request),
     });
     return false;
@@ -266,13 +295,18 @@ export function createWorkspaceSync({ initial, send, onChange = () => {}, onErro
 
   function enqueue(request) {
     const inserted = !pending.includes(request);
+    if (inserted && request.op === 'pantry.restore' && request.payload?.expectedAbsent === true) {
+      const dependency = [...pending].reverse().find((item) => item.op === 'pantry.remove'
+        && item.payload?.id === request.payload.item?.id);
+      if (dependency) request.undoOf = dependency.mutationId;
+    }
     if (inserted) pending.push(request);
-    try {
-      rebuild();
-    } catch (error) {
+    const invalid = rebuild();
+    const ownFailure = invalid.find((item) => item.request === request);
+    if (ownFailure) {
       if (inserted) pending.splice(pending.indexOf(request), 1);
       rebuild();
-      throw error;
+      throw ownFailure.error;
     }
     publish({ optimistic: true });
     const result = chain.then(() => execute(request));
@@ -285,7 +319,7 @@ export function createWorkspaceSync({ initial, send, onChange = () => {}, onErro
     replace(value) {
       if (!isWorkspace(value) || value.revision < confirmed.revision) return false;
       confirmed = normalizeWorkspace(value);
-      rebuild();
+      reconcilePending();
       publish({ optimistic: pending.length > 0 });
       return true;
     },

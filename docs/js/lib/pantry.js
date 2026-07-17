@@ -294,6 +294,17 @@ export function pantryRecordFromEditor(editor, original = null, options = {}) {
 }
 
 const pantryKey = (item) => `${item.name}\u0000${item.unit}\u0000${item.unit === 'count' ? item.countLabel : ''}`;
+
+/** True exactly when normal Pantry aggregation would collapse either record ordering. */
+export function pantryRecordsWouldCoalesce(leftValue, rightValue) {
+  const left = normalizePantryEntry(leftValue);
+  const right = normalizePantryEntry(rightValue);
+  if (!left || !right || left.name !== right.name) return false;
+  return left.unit === 'qualitative'
+    || right.unit === 'qualitative'
+    || pantryKey(left) === pantryKey(right);
+}
+
 const finiteTimestamp = (value) => {
   const rounded = Math.round(Number(value));
   return Number.isSafeInteger(rounded) && rounded >= 0 && rounded <= MAX_PANTRY_TIMESTAMP
@@ -583,7 +594,7 @@ export function restorePantryRecord(pantry, value) {
     }
     throw new Error('pantry_restore_conflict');
   }
-  if (current.some((entry) => pantryKey(entry) === pantryKey(item))) {
+  if (current.some((entry) => pantryRecordsWouldCoalesce(entry, item))) {
     throw new Error('pantry_restore_conflict');
   }
   const next = [...current, item]

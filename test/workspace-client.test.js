@@ -9,6 +9,12 @@ const workspace = (overrides = {}) => ({
   ...overrides,
 });
 
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+};
+
 test('workspace response validation rejects partial or malformed authority state', () => {
   assert.equal(isWorkspace(workspace()), true);
   assert.equal(isWorkspace({ revision: 0 }), false);
@@ -141,6 +147,49 @@ test('stale Pantry remove never rebases over a remote update to the same stable 
   assert.equal(sent.length, 1);
   assert.deepEqual(sync.current().pantry.map(({ id, quantity }) => ({ id, quantity })), [{ id: 'oil', quantity: 24 }]);
   assert.equal(errors[0].code, 'pantry_record_conflict');
+});
+
+test('non-durable Undo queued behind a sending remove is cancelled on remote record conflict', async () => {
+  const initial = workspace({ revision: 1, pantry: [{
+    id: 'oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1, updatedAt: 10,
+  }] });
+  const target = applyWorkspaceOperation(initial, { op: 'unknown.noop', payload: {} }).pantry[0];
+  const remote = workspace({ revision: 2, pantry: [{ ...target, raw: '3 cups Olive Oil', quantity: 24, updatedAt: 20 }] });
+  const started = deferred();
+  const response = deferred();
+  const sent = [];
+  const errors = [];
+  const ids = ['remove-oil', 'undo-oil'];
+  const unhandled = [];
+  const onUnhandled = (error) => { unhandled.push(error); };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const sync = createWorkspaceSync({
+      initial, makeId: () => ids.shift(), onError: (error) => errors.push(error),
+      send: async (request) => {
+        sent.push(request.op);
+        if (request.op !== 'pantry.remove') throw new Error('invalid dependent restore must not send');
+        started.resolve();
+        return response.promise;
+      },
+    });
+    const remove = sync.mutate('pantry.remove', {
+      id: target.id, expectedFingerprint: pantryRecordFingerprint(target),
+    });
+    await started.promise;
+    const undo = sync.mutate('pantry.restore', { item: target, expectedAbsent: true });
+    response.resolve({ ok: false, status: 409, error: 'pantry_record_conflict', workspace: remote });
+
+    assert.deepEqual(await Promise.all([remove, undo]), [false, false]);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(sent, ['pantry.remove']);
+    assert.deepEqual(errors.map(({ code }) => code), ['pantry_record_conflict', 'pantry_restore_conflict']);
+    assert.deepEqual(sync.current().pantry.map(({ id, quantity }) => ({ id, quantity })), [{ id: 'oil', quantity: 24 }]);
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
 });
 
 test('older response cannot overwrite a newer confirmed revision', async () => {

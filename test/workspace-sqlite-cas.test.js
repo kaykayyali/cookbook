@@ -99,6 +99,21 @@ test('real SQLite CAS makes restore expected-absent and remove expected-version 
   assert.deepEqual(authority.pantry.map(({ id, quantity }) => ({ id, quantity })), [{ id: 'stable-oil', quantity: 24 }]);
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM household_workspace_mutations WHERE mutation_id = 'stale-remove'").get().count, 0);
 
+  const crossFamilyRestore = await mutateWorkspace(db, 'our-home', mutation(
+    'cross-family-restore', authority.revision, 'pantry.restore', {
+      item: {
+        ...stored, id: 'restored-qualitative-oil', raw: 'Olive Oil', quantity: null,
+        unit: 'qualitative', kind: 'qualitative', countLabel: '', confidence: 0.5,
+      },
+      expectedAbsent: true,
+    },
+  ));
+  assert.deepEqual({ status: crossFamilyRestore.status, error: crossFamilyRestore.error },
+    { status: 409, error: 'pantry_restore_conflict' });
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM household_workspace_mutations WHERE mutation_id = 'cross-family-restore'").get().count, 0);
+  assert.deepEqual((await readWorkspace(db, 'our-home')).pantry.map(({ id, quantity }) => ({ id, quantity })),
+    [{ id: 'stable-oil', quantity: 24 }]);
+
   const freshRetry = await mutateWorkspace(db, 'our-home', mutation('stale-remove', authority.revision, 'pantry.remove', {
     id: stored.id, expectedFingerprint: pantryRecordFingerprint(stored),
   }));

@@ -166,6 +166,7 @@ test('pantry.restore rejects stable-ID and semantic collisions instead of repair
     [removed],
     [{ ...removed, raw: '3 cups Olive Oil', quantity: 24 }],
     [{ ...removed, id: 'remote-oil', raw: '3 cups Olive Oil', quantity: 24 }],
+    [{ ...removed, id: 'remote-oil', raw: 'Olive Oil', quantity: null, unit: 'qualitative', kind: 'qualitative' }],
   ]) {
     assert.throws(() => applyWorkspaceMutation(
       { ...emptyWorkspace('our-home'), pantry: authority },

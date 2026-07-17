@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { initWorkspaceRuntime } from '../docs/js/lib/workspace-runtime.js';
+import { applyWorkspaceOperation } from '../docs/js/lib/workspace-sync.js';
+import { pantryRecordFingerprint } from '../docs/js/lib/pantry.js';
 
 if (!globalThis.localStorage) globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
 
@@ -23,12 +25,18 @@ const deferred = () => {
   return { promise, resolve };
 };
 
-function seededRepo(row) {
-  let rows = [structuredClone(row)];
-  let cached = workspace(0);
+function seededRepo(row, initial = workspace(0)) {
+  let rows = (Array.isArray(row) ? row : [row]).filter(Boolean).map((value) => structuredClone(value));
+  let cached = structuredClone(initial);
+  let sequence = rows.reduce((max, value) => Math.max(max, value.sequence || 0), 0);
   return {
     getWorkspace: async () => structuredClone(cached),
     putWorkspace: async (_sub, _home, value) => { cached = structuredClone(value); },
+    enqueue: async (value) => {
+      const saved = { ...structuredClone(value), sequence: ++sequence };
+      rows.push(saved);
+      return structuredClone(saved);
+    },
     listOutbox: async () => structuredClone(rows),
     updateOutbox: async (value) => { rows = rows.map((item) => item.sequence === value.sequence ? structuredClone(value) : item); },
     deleteOutbox: async (sequence) => { rows = rows.filter((item) => item.sequence !== sequence); },
@@ -65,6 +73,52 @@ test('online durable runtime immediately replays a pre-existing workspace row', 
   assert.deepEqual(await repo.listOutbox(), []);
   assert.equal(state.workspaceRevision, 1);
   assert.deepEqual(state.pantry.map((item) => item.name), ['flour']);
+});
+
+test('durable runtime contains sending-remove Undo conflict and publishes remote record without unhandled rejection', async () => {
+  const initial = workspace(1, [{
+    id: 'oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1, updatedAt: 10,
+  }]);
+  const target = applyWorkspaceOperation(initial, { op: 'unknown.noop', payload: {} }).pantry[0];
+  const remote = workspace(2, [{ ...target, raw: '3 cups Olive Oil', quantity: 24, updatedAt: 20 }]);
+  const state = stateFrom(initial);
+  const repo = seededRepo([], initial);
+  const started = deferred();
+  const response = deferred();
+  const unhandled = [];
+  const onUnhandled = (error) => { unhandled.push(error); };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const runtime = await initWorkspaceRuntime({
+      state, repo, authSub: 'cook-1', document: { getElementById: () => null, addEventListener() {} },
+      window: { navigator: { onLine: true }, addEventListener() {} }, schedule: () => 1,
+      send: async (request) => {
+        if (request.op !== 'pantry.remove') throw new Error('dependent restore must not send');
+        started.resolve();
+        return response.promise;
+      },
+    });
+    assert.equal(await runtime.mutate('pantry.remove', {
+      id: target.id, expectedFingerprint: pantryRecordFingerprint(target),
+    }), true);
+    await started.promise;
+    assert.equal(await runtime.mutate('pantry.restore', { item: target, expectedAbsent: true }), true);
+    response.resolve({ ok: false, status: 409, error: 'pantry_record_conflict', workspace: remote });
+    assert.equal(await runtime.drain(), false);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(state.pantry.map(({ id, quantity }) => ({ id, quantity })), [{ id: 'oil', quantity: 24 }]);
+    const durable = await repo.listOutbox();
+    assert.deepEqual(durable.map(({ op, status, lastError }) => ({ op, status, lastError })), [
+      { op: 'pantry.remove', status: 'failed', lastError: 'pantry_record_conflict' },
+      { op: 'pantry.restore', status: 'failed', lastError: 'pantry_restore_conflict' },
+    ]);
+    assert.equal(durable[1].undoOf, durable[0].mutationId);
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
 });
 
 test('workspace runtime refreshes newer D1 authority for the other signed-in household member', async () => {

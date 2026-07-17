@@ -781,3 +781,180 @@ test('durable Pantry remove blocks a same-record remote update instead of auto-r
   assert.deepEqual(manager.current().pantry.map(({ id, quantity }) => ({ id, quantity })), [{ id: 'oil', quantity: 24 }]);
   assert.equal(statuses.at(-1).code, 'pantry_record_conflict');
 });
+
+test('Undo queued while remove is sending is durably failed without masking remote authority or rejecting in background', async () => {
+  const initial = base({ revision: 1, pantry: [{
+    id: 'oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1, updatedAt: 10,
+  }] });
+  const target = applyWorkspaceOperation(initial, { op: 'unknown.noop', payload: {} }).pantry[0];
+  const remote = base({ revision: 2, pantry: [{
+    ...target, raw: '3 cups Olive Oil', rawEvidence: [...target.rawEvidence, '3 cups Olive Oil'],
+    quantity: 24, updatedAt: 20,
+  }] });
+  const repo = memoryRepo(initial);
+  const sendStarted = deferred();
+  const removeResponse = deferred();
+  const statuses = [];
+  const unhandled = [];
+  const onUnhandled = (error) => { unhandled.push(error); };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const ids = ['remove-oil', 'undo-remove-oil'];
+    const manager = await createWorkspaceOutbox({
+      repo, authSub: 'cook-1', householdId: 'our-home', initial,
+      makeId: () => ids.shift(), onStatus: (status) => statuses.push(status),
+      send: async (request) => {
+        if (request.op === 'pantry.remove') {
+          sendStarted.resolve();
+          return removeResponse.promise;
+        }
+        throw new Error('dependent restore must never be sent');
+      },
+    });
+
+    assert.equal(await manager.mutate('pantry.remove', {
+      id: target.id, expectedFingerprint: pantryRecordFingerprint(target),
+    }), true);
+    await sendStarted.promise;
+    assert.equal(await manager.mutate('pantry.restore', { item: target, expectedAbsent: true }), true,
+      'Undo remains queueable while its remove is in flight');
+    removeResponse.resolve({ ok: false, status: 409, error: 'pantry_record_conflict', workspace: remote });
+    assert.equal(await manager.drain(), false);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(manager.current().pantry.map(({ id, quantity }) => ({ id, quantity })),
+      [{ id: 'oil', quantity: 24 }], 'authoritative remote update remains published');
+    assert.equal(statuses.at(-1).code, 'pantry_record_conflict');
+    assert.notEqual(statuses.at(-1).code, 'local_storage_unavailable');
+    const durable = await repo.listOutbox();
+    assert.deepEqual(durable.map(({ mutationId, undoOf, status, lastError, deliveryState }) => ({
+      mutationId, ...(undoOf ? { undoOf } : {}), status, lastError, deliveryState,
+    })), [
+      { mutationId: 'remove-oil', status: 'failed', lastError: 'pantry_record_conflict', deliveryState: 'rejected' },
+      { mutationId: 'undo-remove-oil', undoOf: 'remove-oil', status: 'failed', lastError: 'pantry_restore_conflict', deliveryState: 'rejected' },
+    ]);
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+});
+
+test('failed remove dependency cancels an unsent Undo after durable reload', async () => {
+  const initial = base({ revision: 1, pantry: [{
+    id: 'oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1, updatedAt: 10,
+  }] });
+  const target = applyWorkspaceOperation(initial, { op: 'unknown.noop', payload: {} }).pantry[0];
+  const remote = base({ revision: 2, pantry: [{ ...target, raw: '3 cups Olive Oil', quantity: 24, updatedAt: 20 }] });
+  const repo = memoryRepo(initial);
+  const ids = ['remove-before-reload', 'undo-before-reload'];
+  const first = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => false,
+    makeId: () => ids.shift(),
+  });
+  await first.mutate('pantry.remove', { id: target.id, expectedFingerprint: pantryRecordFingerprint(target) });
+  await first.mutate('pantry.restore', { item: target, expectedAbsent: true });
+  let [remove, undo] = await repo.listOutbox();
+  assert.equal(undo.undoOf, remove.mutationId);
+  await repo.updateOutbox({ ...remove, status: 'failed', lastError: 'pantry_record_conflict', deliveryState: 'rejected' });
+  await repo.putWorkspace('cook-1', 'our-home', remote);
+
+  const statuses = [];
+  let online = false;
+  const restarted = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => online,
+    onStatus: (status) => statuses.push(status),
+    send: async () => { throw new Error('cancelled Undo must not send after reload'); },
+  });
+  online = true;
+  assert.equal(await restarted.drain(), false);
+  [remove, undo] = await repo.listOutbox();
+  assert.deepEqual({ status: undo.status, lastError: undo.lastError, deliveryState: undo.deliveryState },
+    { status: 'failed', lastError: 'pantry_restore_conflict', deliveryState: 'rejected' });
+  assert.deepEqual(restarted.current().pantry.map(({ id, quantity }) => ({ id, quantity })), [{ id: 'oil', quantity: 24 }]);
+  assert.equal(statuses.at(-1).code, 'pantry_record_conflict');
+});
+
+test('real IndexedDB persists Undo dependency and invalid-row reconciliation across restart', async () => {
+  const name = dbName();
+  let repo = await openOfflineDb({ indexedDB, name });
+  const initial = base({ revision: 1, pantry: [{
+    id: 'oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1, updatedAt: 10,
+  }] });
+  const target = applyWorkspaceOperation(initial, { op: 'unknown.noop', payload: {} }).pantry[0];
+  const remote = base({ revision: 2, pantry: [{ ...target, raw: '3 cups Olive Oil', quantity: 24, updatedAt: 20 }] });
+  const ids = ['idb-remove', 'idb-undo'];
+  const first = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => false,
+    makeId: () => ids.shift(), locks: availableLocks,
+  });
+  await first.mutate('pantry.remove', { id: target.id, expectedFingerprint: pantryRecordFingerprint(target) });
+  await first.mutate('pantry.restore', { item: target, expectedAbsent: true });
+  const [remove] = await repo.listOutbox('cook-1', 'our-home');
+  await repo.updateOutbox({ ...remove, status: 'failed', lastError: 'pantry_record_conflict', deliveryState: 'rejected' });
+  await repo.putWorkspace('cook-1', 'our-home', remote);
+  repo.close();
+
+  repo = await openOfflineDb({ indexedDB, name });
+  const restarted = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, locks: availableLocks,
+    send: async () => { throw new Error('cancelled IndexedDB Undo must not send'); },
+  });
+  assert.equal(await restarted.drain(), false);
+  const durable = await repo.listOutbox('cook-1', 'our-home');
+  assert.equal(durable[1].undoOf, 'idb-remove');
+  assert.deepEqual({ status: durable[1].status, lastError: durable[1].lastError, deliveryState: durable[1].deliveryState },
+    { status: 'failed', lastError: 'pantry_restore_conflict', deliveryState: 'rejected' });
+  assert.deepEqual(restarted.current().pantry.map(({ quantity }) => quantity), [24]);
+  repo.close();
+});
+
+test('accepted invalid-looking restore replays its duplicate receipt and acknowledges monotonically', async () => {
+  const remote = base({ revision: 2, pantry: [{
+    id: 'oil', raw: '3 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 24, unit: 'ounce', kind: 'divisible', confidence: 1, updatedAt: 20,
+  }] });
+  const repo = memoryRepo(remote);
+  await repo.enqueue({
+    mutationId: 'accepted-restore', authSub: 'cook-1', householdId: 'our-home', scope: 'workspace',
+    op: 'pantry.restore', payload: { item: { ...remote.pantry[0], raw: '2 cups Olive Oil', quantity: 16 }, expectedAbsent: true },
+    status: 'pending', deliveryState: 'accepted', attempts: 1, createdAt: 10,
+  });
+  const sent = [];
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: remote,
+    send: async (request) => { sent.push(request.mutationId); return { ok: true, workspace: remote }; },
+  });
+  assert.equal(await manager.drain(), true);
+  assert.deepEqual(sent, ['accepted-restore']);
+  assert.deepEqual(await repo.listOutbox(), []);
+  assert.deepEqual(manager.current().pantry.map(({ quantity }) => quantity), [24]);
+});
+
+test('uncertain invalid-looking restore remains uncertain and retry-only after definitive conflict', async () => {
+  const remote = base({ revision: 2, pantry: [{
+    id: 'oil', raw: '3 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 24, unit: 'ounce', kind: 'divisible', confidence: 1, updatedAt: 20,
+  }] });
+  const repo = memoryRepo(remote);
+  await repo.enqueue({
+    mutationId: 'uncertain-restore', authSub: 'cook-1', householdId: 'our-home', scope: 'workspace',
+    op: 'pantry.restore', payload: { item: { ...remote.pantry[0], raw: '2 cups Olive Oil', quantity: 16 }, expectedAbsent: true },
+    status: 'pending', deliveryState: 'uncertain', attempts: 1, createdAt: 10,
+  });
+  const statuses = [];
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: remote,
+    onStatus: (status) => statuses.push(status),
+    send: async () => ({ ok: false, status: 409, workspace: remote }),
+  });
+  assert.equal(await manager.drain(), false);
+  const [durable] = await repo.listOutbox();
+  assert.deepEqual({ status: durable.status, lastError: durable.lastError, deliveryState: durable.deliveryState },
+    { status: 'failed', lastError: 'pantry_restore_conflict', deliveryState: 'uncertain' });
+  assert.equal(statuses.at(-1).discardable, false);
+  assert.equal(await manager.discard(durable.sequence), false);
+  assert.deepEqual(manager.current().pantry.map(({ quantity }) => quantity), [24]);
+});

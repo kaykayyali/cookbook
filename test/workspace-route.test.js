@@ -169,6 +169,27 @@ test('Pantry conditional remove and expected-absent restore return actionable 40
   assert.equal(store.current().revision, 1);
 });
 
+test('Pantry restore rejects a qualitative/numeric merge-equivalent authority record before CAS', async () => {
+  const store = workspaceDb();
+  const seed = await onRequestPatch(context(store.db, { body: {
+    mutationId: 'seed-qualitative-oil', baseRevision: 0, op: 'pantry.add', payload: { item: {
+      id: 'remote-oil', raw: 'Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+      quantity: null, unit: 'qualitative', kind: 'qualitative', confidence: 0.5,
+    } },
+  } }));
+  assert.equal(seed.status, 200);
+  const authority = await seed.json();
+  const restore = await onRequestPatch(context(store.db, { body: {
+    mutationId: 'restore-numeric-oil', baseRevision: 1, op: 'pantry.restore', payload: { item: {
+      id: 'removed-oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+      quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1,
+    }, expectedAbsent: true },
+  } }));
+  assert.equal(restore.status, 409);
+  assert.deepEqual(await restore.json(), { error: 'pantry_restore_conflict', workspace: authority });
+  assert.equal(store.current().revision, 1, 'rejected restore performs no authority write');
+});
+
 test('planner attribution comes from authenticated membership, not client payload', async () => {
   const store = workspaceDb();
   const response = await onRequestPatch(context(store.db, { body: {
