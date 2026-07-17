@@ -11,6 +11,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 const DOCS = join(ROOT, 'docs');
 const RECIPE_ID = 'recipe-tall-ingredients';
+const SCALAR_RECIPE_ID = 'recipe-scalar-yield';
 const INGREDIENTS = Array.from({ length: 40 }, (_, index) => `${index + 1} ingredient ${index + 1}`);
 
 let server;
@@ -114,6 +115,20 @@ async function createRecipePage(viewport) {
               carbohydrateContent: '56 g',
             },
           },
+        }, {
+          id: SCALAR_RECIPE_ID,
+          author: { sub: 'kay', name: 'Kaysser Kayyali' },
+          createdAt: 2,
+          updatedAt: 2,
+          recipe: {
+            '@context': 'https://schema.org',
+            '@type': 'Recipe',
+            name: 'Four Serving Soup',
+            recipeCategory: 'Dinner',
+            recipeYield: '4 servings',
+            recipeIngredient: ['4 cups stock'],
+            recipeInstructions: [{ '@type': 'HowToStep', position: 1, text: 'Simmer.' }],
+          },
         }],
         nextCursor: null,
       });
@@ -146,6 +161,14 @@ async function createRecipePage(viewport) {
     'Dinner · Weeknight',
     'Italian · American',
   ]);
+  const arrayYieldPill = card.locator('.meta-pill');
+  assert.equal(await arrayYieldPill.textContent(), 'Serves 4 · One 10-inch pizza');
+  assert.equal(await arrayYieldPill.locator('svg.icon').count(), 1);
+  assert.doesNotMatch(await arrayYieldPill.textContent(), /Serves Makes|4 servings,1 10-inch pizza/);
+
+  const scalarYieldPill = page.locator(`.recipe-card[data-id="${SCALAR_RECIPE_ID}"] .meta-pill`);
+  assert.equal(await scalarYieldPill.textContent(), 'Serves 4');
+  assert.equal(await scalarYieldPill.locator('svg.icon').count(), 1);
   await card.click();
   await page.locator('#detail-modal.open').waitFor();
   return { context, page, browserErrors };

@@ -79,7 +79,9 @@ function spellSingleItem(value, capitalized) {
  */
 export function formatRecipeYield(value) {
   const parts = (Array.isArray(value) ? value : [value])
-    .filter((part) => part !== null && part !== undefined && String(part).trim())
+    .filter((part) => (
+      typeof part === 'string' || (typeof part === 'number' && Number.isFinite(part))
+    ) && String(part).trim())
     .map((part) => parseRecipeYieldPart(String(part).trim()));
   if (!parts.length) return null;
 
