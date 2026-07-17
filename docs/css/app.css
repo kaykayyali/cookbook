@@ -626,6 +626,10 @@
 	.detail-modal.open {
 		transform: translateY(0);
 	}
+	.detail-modal[hidden],
+	#detail-overlay[hidden] {
+		display: none;
+	}
 
 	.detail-header {
 		display: flex;

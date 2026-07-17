@@ -30,9 +30,15 @@ test('recipe detail is modal, focuses inside, traps Tab, closes on Escape, and r
   const close = document.getElementById('detail-close-btn');
   const last = document.getElementById('dm-schema-btn');
   assert.equal(modal.getAttribute('aria-modal'), null, 'closed detail is not exposed as modal');
+  assert.equal(modal.hidden, true, 'initial detail is removed from rendering and the accessibility tree');
+  assert.equal(modal.getAttribute('aria-hidden'), 'true');
+  assert.equal(modal.hasAttribute('inert'), true, 'initial detail descendants are outside the tab order');
   opener.focus();
   detail.open('r1');
   assert.equal(modal.getAttribute('aria-modal'), 'true');
+  assert.equal(modal.hidden, false, 'open removes hidden before moving focus');
+  assert.equal(modal.hasAttribute('aria-hidden'), false);
+  assert.equal(modal.hasAttribute('inert'), false);
   assert.equal(document.activeElement, close, 'focus enters at the close control');
 
   close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
@@ -42,5 +48,9 @@ test('recipe detail is modal, focuses inside, traps Tab, closes on Escape, and r
   close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   assert.equal(modal.classList.contains('open'), false);
   assert.equal(modal.getAttribute('aria-modal'), null, 'closed detail releases modal semantics');
+  assert.equal(modal.hidden, true, 'close removes the detail from rendering immediately');
+  assert.equal(modal.getAttribute('aria-hidden'), 'true');
+  assert.equal(modal.hasAttribute('inert'), true, 'close controls are unreachable immediately');
+  assert.equal(close.closest('[hidden]'), modal);
   assert.equal(document.activeElement, opener, 'closing restores the exact opener');
 });

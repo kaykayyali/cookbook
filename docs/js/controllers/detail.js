@@ -220,10 +220,16 @@ export function initDetail({
       ? document.activeElement
       : opener;
     if (modal) {
+      modal.hidden = false;
+      modal.removeAttribute?.('aria-hidden');
+      modal.removeAttribute?.('inert');
       modal.setAttribute?.('aria-modal', 'true');
       modal.classList.add('open');
     }
-    if (overlay) overlay.classList.add('open');
+    if (overlay) {
+      overlay.hidden = false;
+      overlay.classList.add('open');
+    }
     document.body.style.overflow = 'hidden';
     document.getElementById('detail-close-btn')?.focus?.();
   }
@@ -232,10 +238,16 @@ export function initDetail({
     const modal = document.getElementById('detail-modal');
     const overlay = document.getElementById('detail-overlay');
     if (modal) {
+      modal.setAttribute?.('inert', '');
+      modal.setAttribute?.('aria-hidden', 'true');
       modal.classList.remove('open');
       modal.removeAttribute?.('aria-modal');
+      modal.hidden = true;
     }
-    if (overlay) overlay.classList.remove('open');
+    if (overlay) {
+      overlay.classList.remove('open');
+      overlay.hidden = true;
+    }
     if (!isAnyOpen(document)) document.body.style.overflow = '';
     state.detailId = null;
     current = null;
@@ -516,6 +528,15 @@ export function initDetail({
     openRecipe(r, { source: 'local', author: r._author, isAuthor });
   }
 
+  const initialModal = document.getElementById('detail-modal');
+  if (initialModal && !initialModal.classList.contains('open')) {
+    initialModal.setAttribute?.('inert', '');
+    initialModal.setAttribute?.('aria-hidden', 'true');
+    initialModal.removeAttribute?.('aria-modal');
+    initialModal.hidden = true;
+  }
+  const initialOverlay = document.getElementById('detail-overlay');
+  if (initialOverlay && !initialOverlay.classList.contains('open')) initialOverlay.hidden = true;
   wireDetail();
   return {
     open, close: closeSheet, restore, _renderIngredients: renderIngredients, _addToCart: addToCartHandler,

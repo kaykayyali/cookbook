@@ -770,6 +770,10 @@
 	@media (max-width: 36rem) {
 		.cook-ratings { grid-template-columns: minmax(0, 1fr); }
 		.cook-star-rating > button { flex: 1; }
+		.detail-modal .btn-sm,
+		.detail-modal .detail-close,
+		.detail-modal .detail-pantry-note button,
+		.detail-modal .cook-history-actions button { min-width: 44px; min-height: 44px; }
 	}
 
 	.week-grid {

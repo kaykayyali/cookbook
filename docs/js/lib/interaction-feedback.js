@@ -38,11 +38,15 @@ function visible(document) {
   catch { return false; }
 }
 
-function safeNow(now) {
-  try {
-    const value = Number(now?.());
-    return Number.isFinite(value) ? value : null;
-  } catch { return null; }
+function createSafeClock(now) {
+  let lastKnown = 0;
+  return () => {
+    try {
+      const value = Number(now?.());
+      if (Number.isFinite(value)) lastKnown = Math.max(lastKnown, value);
+    } catch { /* Keep the last monotonic value so throttling stays fail-closed. */ }
+    return lastKnown;
+  };
 }
 
 export function createSoundAdapter({
@@ -55,6 +59,7 @@ export function createSoundAdapter({
   let context = null;
   const lastPlayedByType = new Map();
   const active = new Set();
+  const readNow = createSafeClock(now);
 
   function enabled() {
     return readMigratedPreference(storage, SOUNDS_KEY, LEGACY_SOUNDS_KEY, true);
@@ -72,11 +77,22 @@ export function createSoundAdapter({
     for (const record of [...active]) cleanNode(record);
   }
 
+  function releaseContext() {
+    const owned = context;
+    context = null;
+    stopActive();
+    if (!owned) return;
+    try {
+      const closed = owned.close?.();
+      closed?.catch?.(() => {});
+    } catch { /* Ownership is already released even when close is hostile. */ }
+  }
+
   function play(type, { fromUserGesture = false, interaction = null } = {}) {
     const cue = FEEDBACK_EVENTS[type];
     const gesture = fromUserGesture || Boolean(interaction?.trusted && interaction?.modality !== 'programmatic');
     if (!cue || !AudioContext || !enabled() || !visible(document) || (!context && !gesture)) return false;
-    const playedAt = safeNow(now);
+    const playedAt = readNow();
     const lastPlayedAt = lastPlayedByType.get(type);
     if (playedAt != null && lastPlayedAt != null && playedAt - lastPlayedAt < minInterval) return false;
 
@@ -119,7 +135,7 @@ export function createSoundAdapter({
       if (playedAt != null) lastPlayedByType.set(type, playedAt);
       return true;
     } catch {
-      stopActive();
+      releaseContext();
       return false;
     }
   }
@@ -132,14 +148,7 @@ export function createSoundAdapter({
     },
     play,
     destroy() {
-      stopActive();
-      if (context && context.state !== 'closed') {
-        try {
-          const closed = context.close?.();
-          closed?.catch?.(() => {});
-        } catch { /* Optional cleanup. */ }
-      }
-      context = null;
+      releaseContext();
       lastPlayedByType.clear();
     },
   };
@@ -162,7 +171,11 @@ export function createHapticAdapter({
 } = {}) {
   const lastPulseByType = new Map();
   let activeUntil = -Infinity;
-  const supported = () => typeof navigator?.vibrate === 'function';
+  const readNow = createSafeClock(now);
+  const supported = () => {
+    try { return typeof navigator?.vibrate === 'function'; }
+    catch { return false; }
+  };
   const enabled = () => readMigratedPreference(storage, HAPTICS_KEY, LEGACY_HAPTICS_KEY, true);
 
   function pulse(type, { interaction = null, fromUserGesture = false } = {}) {
@@ -173,7 +186,7 @@ export function createHapticAdapter({
     const pattern = FEEDBACK_EVENTS[type]?.haptic;
     if (!pattern || !supported() || !enabled() || !visible(document)
         || !touchInteraction(origin, navigator)) return false;
-    const pulseAt = safeNow(now);
+    const pulseAt = readNow();
     const lastPulseAt = lastPulseByType.get(type);
     if (pulseAt != null && lastPulseAt != null && pulseAt - lastPulseAt < minInterval) return false;
     try {
@@ -188,7 +201,7 @@ export function createHapticAdapter({
   }
 
   function cancel(interaction = null) {
-    const cancelAt = safeNow(now);
+    const cancelAt = readNow();
     if (cancelAt == null || cancelAt >= activeUntil) return false;
     if (!supported() || !visible(document) || !touchInteraction(interaction, navigator)) return false;
     try {
@@ -254,6 +267,7 @@ export function createInteractionFeedback({
   const outcomeTimers = new Map();
   const recentInteractions = new WeakMap();
   const emittedByEvent = new WeakMap();
+  const registeredListeners = [];
   let initialized = false;
 
   function release(control) {
@@ -325,17 +339,23 @@ export function createInteractionFeedback({
     if (target?.classList) {
       try {
         const className = `has-feedback-${type}`;
-        if (outcomeTimers.has(target)) {
-          try { cancelSchedule(outcomeTimers.get(target)); } catch { /* Optional scheduler. */ }
+        const previous = outcomeTimers.get(target);
+        if (previous?.timer != null) {
+          try { cancelSchedule(previous.timer); } catch { /* A stale callback is identity-guarded below. */ }
         }
         for (const eventType of Object.keys(FEEDBACK_EVENTS)) target.classList.remove(`has-feedback-${eventType}`);
         target.classList.add(className);
+        const record = { className, timer: null };
+        outcomeTimers.set(target, record);
         try {
-          outcomeTimers.set(target, schedule(() => {
+          record.timer = schedule(() => {
             try { target.classList.remove(className); } catch { /* Detached target. */ }
-            outcomeTimers.delete(target);
-          }, 140));
-        } catch { /* Visual class remains harmless until destroy/re-render. */ }
+            if (outcomeTimers.get(target) === record) outcomeTimers.delete(target);
+          }, 140);
+        } catch {
+          try { target.classList.remove(className); } catch { /* Detached target. */ }
+          if (outcomeTimers.get(target) === record) outcomeTimers.delete(target);
+        }
       } catch { /* Optional visual channel. */ }
     }
     dispatchObserved(document, type, target, context);
@@ -368,21 +388,29 @@ export function createInteractionFeedback({
     contextFromEvent,
     init() {
       if (!initialized && document?.addEventListener) {
-        for (const [type, listener, capture] of listeners) document.addEventListener(type, listener, capture);
-        initialized = true;
+        try {
+          for (const [type, listener, capture] of listeners) {
+            document.addEventListener(type, listener, capture);
+            registeredListeners.push([type, listener, capture]);
+          }
+          initialized = true;
+        } catch {
+          for (const [type, listener, capture] of registeredListeners.splice(0)) {
+            try { document?.removeEventListener?.(type, listener, capture); } catch { /* Detached document. */ }
+          }
+          initialized = false;
+        }
       }
       return this;
     },
     destroy() {
-      if (initialized) {
-        for (const [type, listener, capture] of listeners) {
-          try { document?.removeEventListener?.(type, listener, capture); } catch { /* Detached document. */ }
-        }
+      for (const [type, listener, capture] of registeredListeners.splice(0)) {
+        try { document?.removeEventListener?.(type, listener, capture); } catch { /* Detached document. */ }
       }
       initialized = false;
       releaseAll();
-      for (const [target, timer] of outcomeTimers) {
-        try { cancelSchedule(timer); } catch { /* Optional scheduler. */ }
+      for (const [target, record] of outcomeTimers) {
+        if (record?.timer != null) try { cancelSchedule(record.timer); } catch { /* Optional scheduler. */ }
         for (const type of Object.keys(FEEDBACK_EVENTS)) {
           try { target.classList?.remove(`has-feedback-${type}`); } catch { /* Detached target. */ }
         }

@@ -108,7 +108,7 @@ async function appPage(viewport, {
   let authoritative = workspaceFixture();
   let cookEvents = [];
   let reactions = [];
-  const patchState = { attempts: 0 };
+  const patchState = { attempts: 0, failuresRemaining: patchFailures };
   await context.route('**/api/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -121,7 +121,10 @@ async function appPage(viewport, {
     if (url.pathname === '/api/workspace' && request.method() === 'PATCH') {
       patchState.attempts += 1;
       if (patchDelay) await new Promise((resolve) => setTimeout(resolve, patchDelay));
-      if (patchState.attempts <= patchFailures) return json(route, { error: 'temporary_sync_failure' }, patchFailureStatus);
+      if (patchState.failuresRemaining > 0) {
+        patchState.failuresRemaining -= 1;
+        return json(route, { error: 'temporary_sync_failure' }, patchFailureStatus);
+      }
       const mutation = request.postDataJSON();
       authoritative = applyWorkspaceOperation(authoritative, mutation);
       authoritative.revision += 1;
@@ -158,15 +161,70 @@ async function appPage(viewport, {
   return { context, page, patchState, authoritative: () => authoritative };
 }
 
-async function captureSurface(page, name) {
+async function waitForSettled(locator) {
+  await locator.evaluate(async (element) => {
+    const animations = element.getAnimations?.({ subtree: true }) || [];
+    await Promise.allSettled(animations.map((animation) => animation.finished));
+    await new Promise((resolve, reject) => {
+      let previous = null;
+      let stableFrames = 0;
+      let frames = 0;
+      const sample = () => {
+        const rect = element.getBoundingClientRect();
+        const current = [rect.x, rect.y, rect.width, rect.height, getComputedStyle(element).opacity].join(':');
+        stableFrames = current === previous ? stableFrames + 1 : 0;
+        previous = current;
+        frames += 1;
+        if (stableFrames >= 2) resolve();
+        else if (frames >= 20) reject(new Error(`capture never settled: ${current}`));
+        else requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
+  });
+}
+
+async function assertTransientPurity(page, { allowSync = false, toast = null } = {}) {
+  const activeSync = page.locator('#sync-status:not([hidden]), #recipe-sync-status:not([hidden]), #cook-sync-status:not([hidden])');
+  if (!allowSync) {
+    const unexpectedSync = await activeSync.evaluateAll((elements) => elements.map((element) => ({
+      id: element.id,
+      text: element.textContent.trim(),
+    })));
+    assert.deepEqual(unexpectedSync, [], `unrelated sync banners must be absent: ${JSON.stringify(unexpectedSync)}`);
+  }
+  const visibleToast = page.locator('#toast.show');
+  if (toast) {
+    assert.equal(await visibleToast.count(), 1, 'the scenario-specific toast must be present');
+    assert.match(await visibleToast.innerText(), toast);
+  } else {
+    await page.waitForFunction(() => !document.querySelector('#toast')?.classList.contains('show'));
+    assert.equal(await visibleToast.count(), 0, 'unrelated toast must be absent');
+  }
+}
+
+async function assertFreshFixture(page) {
+  await page.locator('[data-entry-id="plan-soup"]').waitFor();
+  await page.waitForFunction(() => ['sync-status', 'recipe-sync-status', 'cook-sync-status']
+    .every((id) => document.getElementById(id)?.hidden !== false));
+  assert.equal(await page.locator('[data-entry-id="plan-soup"].is-skipped').count(), 0, 'each evidence scenario starts from an active plan');
+  assert.equal(await page.locator('[data-pantry-id="pantry-onion"]').count(), 1, 'each evidence scenario starts with the pantry fixture');
+  assert.equal(await page.locator('#detail-modal').getAttribute('hidden'), '', 'each evidence scenario starts with detail closed');
+  assert.equal((await page.locator('#recipe-drawer').getAttribute('class')).includes('open'), false, 'each evidence scenario starts with the drawer closed');
+  await assertTransientPurity(page);
+}
+
+async function captureSurface(page, name, purity = {}) {
   if (!CAPTURE) return;
-  await page.waitForTimeout(180);
+  await assertTransientPurity(page, purity);
+  await waitForSettled(page.locator('body'));
   await page.screenshot({ path: join(ARTIFACTS, `${name}.png`), fullPage: false });
 }
 
-async function captureElement(page, locator, name) {
+async function captureElement(page, locator, name, purity = {}) {
   if (!CAPTURE) return;
-  await page.waitForTimeout(180);
+  await assertTransientPurity(page, purity);
+  await waitForSettled(locator);
   await locator.screenshot({ path: join(ARTIFACTS, `${name}.png`) });
 }
 
@@ -260,7 +318,20 @@ test('primary controls are 44px touch-safe on mobile without desktop bloat', { t
       await page.locator('button[data-panel="recipes"]').click();
       await page.locator(`.recipe-card[data-id="${RECIPE_ID}"]`).click();
       await page.locator('#detail-modal.open .detail-ing-item').first().waitFor();
-      await measure(['#detail-modal.open .detail-ing-item']);
+      await measure([
+        '#detail-close-btn',
+        '#detail-modal.open .detail-ing-item',
+        '#dm-add-all-btn',
+        '#dm-pantry-note [data-action="add-missing"]',
+      ]);
+      await page.locator('#dm-mark-cooked-btn').click();
+      await page.locator('.cook-history-card').first().waitFor({ timeout: 1_000 });
+      await measure([
+        '.cook-history-card [data-action="save-occasion"]',
+        '.cook-history-card [data-action="save-review"]',
+        '.cook-history-card [data-action="edit-history"]',
+        '.cook-history-card [data-action="delete-history"]',
+      ]);
       console.log(`# ${label} target measurements ${JSON.stringify(measurements)}`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, JSON.stringify(measurements));
     } finally { await context.close(); }
@@ -285,6 +356,11 @@ test('production bundle preserves optimistic flows, recovery, modal transitions,
 
       const card = page.locator(`.recipe-card[data-id="${RECIPE_ID}"]`);
       assert.equal(await page.locator('#detail-modal').getAttribute('aria-modal'), null, 'closed detail is not modal');
+      assert.equal(await page.locator('#detail-modal').getAttribute('hidden'), '', 'closed detail is not rendered');
+      assert.equal(await page.locator('#detail-modal').getAttribute('aria-hidden'), 'true');
+      assert.equal(await page.locator('#detail-modal').getAttribute('inert'), '');
+      assert.equal((await page.locator('#detail-modal').ariaSnapshot()).trim(), '', 'closed detail contributes no accessibility tree');
+      assert.equal(await page.locator('#detail-close-btn').isVisible(), false, 'closed controls are unreachable');
       const feedbackBeforeCard = await page.evaluate(() => window.__feedbackEvents.length);
       await card.focus();
       await card.press('Enter');
@@ -297,6 +373,11 @@ test('production bundle preserves optimistic flows, recovery, modal transitions,
       await page.keyboard.press('Escape');
       assert.equal(await page.locator('#detail-modal').getAttribute('class').then((value) => value.includes('open')), false);
       assert.equal(await page.locator('#detail-modal').getAttribute('aria-modal'), null, 'closed detail releases modal semantics');
+      assert.equal(await page.locator('#detail-modal').getAttribute('hidden'), '');
+      assert.equal(await page.locator('#detail-modal').getAttribute('aria-hidden'), 'true');
+      assert.equal(await page.locator('#detail-modal').getAttribute('inert'), '');
+      assert.equal((await page.locator('#detail-modal').ariaSnapshot()).trim(), '', 'closed detail content leaves the accessibility tree');
+      assert.equal(await page.locator('#detail-close-btn').isVisible(), false);
       assert.equal(await page.evaluate(() => document.activeElement?.dataset?.id), RECIPE_ID);
 
       const beforeMouse = await page.evaluate(() => window.__hapticCalls.length);
@@ -315,58 +396,46 @@ test('production bundle preserves optimistic flows, recovery, modal transitions,
         assert.equal(await page.evaluate(() => window.__hapticCalls.length), afterTouch, 'mouse after touch must not inherit touch origin');
       }
       const skip = page.locator('[data-entry-id="plan-soup"] [data-action="skip"]');
-      await captureSurface(page, `${label}-01-week-before`);
       await skip.dispatchEvent('pointerdown', { pointerId: 7, pointerType: label === 'mobile' ? 'touch' : 'mouse', isPrimary: true });
-      await captureSurface(page, `${label}-02-week-pressed`);
       await skip.dispatchEvent('pointercancel', { pointerId: 7, pointerType: label === 'mobile' ? 'touch' : 'mouse', isPrimary: true });
       const optimisticStarted = Date.now();
       if (label === 'mobile') await skip.tap(); else await skip.click();
       await page.locator('[data-entry-id="plan-soup"].is-skipped').waitFor({ timeout: 700 });
       assert.ok(Date.now() - optimisticStarted < 700, 'Week skip must publish before delayed sync');
-      await captureSurface(page, `${label}-03-week-optimistic`);
       await page.locator('#sync-status:not([hidden])').waitFor({ timeout: 2_000 });
       assert.match(await page.locator('#sync-status').innerText(), /needs attention/i);
       await page.locator('#sync-status').scrollIntoViewIfNeeded();
-      await captureElement(page, page.locator('#sync-status'), `${label}-04-sync-blocked`);
       const retry = page.locator('#sync-status [data-action="retry-sync"]');
       if (label === 'mobile') await retry.tap(); else await retry.click();
       await page.waitForFunction(() => document.querySelector('#sync-status')?.hidden === true, null, { timeout: 3_000 });
       assert.ok(patchState.attempts >= 2);
       assert.equal(authoritative().plan.find((entry) => entry.id === 'plan-soup')?.status, 'skipped');
-      await captureSurface(page, `${label}-05-sync-recovered`);
 
       await page.locator('button[data-panel="pantry"]').click();
-      await captureSurface(page, `${label}-06-pantry-before`);
       const remove = page.locator('.pantry-remove').first();
       await remove.click();
       await page.locator('[data-pantry-id="pantry-onion"]').waitFor({ state: 'detached', timeout: 700 });
-      await captureSurface(page, `${label}-07-pantry-optimistic`);
 
       await page.locator('button[data-panel="cart"]').click();
       const activeRow = page.locator('.shopping-list:not(.shopping-list-completed) .cart-row').first();
-      await captureSurface(page, `${label}-08-shopping-active`);
       await activeRow.locator('.cart-check').click();
       await page.locator('.cart-completed .cart-row').first().waitFor({ state: 'attached', timeout: 1_000 });
       assert.match(await page.locator('.cart-completed > summary').innerText(), /Completed \(1\)/);
-      await captureSurface(page, `${label}-09-shopping-completed`);
 
       await page.locator('button[data-panel="recipes"]').click();
       await page.locator('#fab-new').click();
       assert.equal((await page.evaluate(() => window.__feedbackEvents)).filter((event) => event.targetId === 'fab-new').length, 1, 'capture integration must not duplicate FAB feedback');
       await page.locator('[data-fab-action="manual"]').click();
       await page.locator('#recipe-drawer.open').waitFor();
-      await captureSurface(page, `${label}-10-drawer-open`);
       await page.locator('#drawer-cancel-btn').click();
       await page.locator('#recipe-drawer').waitFor({ state: 'attached' });
       assert.equal((await page.locator('#recipe-drawer').getAttribute('class')).includes('open'), false);
 
       await page.locator('button[data-panel="recipes"]').click();
       await card.click();
-      await captureSurface(page, `${label}-11-modal-open`);
       await page.locator('#dm-mark-cooked-btn').click();
       await page.locator('.cook-history-card').first().waitFor({ timeout: 1_000 });
       assert.match(await page.locator('#dm-history').innerText(), /Occasion/);
-      await captureSurface(page, `${label}-12-completion-history`);
 
       await page.locator('#detail-close-btn').click();
       const deleteButton = card.locator('[data-action="delete"]');
@@ -399,6 +468,111 @@ test('production bundle preserves optimistic flows, recovery, modal transitions,
       }
       assert.deepEqual(pageErrors, []);
     } finally { await context.close(); }
+  }
+});
+
+test('scenario-pure evidence resets fixtures, asserts labels, and captures only settled intended state', { skip: !CAPTURE, timeout: 180_000 }, async () => {
+  for (const [label, viewport] of [['mobile', { width: 402, height: 874 }], ['desktop', { width: 1280, height: 800 }]]) {
+    const touch = label === 'mobile';
+    const activate = (locator) => (touch ? locator.tap() : locator.click());
+    async function scenario(options, run) {
+      const app = await appPage(viewport, { reducedMotion: 'reduce', touch, ...options });
+      try {
+        await assertFreshFixture(app.page);
+        await run(app);
+      } finally { await app.context.close(); }
+    }
+
+    await scenario({ patchDelay: 1_000 }, async ({ page, authoritative }) => {
+      const skip = page.locator('[data-entry-id="plan-soup"] [data-action="skip"]');
+      assert.equal(await skip.innerText(), 'Skip');
+      await captureSurface(page, `${label}-01-week-before`);
+      await skip.dispatchEvent('pointerdown', { pointerId: 31, pointerType: touch ? 'touch' : 'mouse', isPrimary: true });
+      assert.equal(await skip.evaluate((element) => element.classList.contains('is-feedback-pressed')), true);
+      await captureSurface(page, `${label}-02-week-pressed`);
+      await skip.dispatchEvent('pointercancel', { pointerId: 31, pointerType: touch ? 'touch' : 'mouse', isPrimary: true });
+      await activate(skip);
+      await page.locator('[data-entry-id="plan-soup"].is-skipped').waitFor();
+      assert.equal(await skip.innerText(), 'Unskip');
+      assert.equal(authoritative().plan[0].status, 'active', 'capture proves optimistic UI before server authority');
+      await captureSurface(page, `${label}-03-week-optimistic`);
+    });
+
+    await scenario({ patchDelay: 100, patchFailureStatus: 400 }, async ({ page, patchState, authoritative }) => {
+      patchState.failuresRemaining = 1;
+      const skip = page.locator('[data-entry-id="plan-soup"] [data-action="skip"]');
+      await activate(skip);
+      const status = page.locator('#sync-status:not([hidden])');
+      await status.waitFor();
+      assert.match(await status.innerText(), /needs attention/i);
+      await captureElement(page, status, `${label}-04-sync-blocked`, { allowSync: true });
+      await activate(status.locator('[data-action="retry-sync"]'));
+      await page.waitForFunction(() => document.querySelector('#sync-status')?.hidden === true);
+      assert.ok(patchState.attempts >= 2);
+      assert.equal(authoritative().plan[0].status, 'skipped');
+      const recoveredEntry = page.locator('[data-entry-id="plan-soup"].is-skipped');
+      assert.equal(await recoveredEntry.count(), 1);
+      await captureElement(page, recoveredEntry, `${label}-05-sync-recovered`);
+    });
+
+    await scenario({ patchDelay: 1_000 }, async ({ page, authoritative }) => {
+      await page.locator('button[data-panel="pantry"]').click();
+      const onion = page.locator('[data-pantry-id="pantry-onion"]');
+      await onion.waitFor();
+      await captureSurface(page, `${label}-06-pantry-before`);
+      await onion.locator('.pantry-remove').click();
+      await onion.waitFor({ state: 'detached' });
+      assert.equal(authoritative().pantry.length, 1, 'pantry capture is optimistic, not a reused settled fixture');
+      await captureSurface(page, `${label}-07-pantry-optimistic`, { toast: /removed.*onion/i });
+    });
+
+    await scenario({ patchDelay: 1_000 }, async ({ page, authoritative }) => {
+      await page.locator('button[data-panel="cart"]').click();
+      const active = page.locator('.shopping-list:not(.shopping-list-completed) .cart-row').first();
+      await active.waitFor();
+      await captureSurface(page, `${label}-08-shopping-active`);
+      await active.locator('.cart-check').click();
+      const completed = page.locator('.cart-completed .cart-row').first();
+      await completed.waitFor({ state: 'attached' });
+      const completedSummary = page.locator('.cart-completed > summary');
+      assert.match(await completedSummary.innerText(), /Completed \(1\)/);
+      await completedSummary.click();
+      await completed.waitFor();
+      assert.deepEqual(authoritative().shoppingChecked, {}, 'shopping capture remains the intended optimistic state');
+      await captureSurface(page, `${label}-09-shopping-completed`);
+    });
+
+    await scenario({}, async ({ page }) => {
+      await page.locator('button[data-panel="recipes"]').click();
+      await page.locator('#fab-new').click();
+      await page.locator('[data-fab-action="manual"]').click();
+      const drawer = page.locator('#recipe-drawer.open');
+      await drawer.waitFor();
+      assert.equal(await page.locator('#detail-modal').getAttribute('hidden'), '');
+      await captureSurface(page, `${label}-10-drawer-open`);
+    });
+
+    await scenario({}, async ({ page }) => {
+      await page.locator('button[data-panel="recipes"]').click();
+      await page.locator(`.recipe-card[data-id="${RECIPE_ID}"]`).click();
+      const modal = page.locator('#detail-modal.open');
+      await modal.waitFor();
+      assert.equal(await modal.getAttribute('aria-modal'), 'true');
+      assert.equal(await page.locator('#dm-title').innerText(), 'Responsive Tomato Soup');
+      assert.equal((await page.locator('#recipe-drawer').getAttribute('class')).includes('open'), false);
+      await captureSurface(page, `${label}-11-modal-open`);
+    });
+
+    await scenario({}, async ({ page }) => {
+      await page.locator('button[data-panel="recipes"]').click();
+      await page.locator(`.recipe-card[data-id="${RECIPE_ID}"]`).click();
+      await page.locator('#dm-mark-cooked-btn').click();
+      const history = page.locator('.cook-history-card').first();
+      await history.waitFor();
+      assert.match(await history.innerText(), /Occasion/);
+      await page.waitForFunction(() => !document.querySelector('#toast')?.classList.contains('show'));
+      await captureSurface(page, `${label}-12-completion-history`);
+    });
   }
 });
 
