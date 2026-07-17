@@ -11,7 +11,7 @@ import {
   COUNT_LABELS,
   INGREDIENT_CATEGORIES,
 } from './cart.js';
-import { effectiveIngredientRecords } from './ingredient-corrections.js';
+import { effectiveIngredientRecords, formatEffectiveIngredient } from './ingredient-corrections.js';
 
 const LEADING_QTY = /^[\d¼½¾⅓⅔⅛⅜⅝⅞\s.,/-]+/;
 const LEADING_UNIT =
@@ -108,9 +108,10 @@ export function allRecipeIngredients(recipes) {
   recipes.forEach((r) => {
     effectiveIngredientRecords(r).forEach((ingredient) => {
       const raw = ingredient.raw;
-      const base = ingredient.name;
-      if (base) seen.add(base);
-      const full = raw.trim().toLowerCase();
+      const legacyBase = ingredient.reviewStatus === 'reviewed' ? '' : baseName(raw);
+      if (legacyBase) seen.add(legacyBase);
+      if (ingredient.name) seen.add(ingredient.name);
+      const full = (ingredient.reviewStatus === 'reviewed' ? formatEffectiveIngredient(ingredient) : raw).trim().toLowerCase();
       if (full) seen.add(full);
     });
   });

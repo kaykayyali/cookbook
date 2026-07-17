@@ -1,6 +1,7 @@
 import {
   canonicalName,
   normalizeIngredient,
+  isNormalizedIngredient,
   NORMALIZATION_VERSION,
   COUNT_LABELS,
 } from './cart.js';
@@ -137,29 +138,82 @@ export function validateIngredientCorrection(input) {
 }
 
 function reviewedRecord(record) {
-  return record && typeof record === 'object'
-    && typeof record.id === 'string'
-    && typeof record.raw === 'string'
-    && record.reviewStatus === 'reviewed'
-    && Number.isInteger(record.parserVersion)
-    && record.parserVersion > 0;
+  if (!record || typeof record !== 'object'
+      || typeof record.id !== 'string' || !record.id
+      || typeof record.raw !== 'string' || !record.raw.trim()
+      || record.reviewStatus !== 'reviewed'
+      || !Number.isInteger(record.parserVersion) || record.parserVersion <= 0
+      || !Number.isFinite(record.reviewedAt) || record.reviewedAt <= 0
+      || !isNormalizedIngredient(record)) return false;
+  const validated = validateIngredientCorrection(record);
+  if (!validated.ok) return false;
+  const expected = validated.correction;
+  return [
+    'name', 'displayName', 'amountState', 'quantity', 'quantityMin', 'quantityState',
+    'measurementFamily', 'sourceUnit', 'unit', 'kind', 'countLabel', 'category',
+    'confidence', 'reviewVersion',
+  ].every((key) => Object.is(record[key], expected[key]));
 }
 
-export function ingredientEvidence(recipe) {
-  const lines = Array.isArray(recipe?.recipeIngredient)
-    ? recipe.recipeIngredient.filter((line) => typeof line === 'string' && line.trim())
-    : [];
+function legacyNormalizedRecord(record) {
+  const hasReviewMetadata = ['reviewStatus', 'reviewVersion', 'reviewedAt', 'reviewedBy', 'parserVersion']
+    .some((key) => Object.hasOwn(record || {}, key));
+  if (!record || typeof record !== 'object' || hasReviewMetadata || !isNormalizedIngredient(record)) return false;
+  const name = canonicalName(record.name);
+  return Boolean(name && name !== 'uncertain ingredient');
+}
+
+function compatibilityMetadata(record) {
+  const amountState = AMOUNT_STATES.includes(record.amountState)
+    ? record.amountState
+    : record.quantity == null ? 'qualitative' : 'numeric';
+  const measurementFamily = record.measurementFamily
+    || (record.unit === 'count' ? 'count' : record.unit === 'ounce' ? 'volume' : null);
+  return {
+    ...clone(record),
+    amountState,
+    measurementFamily,
+    sourceUnit: record.sourceUnit || record.unit,
+    reviewStatus: 'unreviewed',
+    parserVersion: Number.isInteger(record.parserVersion) && record.parserVersion > 0
+      ? record.parserVersion
+      : NORMALIZATION_VERSION,
+  };
+}
+
+function ingredientSources(recipe) {
+  return (Array.isArray(recipe?.recipeIngredient) ? recipe.recipeIngredient : [])
+    .filter((entry) => (typeof entry === 'string' && entry.trim())
+      || (entry && typeof entry === 'object' && typeof entry.raw === 'string' && entry.raw.trim()));
+}
+
+function baseIngredientEvidence(recipe) {
+  const normalizations = Array.isArray(recipe?.ingredientNormalizations) ? recipe.ingredientNormalizations : [];
   const occurrences = new Map();
-  const existing = new Map((Array.isArray(recipe?.ingredientNormalizations) ? recipe.ingredientNormalizations : [])
-    .filter(reviewedRecord).map((record) => [record.id, record]));
-  return lines.map((raw) => {
+  return ingredientSources(recipe).map((source) => {
+    const raw = typeof source === 'string' ? source : source.raw;
     const occurrence = occurrences.get(raw) || 0;
     occurrences.set(raw, occurrence + 1);
     const id = ingredientEvidenceId(raw, occurrence);
-    const saved = existing.get(id);
-    return saved && saved.raw === raw
-      ? clone(saved)
-      : { id, raw, reviewStatus: 'unreviewed', parserVersion: NORMALIZATION_VERSION };
+    const cached = normalizations.find((record) => record?.raw === raw
+      && (!record.id || record.id === id) && legacyNormalizedRecord(record));
+    const structured = typeof source === 'object' && legacyNormalizedRecord(source) ? source : null;
+    const parsed = normalizeIngredient(raw);
+    return {
+      ...compatibilityMetadata(cached || structured || parsed),
+      raw,
+      id,
+    };
+  });
+}
+
+export function ingredientEvidence(recipe) {
+  const normalizations = Array.isArray(recipe?.ingredientNormalizations) ? recipe.ingredientNormalizations : [];
+  return baseIngredientEvidence(recipe).map((base) => {
+    const reviewed = normalizations
+      .filter((record) => record?.id === base.id && record.raw === base.raw && reviewedRecord(record))
+      .sort((a, b) => b.reviewedAt - a.reviewedAt)[0];
+    return reviewed ? clone(reviewed) : base;
   });
 }
 
@@ -189,32 +243,24 @@ export function applyReviewedIngredientCorrection(recipe, { ingredientId, correc
   const built = buildReviewedIngredientRecord({ id: evidence.id, raw: evidence.raw, correction, reviewer, reviewedAt });
   if (!built.ok) return built;
   const records = (Array.isArray(recipe?.ingredientNormalizations) ? recipe.ingredientNormalizations : [])
-    .filter((item) => reviewedRecord(item) && item.id !== ingredientId);
-  return { ok: true, recipe: { ...clone(recipe), ingredientNormalizations: [...records, built.record] }, record: built.record };
+    .filter((item) => (reviewedRecord(item) || legacyNormalizedRecord(item)) && item.id !== ingredientId);
+  return { ok: true, recipe: { ...clone(recipe), ingredientNormalizations: [...records.map(clone), built.record] }, record: built.record };
 }
 
 export function preserveReviewedIngredientCorrections(existingRecipe, incomingRecipe) {
   const incoming = clone(incomingRecipe || {});
   const saved = (Array.isArray(existingRecipe?.ingredientNormalizations) ? existingRecipe.ingredientNormalizations : []).filter(reviewedRecord);
-  if (saved.length) incoming.ingredientNormalizations = saved.map(clone);
+  const savedIds = new Set(saved.map((record) => record.id));
+  const compatibleIncoming = (Array.isArray(incoming.ingredientNormalizations) ? incoming.ingredientNormalizations : [])
+    .filter((record) => (reviewedRecord(record) || legacyNormalizedRecord(record)) && !savedIds.has(record.id));
+  const records = [...compatibleIncoming.map(clone), ...saved.map(clone)];
+  if (records.length) incoming.ingredientNormalizations = records;
   else delete incoming.ingredientNormalizations;
   return incoming;
 }
 
 export function effectiveIngredientRecords(recipe) {
-  return ingredientEvidence(recipe).map((evidence) => {
-    if (evidence.reviewStatus === 'reviewed') return clone(evidence);
-    const parsed = normalizeIngredient(evidence.raw);
-    return {
-      id: evidence.id,
-      ...parsed,
-      amountState: parsed.quantity == null ? 'qualitative' : 'numeric',
-      measurementFamily: parsed.unit === 'count' ? 'count' : parsed.unit === 'ounce' ? 'volume' : null,
-      sourceUnit: parsed.unit,
-      reviewStatus: 'unreviewed',
-      parserVersion: NORMALIZATION_VERSION,
-    };
-  });
+  return ingredientEvidence(recipe).map(clone);
 }
 
 function pluralCountLabel(label, quantity) {

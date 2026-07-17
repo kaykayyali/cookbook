@@ -99,6 +99,33 @@ test('recipe-detail Pantry toggle preserves the ingredient quantity in its works
   assert.deepEqual(mutations, [{ op: 'pantry.add', payload: { item: state.pantry[0] } }]);
 });
 
+test('recipe-detail Pantry toggle preserves legacy structured quantity, unit, and count label', async () => {
+  const { JSDOM } = await import('jsdom');
+  const dom = new JSDOM(`<!doctype html><body>
+    <div id="detail-modal"></div><div id="detail-overlay"></div><button id="detail-close-btn"></button>
+    <div id="dm-eyebrow"></div><div id="dm-title"></div><div id="dm-meta"></div><div id="dm-author-badge"></div>
+    <button id="dm-edit-btn"></button><button id="dm-schema-btn"></button><div id="dm-ingredients"></div>
+    <div id="dm-pantry-note"></div><div id="dm-steps"></div><div id="dm-nutrition"><div id="dm-nutrition-grid"></div></div>
+    <button id="dm-add-all-btn">Add recipe to cart</button>
+  </body>`);
+  const ingredient = {
+    raw: '2 bunches scallions', name: 'spring onion', displayName: 'Spring Onion', quantity: 2,
+    unit: 'count', kind: 'indivisible', countLabel: 'bunch', category: 'produce', confidence: 0.98,
+  };
+  const recipe = { _id: 'r1', name: 'Scallion pancakes', recipeYield: '2', recipeIngredient: [ingredient], recipeInstructions: [] };
+  const state = { recipes: [recipe], cart: [], pantry: [], normalizations: {} };
+  const mutations = [];
+  const ctrl = initDetail({ state, document: dom.window.document, notify() {}, mutate: (op, payload) => mutations.push({ op, payload }) });
+  ctrl.open('r1');
+  dom.window.document.querySelector('.detail-ing-item').click();
+
+  assert.deepEqual(
+    (({ name, quantity, unit, kind, countLabel }) => ({ name, quantity, unit, kind, countLabel }))(state.pantry[0]),
+    { name: 'spring onion', quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bunch' },
+  );
+  assert.deepEqual(mutations, [{ op: 'pantry.add', payload: { item: state.pantry[0] } }]);
+});
+
 test('recipe-detail Pantry removal syncs the matched stored stable ID', async () => {
   const { JSDOM } = await import('jsdom');
   const dom = new JSDOM(`<!doctype html><body>

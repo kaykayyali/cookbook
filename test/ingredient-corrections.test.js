@@ -6,6 +6,7 @@ import {
   effectiveIngredientRecords,
   formatEffectiveIngredient,
   ingredientEvidence,
+  ingredientEvidenceId,
   parseCorrectionAmount,
   preserveReviewedIngredientCorrections,
   validateIngredientCorrection,
@@ -22,6 +23,12 @@ const recipe = {
 const numeric = {
   name: 'basil', amountState: 'numeric', amount: '2 to 4',
   measurementFamily: 'count', sourceUnit: 'count', countLabel: 'leaf',
+};
+
+const legacyStructuredIngredient = {
+  raw: '2 bunches scallions', name: 'spring onion', displayName: 'Spring Onion',
+  quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bunch',
+  category: 'produce', confidence: 0.98,
 };
 
 function reviewed(base = recipe, correction = numeric, now = 1234) {
@@ -113,6 +120,112 @@ test('reviewed correction deterministically feeds serving scale, Shopping aggreg
   const index = buildRecipeUsageIndex([corrected]);
   assert.deepEqual(index.find('Basil').map(({ recipeId, ingredient }) => ({ recipeId, name: ingredient.name })), [{ recipeId: 'basil-pasta', name: 'basil' }]);
   assert.deepEqual(index.find('not basil'), []);
+});
+
+test('legacy structured recipe ingredients retain normalized identity and amount fields without review metadata', () => {
+  const source = {
+    _id: 'legacy-structured', name: 'Scallion pancakes', recipeYield: '2 servings',
+    recipeIngredient: [legacyStructuredIngredient],
+  };
+  const before = structuredClone(source);
+  const [effective] = effectiveIngredientRecords(source);
+
+  assert.deepEqual({
+    raw: effective.raw,
+    name: effective.name,
+    quantity: effective.quantity,
+    unit: effective.unit,
+    kind: effective.kind,
+    countLabel: effective.countLabel,
+    measurementFamily: effective.measurementFamily,
+    amountState: effective.amountState,
+    reviewStatus: effective.reviewStatus,
+  }, {
+    raw: '2 bunches scallions',
+    name: 'spring onion',
+    quantity: 2,
+    unit: 'count',
+    kind: 'indivisible',
+    countLabel: 'bunch',
+    measurementFamily: 'count',
+    amountState: 'numeric',
+    reviewStatus: 'unreviewed',
+  });
+  assert.deepEqual(source, before, 'effective projection never mutates imported source data');
+});
+
+test('old cached normalized ingredients remain effective and malformed reviewed metadata fails closed to the immutable base', () => {
+  const raw = legacyStructuredIngredient.raw;
+  const id = ingredientEvidenceId(raw);
+  const recipeWithCache = {
+    _id: 'legacy-cache', name: 'Scallion pancakes', recipeYield: '2 servings',
+    recipeIngredient: [raw],
+    ingredientNormalizations: [
+      { id, ...legacyStructuredIngredient },
+      {
+        id, raw, name: '', displayName: 'Erased', quantity: null, unit: 'count', kind: 'indivisible',
+        countLabel: 'bunch', category: 'produce', confidence: 1, amountState: 'numeric',
+        measurementFamily: 'count', sourceUnit: 'count', amount: 'not-a-number',
+        reviewStatus: 'reviewed', parserVersion: 2,
+      },
+    ],
+  };
+  const before = structuredClone(recipeWithCache);
+  const [effective] = effectiveIngredientRecords(recipeWithCache);
+
+  assert.deepEqual({ raw: effective.raw, name: effective.name, quantity: effective.quantity, countLabel: effective.countLabel }, {
+    raw, name: 'spring onion', quantity: 2, countLabel: 'bunch',
+  });
+  assert.equal(effective.reviewStatus, 'unreviewed');
+  assert.deepEqual(recipeWithCache, before, 'malformed override handling is immutable');
+});
+
+test('partial review metadata cannot disguise a normalized override as a legacy base record', () => {
+  const raw = '1 egg';
+  const recipeWithPartialReview = {
+    recipeIngredient: [raw],
+    ingredientNormalizations: [{
+      id: ingredientEvidenceId(raw), raw, name: 'poison', displayName: 'Poison', quantity: 99,
+      unit: 'count', kind: 'indivisible', countLabel: '', category: 'other', confidence: 1,
+      reviewStatus: 'pending', parserVersion: 2,
+    }],
+  };
+  const [effective] = effectiveIngredientRecords(recipeWithPartialReview);
+
+  assert.deepEqual({ raw: effective.raw, name: effective.name, quantity: effective.quantity, reviewStatus: effective.reviewStatus }, {
+    raw, name: 'egg', quantity: 1, reviewStatus: 'unreviewed',
+  });
+});
+
+test('legacy normalized values remain visible to Pantry, Shopping scaling, search, and recipe usage', () => {
+  const raw = legacyStructuredIngredient.raw;
+  const legacy = {
+    _id: 'legacy-downstream', name: 'Scallion pancakes', recipeYield: '2 servings',
+    recipeIngredient: [raw],
+    ingredientNormalizations: [{ id: ingredientEvidenceId(raw), ...legacyStructuredIngredient }],
+  };
+  const ingredients = effectiveIngredientRecords(legacy);
+
+  assert.equal(haveIngredient(ingredients[0], [{ name: 'spring onion' }]), true, 'Pantry matches the cached canonical name');
+  const selection = addRecipeSelection([], legacy, ingredients);
+  const item = aggregateCart([{ ...selection[0], targetServings: 4 }])[0];
+  assert.deepEqual({ name: item.name, quantity: item.quantity, purchaseQuantity: item.purchaseQuantity, countLabel: item.countLabel }, {
+    name: 'spring onion', quantity: 4, purchaseQuantity: 5, countLabel: 'bunch',
+  });
+  assert.equal(matchesSearch(legacy, 'spring onion'), true, 'search includes the effective canonical name');
+  assert.deepEqual(buildRecipeUsageIndex([legacy]).find('spring onion').map((use) => use.recipeId), ['legacy-downstream']);
+});
+
+test('legacy qualitative and unknown amount states survive the effective projection', () => {
+  const rows = [
+    { raw: 'salt to taste', name: 'salt', displayName: 'Salt', quantity: null, unit: 'qualitative', kind: 'qualitative', countLabel: '', category: 'pantry', confidence: 0.9, amountState: 'qualitative' },
+    { raw: 'some saffron', name: 'saffron', displayName: 'Saffron', quantity: null, unit: 'qualitative', kind: 'qualitative', countLabel: '', category: 'pantry', confidence: 0.9, amountState: 'unknown' },
+  ];
+  const projected = effectiveIngredientRecords({ recipeIngredient: rows });
+  assert.deepEqual(projected.map(({ name, quantity, unit, kind, amountState }) => ({ name, quantity, unit, kind, amountState })), [
+    { name: 'salt', quantity: null, unit: 'qualitative', kind: 'qualitative', amountState: 'qualitative' },
+    { name: 'saffron', quantity: null, unit: 'qualitative', kind: 'qualitative', amountState: 'unknown' },
+  ]);
 });
 
 test('correction payload cannot replace immutable raw/source evidence and missing stable identity fails closed', () => {

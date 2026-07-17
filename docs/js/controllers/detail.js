@@ -760,7 +760,9 @@ export function initDetail({
         const item = e.target.closest('.detail-ing-item');
         const pantryAction = e.target.closest('[data-action="toggle-ingredient-pantry"]');
         if (!item || (!pantryAction && e.target !== item) || !item.dataset.ing) return;
-        const input = normalizePantryEntry(item.dataset.ing.toLowerCase(), { updatedAt: Date.now() });
+        const ingredient = effectiveIngredientRecords(current?.r)
+          .find((record) => record.id === item.dataset.ingredientId);
+        const input = normalizePantryEntry(ingredient || item.dataset.ing.toLowerCase(), { updatedAt: Date.now() });
         const { pantry, added, name, item: pantryItem } = togglePantry(state.pantry, input);
         state.pantry = pantry;
         if (mutate) void mutate(added ? 'pantry.add' : 'pantry.remove', added

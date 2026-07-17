@@ -2,15 +2,23 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, extname, join, normalize } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 const DOCS = join(ROOT, 'docs');
-const EVIDENCE = join(HERE, 'evidence');
+const CANONICAL_EVIDENCE = process.env.COOKBOOK_ISSUE22_EVIDENCE_DIR
+  ? resolve(process.env.COOKBOOK_ISSUE22_EVIDENCE_DIR)
+  : join(HERE, 'evidence');
+const EVIDENCE = mkdtempSync(join(tmpdir(), 'cookbook-issue22-evidence-'));
+const EXPECTED_EVIDENCE = [
+  'issue-22-before-mobile.png', 'issue-22-after-mobile.png',
+  'issue-22-before-desktop.png', 'issue-22-after-desktop.png',
+];
 const RECIPE_ID = 'recipe-reviewed-basil';
 const SOURCE_URL = 'https://example.test/recipes/basil-pasta';
 const RAW_LINE = 'to 4 basil leaves';
@@ -18,14 +26,23 @@ const RAW_LINE = 'to 4 basil leaves';
 let server;
 let baseUrl;
 let browser;
+const completedCaptures = new Set();
 
 const json = (route, body, status = 200) => route.fulfill({
   status, contentType: 'application/json', body: JSON.stringify(body),
 });
 
 async function launchBrowser() {
-  try { return await chromium.launch({ channel: 'chrome', headless: true }); }
-  catch { return chromium.launch({ headless: true }); }
+  return chromium.launch({
+    headless: true,
+    args: [
+      '--disable-gpu',
+      '--disable-threaded-animation',
+      '--disable-threaded-scrolling',
+      '--force-color-profile=srgb',
+      '--force-device-scale-factor=1',
+    ],
+  });
 }
 
 before(async () => {
@@ -49,12 +66,42 @@ before(async () => {
 after(async () => {
   await browser?.close();
   await new Promise((resolve) => server?.close(resolve));
+  try {
+    if (completedCaptures.size !== 2) return;
+    assert.deepEqual(readdirSync(EVIDENCE).sort(), [...EXPECTED_EVIDENCE].sort());
+    for (const name of EXPECTED_EVIDENCE) {
+      const bytes = readFileSync(join(EVIDENCE, name));
+      assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', `${name} must be a PNG`);
+    }
+    mkdirSync(CANONICAL_EVIDENCE, { recursive: true });
+    for (const name of EXPECTED_EVIDENCE) copyFileSync(join(EVIDENCE, name), join(CANONICAL_EVIDENCE, name));
+  } finally {
+    rmSync(EVIDENCE, { recursive: true, force: true });
+  }
 });
+
+async function settledScreenshot(page, name) {
+  await page.evaluate(async () => {
+    await document.fonts?.ready;
+    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+  });
+  let previous = null;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const current = await page.screenshot({ animations: 'disabled', caret: 'hide', scale: 'device' });
+    if (previous?.equals(current)) {
+      writeFileSync(join(EVIDENCE, name), current);
+      return;
+    }
+    previous = current;
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(done)));
+  }
+  assert.fail(`${name} did not reach two byte-identical settled browser frames`);
+}
 
 function recipeItem(recipe, updatedAt = 1000) {
   return {
     id: RECIPE_ID,
-    author: { sub: 'kay', name: 'Kaysser Kayyali' },
+    author: null,
     createdAt: 900,
     updatedAt,
     provenance: {
@@ -66,7 +113,7 @@ function recipeItem(recipe, updatedAt = 1000) {
 }
 
 async function createPage(viewport, evidenceLabel) {
-  const context = await browser.newContext({ viewport, reducedMotion: 'reduce' });
+  const context = await browser.newContext({ viewport, deviceScaleFactor: 2, reducedMotion: 'reduce' });
   const token = [
     Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url'),
     Buffer.from(JSON.stringify({ sub: 'kay' })).toString('base64url'),
@@ -138,7 +185,7 @@ async function createPage(viewport, evidenceLabel) {
   await page.waitForFunction(() => document.body.dataset.panel === 'recipes', null, { timeout: 60_000 });
   await page.locator(`.recipe-card[data-id="${RECIPE_ID}"]`).click();
   await page.locator('#detail-modal.open').waitFor();
-  await page.screenshot({ path: join(EVIDENCE, `issue-22-before-${evidenceLabel}.png`) });
+  await settledScreenshot(page, `issue-22-before-${evidenceLabel}.png`);
   return { context, page, browserErrors, stats: () => ({ reviewRequests, normalizationRequests }) };
 }
 
@@ -227,7 +274,8 @@ test('mobile reviews malformed ingredient evidence, persists it, and reuses it d
     await page.keyboard.press('Escape');
     assert.deepEqual(stats(), { reviewRequests: 1, normalizationRequests: 0 });
     assert.deepEqual(browserErrors, []);
-    await page.screenshot({ path: join(EVIDENCE, 'issue-22-after-mobile.png') });
+    await settledScreenshot(page, 'issue-22-after-mobile.png');
+    completedCaptures.add('mobile');
   } finally { await context.close(); }
 });
 
@@ -249,6 +297,7 @@ test('desktop correction dialog is accessible, compact, and free of horizontal o
     await action.click();
     await completeReviewedCorrection(page, { alreadyOpen: true });
     assert.deepEqual(browserErrors, []);
-    await page.screenshot({ path: join(EVIDENCE, 'issue-22-after-desktop.png') });
+    await settledScreenshot(page, 'issue-22-after-desktop.png');
+    completedCaptures.add('desktop');
   } finally { await context.close(); }
 });
