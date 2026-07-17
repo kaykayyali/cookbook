@@ -1,36 +1,13 @@
-export const CLICK_SOUND_KEY = 'cb_interface_sounds_v1';
+import { LEGACY_SOUNDS_KEY, createSoundAdapter } from './interaction-feedback.js';
 
-function defaultPlay() {
-  const AudioContext = globalThis.AudioContext || globalThis.webkitAudioContext;
-  if (!AudioContext) return () => {};
-  let context;
-  return () => {
-    try {
-      context ||= new AudioContext();
-      if (context.state === 'suspended') void context.resume();
-      const start = context.currentTime;
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(720, start);
-      oscillator.frequency.exponentialRampToValueAtTime(420, start + 0.025);
-      gain.gain.setValueAtTime(0.025, start);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.03);
-      oscillator.connect(gain);
-      gain.connect(context.destination);
-      oscillator.start(start);
-      oscillator.stop(start + 0.03);
-    } catch {
-      // Sound is optional; browsers without usable audio stay silent.
-    }
-  };
-}
+export const CLICK_SOUND_KEY = LEGACY_SOUNDS_KEY;
 
 export function createClickSound({
   document = globalThis.document,
   storage = globalThis.localStorage,
-  play = defaultPlay(),
+  play = null,
 } = {}) {
+  const adapter = play ? null : createSoundAdapter({ storage, document });
   let initialized = false;
   const enabled = () => {
     try { return storage?.getItem?.(CLICK_SOUND_KEY) !== 'off'; }
@@ -43,7 +20,8 @@ export function createClickSound({
   const handleClick = (event) => {
     const button = event.target?.closest?.('button, [role="button"]');
     if (!button || button.disabled || button.getAttribute?.('aria-disabled') === 'true' || !enabled()) return;
-    play();
+    if (play) play();
+    else adapter.play('select', { fromUserGesture: Boolean(event.isTrusted) });
   };
   return {
     enabled,
@@ -58,6 +36,7 @@ export function createClickSound({
     destroy() {
       if (initialized) document?.removeEventListener?.('click', handleClick);
       initialized = false;
+      adapter?.destroy();
     },
   };
 }

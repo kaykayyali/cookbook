@@ -82,7 +82,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       return;
     }
     if (!visible.length) {
-      grid.innerHTML = '<div class="pantry-empty"><span aria-hidden="true">✨</span><strong>Nothing here yet.</strong><p>Try another search or category.</p><button class="btn btn-ghost btn-sm" data-action="clear-pantry-filters">Show everything</button></div>';
+      grid.innerHTML = '<div class="pantry-empty"><span aria-hidden="true">✨</span><strong>Nothing here yet.</strong><p>Try another search or category.</p><button class="btn btn-ghost btn-sm" data-action="clear-pantry-filters" data-feedback="select">Show everything</button></div>';
       return;
     }
 
@@ -105,7 +105,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
         ? state.pantry.length
         : state.pantry.filter((item) => pantryCategory(item) === id).length;
       const active = category === id;
-      return `<button type="button" class="pantry-filter${active ? ' is-active' : ''}" data-category="${id}" aria-pressed="${active}">${label}<span>${count}</span></button>`;
+      return `<button type="button" class="pantry-filter${active ? ' is-active' : ''}" data-category="${id}" data-feedback="select" aria-pressed="${active}">${label}<span>${count}</span></button>`;
     }).join('');
   }
 
@@ -221,6 +221,6 @@ function pantryTagHTML(item, category = pantryCategory(item)) {
   const name = item.displayName || item.name;
   const amount = formatPantryAmount(item);
   return `<span class="pantry-tag" data-pantry-id="${esc(item.id)}" data-category="${category}"><span class="pantry-category-dot" aria-hidden="true"></span><span class="pantry-tag-copy"><span>${esc(name)}</span><small>${esc(amount)}</small></span>
-       <button class="pantry-remove" data-pantry-record-id="${esc(item.id)}" data-item="${esc(item.name)}" data-unit="${esc(item.unit)}" data-count-label="${esc(item.countLabel)}" aria-label="Remove ${esc(name)}, ${esc(amount)}">${'<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>'}</button>
+       <button class="pantry-remove" data-pantry-record-id="${esc(item.id)}" data-item="${esc(item.name)}" data-unit="${esc(item.unit)}" data-count-label="${esc(item.countLabel)}" data-feedback="destructive" aria-label="Remove ${esc(name)}, ${esc(amount)}">${'<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>'}</button>
      </span>`;
 }

@@ -13,11 +13,11 @@ function recipeRow(selection) {
   return `<div class="cart-recipe" data-recipe-id="${id}">
     <span class="cart-recipe-name">${name}</span>
     <div class="cart-serving-controls" aria-label="Servings for ${name}">
-      <button class="icon-btn icon-btn-sm" data-action="servings-down" data-recipe-id="${id}" aria-label="Decrease servings for ${name}">−</button>
+      <button class="icon-btn icon-btn-sm" data-action="servings-down" data-feedback="select" data-recipe-id="${id}" aria-label="Decrease servings for ${name}">−</button>
       <span>${esc(selection.targetServings)} serving${Number(selection.targetServings) === 1 ? '' : 's'}</span>
-      <button class="icon-btn icon-btn-sm" data-action="servings-up" data-recipe-id="${id}" aria-label="Increase servings for ${name}">+</button>
+      <button class="icon-btn icon-btn-sm" data-action="servings-up" data-feedback="select" data-recipe-id="${id}" aria-label="Increase servings for ${name}">+</button>
     </div>
-    <details class="cart-recipe-menu"><summary aria-label="More options for ${name}">⋯</summary><button class="btn btn-ghost btn-sm" data-action="remove-recipe" data-recipe-id="${id}" aria-label="Remove ${name} recipe from shopping list">Remove recipe</button></details>
+    <details class="cart-recipe-menu"><summary data-feedback="select" aria-label="More options for ${name}">⋯</summary><button class="btn btn-ghost btn-sm" data-action="remove-recipe" data-feedback="destructive" data-recipe-id="${id}" aria-label="Remove ${name} recipe from shopping list">Remove recipe</button></details>
   </div>`;
 }
 
@@ -34,10 +34,10 @@ function itemRow(item, pantry, completed) {
   const source = item.raw.length ? ` title="From: ${esc(item.raw.join('; '))}"` : '';
   const action = completed ? 'not completed' : 'completed';
   return `<li class="cart-row${completed ? ' is-completed' : ''}"${source}>
-    <button class="cart-check" data-action="toggle-item" data-name="${canonical}" aria-label="Mark ${safeName} as ${action}" aria-pressed="${completed}">${completed ? '✓' : ''}</button>
+    <button class="cart-check" data-action="toggle-item" data-feedback="${completed ? 'toggle-off' : 'toggle-on'}" data-name="${canonical}" aria-label="Mark ${safeName} as ${action}" aria-pressed="${completed}">${completed ? '✓' : ''}</button>
     <span class="cart-name">${safeName}${item.uncertain ? '<small>check amount</small>' : ''}${inPantry ? '<small class="cart-pantry">in pantry</small>' : ''}</span>
     <span class="cart-total">${esc(amount)}</span>
-    <details class="cart-item-menu"><summary aria-label="More options for ${safeName}">⋯</summary><button class="btn btn-ghost btn-sm" data-action="remove-item" data-name="${canonical}" aria-label="Remove ${safeName} from shopping list">Remove item</button></details>
+    <details class="cart-item-menu"><summary data-feedback="select" aria-label="More options for ${safeName}">⋯</summary><button class="btn btn-ghost btn-sm" data-action="remove-item" data-feedback="destructive" data-name="${canonical}" aria-label="Remove ${safeName} from shopping list">Remove item</button></details>
   </li>`;
 }
 
@@ -50,9 +50,9 @@ function manualRow(item, completed) {
     category: item.category,
   });
   return `<li class="cart-row cart-row-manual${completed ? ' is-completed' : ''}" data-manual-id="${esc(item.id)}">
-    <button class="cart-check" data-action="toggle-manual" data-id="${esc(item.id)}" data-key="${esc(key)}" aria-label="Mark ${name} as ${completed ? 'not completed' : 'completed'}" aria-pressed="${completed}">${completed ? '✓' : ''}</button>
+    <button class="cart-check" data-action="toggle-manual" data-feedback="${completed ? 'toggle-off' : 'toggle-on'}" data-id="${esc(item.id)}" data-key="${esc(key)}" aria-label="Mark ${name} as ${completed ? 'not completed' : 'completed'}" aria-pressed="${completed}">${completed ? '✓' : ''}</button>
     <span class="cart-name">${name}<small>manual</small></span><span class="cart-total">${esc(amount)}</span>
-    <details class="cart-item-menu"><summary aria-label="More options for ${name}">⋯</summary><button class="btn btn-ghost btn-sm" data-action="remove-manual" data-id="${esc(item.id)}">Remove item</button></details>
+    <details class="cart-item-menu"><summary data-feedback="select" aria-label="More options for ${name}">⋯</summary><button class="btn btn-ghost btn-sm" data-action="remove-manual" data-feedback="destructive" data-id="${esc(item.id)}">Remove item</button></details>
   </li>`;
 }
 

@@ -1,4 +1,5 @@
 import { esc } from '../lib/format.js';
+import { interactionFeedback as defaultFeedback } from '../lib/interaction-feedback.js';
 const DAY = 86_400_000;
 const LABELS = { recipe: 'Recipe', leftovers: 'Leftovers', 'dining-out': 'Dining out', open: 'Open' };
 const SLOT_LABELS = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner' };
@@ -40,13 +41,13 @@ function entryHTML(entry, recipes) {
   const skipped = entry.status === 'skipped';
   const cooked = entry.status === 'cooked';
   return `<article class="week-meal${skipped ? ' is-skipped' : ''}${cooked ? ' is-cooked' : ''}" data-entry-id="${esc(entry.id)}">
-    <button class="icon-btn week-meal-remove" data-action="remove" aria-label="Remove ${esc(title)} from ${esc(SLOT_LABELS[mealSlot(entry.slot)])}">×</button>
+    <button class="icon-btn week-meal-remove" data-action="remove" data-feedback="destructive" aria-label="Remove ${esc(title)} from ${esc(SLOT_LABELS[mealSlot(entry.slot)])}">×</button>
     <div class="week-meal-copy"><span class="week-meal-slot">${SLOT_LABELS[mealSlot(entry.slot)]}</span><strong class="week-meal-title" title="${esc(title)}">${esc(title)}</strong>${entry.note ? `<small>${esc(entry.note)}</small>` : ''}</div>
     <div class="week-meal-controls">
-      <button class="icon-btn icon-btn-sm" data-action="servings-down" aria-label="Decrease servings">−</button><span>${esc(entry.targetServings || 2)}</span><button class="icon-btn icon-btn-sm" data-action="servings-up" aria-label="Increase servings">+</button>
-      <button class="btn btn-ghost btn-sm" data-action="move-next">Tomorrow</button>
-      <button class="btn btn-ghost btn-sm" data-action="skip">${skipped ? 'Unskip' : 'Skip'}</button>
-      ${entry.type === 'recipe' ? cooked ? '<span class="week-cooked">Cooked</span>' : '<button class="btn btn-secondary btn-sm" data-action="mark-cooked">Mark cooked</button>' : ''}
+      <button class="icon-btn icon-btn-sm" data-action="servings-down" data-feedback="select" aria-label="Decrease servings">−</button><span>${esc(entry.targetServings || 2)}</span><button class="icon-btn icon-btn-sm" data-action="servings-up" data-feedback="select" aria-label="Increase servings">+</button>
+      <button class="btn btn-ghost btn-sm" data-action="move-next" data-feedback="commit">Tomorrow</button>
+      <button class="btn btn-ghost btn-sm" data-action="skip" data-feedback="${skipped ? 'toggle-on' : 'toggle-off'}">${skipped ? 'Unskip' : 'Skip'}</button>
+      ${entry.type === 'recipe' ? cooked ? '<span class="week-cooked">Cooked</span>' : '<button class="btn btn-secondary btn-sm" data-action="mark-cooked" data-feedback="commit">Mark cooked</button>' : ''}
     </div>
   </article>`;
 }
@@ -58,16 +59,16 @@ function addHTML(day, recipes) {
     <select class="input week-recipe-select" data-field="recipe-id" aria-label="Recipe">${options}</select>
     <div class="week-add-split">
       <input type="hidden" data-field="meal-slot" value="dinner">
-      <button class="btn btn-primary btn-sm week-add-primary" data-action="add-meal">Add dinner</button>
-      <button class="btn btn-primary btn-sm week-add-menu-toggle" data-action="toggle-meal-slot" aria-label="Choose breakfast, lunch, or dinner" aria-haspopup="menu" aria-expanded="false">⌄</button>
+      <button class="btn btn-primary btn-sm week-add-primary" data-action="add-meal" data-feedback="commit">Add dinner</button>
+      <button class="btn btn-primary btn-sm week-add-menu-toggle" data-action="toggle-meal-slot" data-feedback="toggle-on" aria-label="Choose breakfast, lunch, or dinner" aria-haspopup="menu" aria-expanded="false">⌄</button>
       <div class="week-add-menu" data-meal-slot-menu role="menu" hidden>
-        ${Object.entries(SLOT_LABELS).map(([slot, label]) => `<button type="button" role="menuitem" data-action="select-meal-slot" data-slot="${slot}">${label}</button>`).join('')}
+        ${Object.entries(SLOT_LABELS).map(([slot, label]) => `<button type="button" role="menuitem" data-action="select-meal-slot" data-feedback="select" data-slot="${slot}">${label}</button>`).join('')}
       </div>
     </div>
   </div>`;
 }
 
-export function initWeek({ state, mutate, onMarkCooked = async () => false, document = globalThis.document, today = localDate }) {
+export function initWeek({ state, mutate, onMarkCooked = async () => false, document = globalThis.document, today = localDate, feedback = defaultFeedback }) {
   const root = document.getElementById('week-grid');
   let days = [];
 
@@ -93,6 +94,7 @@ export function initWeek({ state, mutate, onMarkCooked = async () => false, docu
       const menu = split.querySelector('[data-meal-slot-menu]');
       menu.hidden = !menu.hidden;
       target.setAttribute('aria-expanded', String(!menu.hidden));
+      setTimeout(() => { target.dataset.feedback = menu.hidden ? 'toggle-on' : 'toggle-off'; }, 0);
       return;
     }
     if (action === 'select-meal-slot') {
@@ -101,34 +103,45 @@ export function initWeek({ state, mutate, onMarkCooked = async () => false, docu
       split.querySelector('[data-field="meal-slot"]').value = slot;
       split.querySelector('[data-action="add-meal"]').textContent = `Add ${slot}`;
       split.querySelector('[data-meal-slot-menu]').hidden = true;
-      split.querySelector('[data-action="toggle-meal-slot"]').setAttribute('aria-expanded', 'false');
+      const toggle = split.querySelector('[data-action="toggle-meal-slot"]');
+      toggle.setAttribute('aria-expanded', 'false');
+      setTimeout(() => { toggle.dataset.feedback = 'toggle-on'; }, 0);
       return;
     }
     if (action === 'add-meal') {
       const row = target.closest('.week-add');
       const type = row.querySelector('[data-field="meal-type"]').value;
       const recipeId = row.querySelector('[data-field="recipe-id"]').value;
-      await mutate('plan.upsert', {
+      const saved = await mutate('plan.upsert', {
         id: uid(), date: row.dataset.date, slot: mealSlot(row.querySelector('[data-field="meal-slot"]').value), type,
         recipeId: type === 'recipe' ? recipeId : null,
         targetServings: 2,
         plannedBySub: state.auth?.sub || '', cookSub: null, note: '', status: 'active',
       });
+      feedback.emit(saved === false ? 'blocked' : 'success', { target });
       return;
     }
     const entry = findEntry(target);
     if (!entry) return;
     if (action === 'mark-cooked') {
-      if (await onMarkCooked(entry)) { entry.status = 'cooked'; render(); }
+      const completed = await onMarkCooked(entry);
+      if (completed) { entry.status = 'cooked'; render(); }
+      feedback.emit(completed ? 'success' : 'blocked', { target });
       return;
     }
-    if (action === 'remove') return mutate('plan.remove', { id: entry.id });
+    if (action === 'remove') {
+      const removed = await mutate('plan.remove', { id: entry.id });
+      feedback.emit(removed === false ? 'blocked' : 'success', { target });
+      return removed;
+    }
     const next = { ...entry };
     if (action === 'move-next') next.date = shiftDate(entry.date, 1);
     if (action === 'skip') next.status = entry.status === 'skipped' ? 'active' : 'skipped';
     if (action === 'servings-up') next.targetServings = Number(entry.targetServings || 2) + 1;
     if (action === 'servings-down') next.targetServings = Math.max(1, Number(entry.targetServings || 2) - 1);
-    return mutate('plan.upsert', next);
+    const saved = await mutate('plan.upsert', next);
+    feedback.emit(saved === false ? 'blocked' : 'success', { target });
+    return saved;
   }
 
   root?.addEventListener('click', (event) => {

@@ -131,3 +131,22 @@ test('durable recipe outbox allows confirmed deletion while offline', async () =
   assert.equal(writes, 1);
   assert.equal(state.recipes.length, 0);
 });
+
+test('recipe deletion stays silent when cancelled and emits destructive then success after confirmation', async () => {
+  const { document } = makeDom();
+  let confirmed = false;
+  const events = [];
+  const state = { recipes: [SAMPLE_RECIPE], pantry: [] };
+  const ctrl = mod.initRecipes({
+    state, document,
+    confirmDelete: () => confirmed,
+    removeRecipe: async () => ({ ok: true }),
+    notify: () => {},
+    feedback: { emit: (type) => events.push(type) },
+  });
+  assert.equal((await ctrl._delete('r1')).cancelled, true);
+  assert.deepEqual(events, []);
+  confirmed = true;
+  assert.equal((await ctrl._delete('r1')).ok, true);
+  assert.deepEqual(events, ['destructive', 'success']);
+});

@@ -46,7 +46,7 @@ export function recipeCardHTML(r, pantry, { currentUserSub = null, history = nul
   const canManage = !!(author && currentUserSub && author.sub === currentUserSub);
 
   return `
-    <article class="card recipe-card card-fold-${e}" data-id="${esc(r._id)}">
+    <article class="card recipe-card card-fold-${e}" data-id="${esc(r._id)}" data-feedback="select">
       <div class="card-stripe"></div>
       <div class="card-body">
         <span class="badge ${e === 'complete' ? 'badge-success' : 'badge-accent'}">${esc(formatListValue(r.recipeCategory) || 'Recipe')}</span>
@@ -54,7 +54,7 @@ export function recipeCardHTML(r, pantry, { currentUserSub = null, history = nul
         <div class="card-head">
           <h3 class="card-title">${esc(r.name)}</h3>
           <div class="card-toolbar">
-            ${canManage ? IconButton({ label: 'Edit', icon: 'edit', size: 'sm', danger: false, data: { action: 'edit', id: r._id } }) : ''}
+            ${canManage ? IconButton({ label: 'Edit', icon: 'edit', size: 'sm', danger: false, data: { action: 'edit', id: r._id, feedback: 'commit' } }) : ''}
             ${canManage ? IconButton({ label: 'Delete', icon: 'trash', size: 'sm', danger: true, data: { action: 'delete', id: r._id } }) : ''}
           </div>
         </div>

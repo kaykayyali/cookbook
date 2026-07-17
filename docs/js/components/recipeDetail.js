@@ -18,7 +18,7 @@ export function ingredientListHTML(ings, pantry) {
     const cls = has ? 'detail-ing-item' : 'detail-ing-item missing-item';
     const checkCls = has ? 'detail-ing-check have' : 'detail-ing-check';
     const title = has ? 'Tap to remove from pantry' : 'Tap to add to pantry';
-    return `<li class="${cls}" data-ing="${esc(i)}" title="${esc(title)}">
+    return `<li class="${cls}" data-ing="${esc(i)}" data-feedback="${has ? 'toggle-off' : 'toggle-on'}" role="button" tabindex="0" title="${esc(title)}">
       <span class="${checkCls}">${has ? Icon({ name: 'check' }) : ''}</span>
       <span class="detail-ing-text">${esc(i)}</span></li>`;
   }).join('')}</ul>`;
@@ -36,7 +36,7 @@ export function pantryNoteHTML(ings, pantry) {
   const missing = total - have;
   return missing === 0
     ? '<strong>You have everything.</strong> Ready to cook.'
-    : `<strong>${missing} ingredient${missing !== 1 ? 's' : ''} needed</strong> — ${have} of ${total} in your pantry. <button class="btn btn-ghost btn-sm" data-action="add-missing">Add to cart</button>`;
+    : `<strong>${missing} ingredient${missing !== 1 ? 's' : ''} needed</strong> — ${have} of ${total} in your pantry. <button class="btn btn-ghost btn-sm" data-action="add-missing" data-feedback="commit">Add to cart</button>`;
 }
 
 /**

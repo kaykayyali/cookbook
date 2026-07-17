@@ -5,6 +5,7 @@
 import { toast } from '../lib/dom.js';
 import { createRecipe, updateRecipe } from '../lib/api.js';
 import { mapCommunityItem } from '../lib/community.js';
+import { interactionFeedback as defaultFeedback } from '../lib/interaction-feedback.js';
 import {
   FIELD_MAP,
   NUTRI_MAP,
@@ -37,6 +38,7 @@ export function initDrawer({
   create = createRecipe,
   update = updateRecipe,
   mutateRecipe = null,
+  feedback = defaultFeedback,
 }) {
   let customSave = null;
   function openSheet() {
@@ -166,7 +168,10 @@ export function initDrawer({
     const overlay = document.getElementById('drawer-overlay');
     if (overlay) overlay.addEventListener('click', closeSheet);
     const saveBtn = document.getElementById('save-recipe-btn');
-    if (saveBtn) saveBtn.addEventListener('click', () => save());
+    if (saveBtn) saveBtn.addEventListener('click', async () => {
+      const result = await save();
+      feedback.emit(result?.ok ? 'success' : 'blocked', { target: saveBtn });
+    });
     const schemaBtn = document.getElementById('view-schema-btn');
     if (schemaBtn) schemaBtn.addEventListener('click', () => onSchema && onSchema(null));
 

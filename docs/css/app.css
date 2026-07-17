@@ -298,6 +298,8 @@
 	.ready-toggle {
 		display: inline-flex;
 		align-items: center;
+		min-height: 44px;
+		padding-inline: var(--space-1);
 		gap: 7px;
 		cursor: pointer;
 		font-size: var(--text-sm);
@@ -310,6 +312,7 @@
 		width: auto;
 		accent-color: var(--color-accent);
 	}
+	.ready-toggle[hidden] { display: none; }
 
 	/* ════════════════════════════════════════════════════════
      PANELS

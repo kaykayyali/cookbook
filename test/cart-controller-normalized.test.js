@@ -119,7 +119,7 @@ test('delegated check-off plays a short exit animation before moving the row to 
   assert.equal(classes.has('is-completing'), true);
   assert.equal(check.textContent, '✓');
   assert.equal(check['aria-pressed'], 'true');
-  assert.ok(scheduled.delay >= 200 && scheduled.delay <= 350);
+  assert.ok(scheduled.delay >= 80 && scheduled.delay <= 160);
   scheduled.fn();
   assert.equal(state.shoppingChecked.egg, true);
 });

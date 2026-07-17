@@ -19,10 +19,10 @@ import { patchImportDraft } from './api.js';
 import { createCookbookTour } from './cookbook-tour.js';
 import { createThemeRecommendation } from './theme-recommendation.js';
 import { showRecipeSchema, wireSchemaModal, exportRecipesToFile } from './schema-modal.js';
-import { clickSound } from './click-sound.js';
+import { interactionFeedback } from './interaction-feedback.js';
 
 export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cookRuntime = null, onSignedIn, onSignedOut }) {
-  clickSound.init();
+  interactionFeedback.init();
   const panels = initPanels({ state });
   const summerTheme = createThemeRecommendation({ subject: state.auth?.sub });
   const tour = initTour({

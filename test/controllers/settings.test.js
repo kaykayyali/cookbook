@@ -13,7 +13,8 @@ try { mod = await import('../../docs/js/controllers/settings.js'); } catch (e) {
 function makeDom() {
   const ids = [
     'settings-auth-zone', 'settings-import-btn', 'settings-export-btn',
-    'import-file', 'g-signin-btn',
+    'import-file', 'g-signin-btn', 'feedback-sounds-toggle',
+    'feedback-haptics-toggle', 'feedback-haptics-setting',
   ];
   const elements = {};
   for (const id of ids) {
@@ -143,13 +144,36 @@ test('renderSettings wires export button to exportRecipes', () => {
   assert.equal(exported, true, 'export button click should call exportRecipes');
 });
 
+test('renderSettings keeps sound and haptic preferences independent and hides unsupported haptics', () => {
+  const { document, elements } = makeDom();
+  let soundEnabled = true;
+  let hapticEnabled = true;
+  const events = [];
+  const feedback = {
+    sounds: { enabled: () => soundEnabled, setEnabled: (value) => { soundEnabled = value; } },
+    haptics: { supported: () => false, enabled: () => hapticEnabled, setEnabled: (value) => { hapticEnabled = value; } },
+    emit: (type) => events.push(type),
+  };
+  const ctrl = mod.initSettings({ document, feedback });
+  ctrl.renderSettings();
+  assert.equal(elements['feedback-sounds-toggle'].checked, true);
+  assert.equal(elements['feedback-haptics-setting'].hidden, true);
+  assert.equal(elements['feedback-haptics-toggle'].disabled, true);
+  elements['feedback-sounds-toggle'].checked = false;
+  for (const listener of elements['feedback-sounds-toggle'].listeners.change) listener();
+  assert.equal(soundEnabled, false);
+  assert.equal(hapticEnabled, true);
+  assert.deepEqual(events, ['toggle-off']);
+});
+
 // ─── Theme picker (added in themes phase) ───────────────────
 
 function makePickerDom() {
   // Mirrors makeDom but includes the elements renderThemePicker will create.
   const ids = [
     'settings-auth-zone', 'settings-import-btn', 'settings-export-btn',
-    'import-file', 'g-signin-btn',
+    'import-file', 'g-signin-btn', 'feedback-sounds-toggle',
+    'feedback-haptics-toggle', 'feedback-haptics-setting',
   ];
   const elements = {};
   for (const id of ids) {

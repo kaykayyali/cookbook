@@ -15,6 +15,7 @@ import {
 import { normalizeRecipeIngredients } from '../lib/api.js';
 import { esc, formatListValue } from '../lib/format.js';
 import { householdIdentityHTML } from '../components/householdIdentity.js';
+import { interactionFeedback as defaultFeedback } from '../lib/interaction-feedback.js';
 
 import {
   ingredientListHTML,
@@ -30,7 +31,7 @@ const starsText = (value) => Number.isInteger(value)
 const starRatingHTML = (label, name, value) => `<div class="cook-star-field">
   <span>${label}</span>
   <div class="cook-star-rating" role="radiogroup" aria-label="${label}" data-rating="${name}" data-selected="${value || ''}">
-    ${[1, 2, 3, 4, 5].map((score) => `<button type="button" data-rating="${name}" data-value="${score}" role="radio" tabindex="${score === (value || 1) ? 0 : -1}" aria-checked="${score === value}" aria-label="${label}: ${score} out of 5">★</button>`).join('')}
+    ${[1, 2, 3, 4, 5].map((score) => `<button type="button" data-rating="${name}" data-value="${score}" data-feedback="select" role="radio" tabindex="${score === (value || 1) ? 0 : -1}" aria-checked="${score === value}" aria-label="${label}: ${score} out of 5">★</button>`).join('')}
   </div>
 </div>`;
 
@@ -61,7 +62,7 @@ export function historyHTML(events = [], reactions = [], actorSub = '') {
     return `<article class="cook-history-card" data-event-id="${esc(event.id)}">
       <p><strong>${new Date(event.cookedAt).toLocaleDateString()}</strong></p>
       <label class="cook-memory-field"><span>Occasion</span><textarea class="input" data-occasion maxlength="2000" placeholder="Weeknight dinner, birthday, friends over…">${esc(event.occasion || event.notes || '')}</textarea></label>
-      <button class="btn btn-ghost btn-sm" data-action="save-occasion">Save occasion</button>
+      <button class="btn btn-ghost btn-sm" data-action="save-occasion" data-feedback="commit">Save occasion</button>
       ${memories}
       <div class="cook-ratings">
         ${starRatingHTML('Taste', 'taste', own?.taste)}
@@ -69,8 +70,8 @@ export function historyHTML(events = [], reactions = [], actorSub = '') {
       </div>
       <label class="cook-memory-field"><span>Review</span><textarea class="input" data-review maxlength="1000" placeholder="What worked? What would you change?">${esc(own?.review || own?.note || '')}</textarea></label>
       <div class="cook-history-actions">
-        <button class="btn btn-primary btn-sm" data-action="save-review">Save my review</button>
-        <button class="btn btn-ghost btn-sm" data-action="edit-history">Edit history</button>
+        <button class="btn btn-primary btn-sm" data-action="save-review" data-feedback="commit">Save my review</button>
+        <button class="btn btn-ghost btn-sm" data-action="edit-history" data-feedback="commit">Edit history</button>
         <button class="btn btn-ghost btn-sm" data-action="delete-history">Delete</button>
       </div>
     </article>`;
@@ -107,6 +108,7 @@ export function initDetail({
   onDeleteHistory = async () => false,
   prompt = globalThis.prompt,
   confirm = globalThis.confirm,
+  feedback = defaultFeedback,
 }) {
   let current = null;
   const pendingAudits = new Set();
@@ -337,7 +339,9 @@ export function initDetail({
     const recipe = current && current.r;
     if (!recipe) return Promise.resolve(false);
     const cancellationGeneration = Number(state.cartCancellationGeneration) || 0;
-    return Promise.resolve(performAddToCart(recipe, cancellationGeneration));
+    const added = performAddToCart(recipe, cancellationGeneration);
+    feedback.emit(added ? 'success' : 'blocked', { target: document.getElementById('dm-add-all-btn') });
+    return Promise.resolve(added);
   }
 
   function wireDetail() {
@@ -356,7 +360,9 @@ export function initDetail({
     const allBtn = document.getElementById('dm-add-all-btn');
     if (allBtn) allBtn.addEventListener('click', () => { void addToCartHandler(); });
     document.getElementById('dm-mark-cooked-btn')?.addEventListener('click', async () => {
-      if (current && await onMarkCooked(current.r)) renderHistory();
+      const completed = Boolean(current && await onMarkCooked(current.r));
+      if (completed) renderHistory();
+      feedback.emit(completed ? 'success' : 'blocked', { target: document.getElementById('dm-mark-cooked-btn') });
     });
     document.getElementById('dm-cook-mode-btn')?.addEventListener('click', () => {
       if (current) onCookMode(current.r);
@@ -375,16 +381,24 @@ export function initDetail({
         const taste = Number(card.querySelector('[data-rating="taste"]')?.dataset.selected) || null;
         const complexity = Number(card.querySelector('[data-rating="complexity"]')?.dataset.selected) || null;
         const review = card.querySelector('[data-review]')?.value || '';
-        if (!taste && !complexity && !review.trim()) { notify('Add a rating or review'); return; }
-        if (await onReact(eventId, { taste, complexity, review })) renderHistory();
+        if (!taste && !complexity && !review.trim()) { notify('Add a rating or review'); feedback.emit('blocked', { target: card }); return; }
+        const saved = await onReact(eventId, { taste, complexity, review });
+        if (saved) renderHistory();
+        feedback.emit(saved ? 'success' : 'blocked', { target: card });
       } else if (action === 'save-occasion') {
-        if (await onCorrectHistory(eventId, { occasion: card.querySelector('[data-occasion]')?.value || '' })) renderHistory();
+        const saved = await onCorrectHistory(eventId, { occasion: card.querySelector('[data-occasion]')?.value || '' });
+        if (saved) renderHistory();
+        feedback.emit(saved ? 'success' : 'blocked', { target: card });
       } else if (action === 'edit-history') {
         const existing = getHistory(String(current?.r?._id || current?.r?.id || '')).find((item) => item.id === eventId);
         const occasion = prompt?.('Edit this occasion', existing?.occasion || existing?.notes || '');
         if (occasion != null && await onCorrectHistory(eventId, { occasion })) renderHistory();
-      } else if (action === 'delete-history' && confirm?.('Delete this cooking history entry?')) {
-        if (await onDeleteHistory(eventId)) renderHistory();
+      } else if (action === 'delete-history') {
+        if (!confirm?.('Delete this cooking history entry?')) return;
+        feedback.emit('destructive', { target, sourceEvent: event });
+        const removed = await onDeleteHistory(eventId);
+        if (removed) renderHistory();
+        feedback.emit(removed ? 'success' : 'blocked', { target: card });
       }
     });
     document.getElementById('dm-history')?.addEventListener('keydown', (event) => {
@@ -418,6 +432,13 @@ export function initDetail({
         renderIngredients();
         if (onChange) onChange();
         notify(added ? `Added "${name}" to pantry` : `Removed "${name}" from pantry`);
+      });
+      ings.addEventListener('keydown', (event) => {
+        if (!['Enter', ' '].includes(event.key)) return;
+        const item = event.target.closest('.detail-ing-item');
+        if (!item) return;
+        event.preventDefault();
+        item.click();
       });
     }
 
