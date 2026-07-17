@@ -82,3 +82,69 @@ test('Workers AI extraction allows enough output tokens for a complete recipe', 
 
   assert.equal(input.max_tokens, 2048);
 });
+
+test('extract route rejects an authenticated caller without a household before fetching', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  let aiCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return new Response(
+      '<script type="application/ld+json">{"@type":"Recipe","name":"Soup","recipeIngredient":["water"],"recipeInstructions":["Boil"]}</script>',
+      { status: 200 },
+    );
+  };
+
+  try {
+    const response = await extractRoute({
+      request: { json: async () => ({ url: 'https://example.com/soup' }) },
+      env: {
+        DB: { prepare: () => { throw new Error('DB must not be touched'); } },
+        AI: { run: async () => { aiCalls += 1; return { response: '' }; } },
+        EXTRACT_RATE_PER_MIN: '10',
+      },
+      data: { auth: { sub: 'g-1', email: 'no-household@example.com' } },
+    });
+
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: 'household_required' });
+    assert.equal(fetchCalls, 0, 'doomed requests must not fetch the source page');
+    assert.equal(aiCalls, 0, 'doomed requests must not invoke Workers AI');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('extract route rejects a missing DB binding before fetching', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  let aiCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return new Response(
+      '<script type="application/ld+json">{"@type":"Recipe","name":"Soup","recipeIngredient":["water"],"recipeInstructions":["Boil"]}</script>',
+      { status: 200 },
+    );
+  };
+
+  try {
+    const response = await extractRoute({
+      request: { json: async () => ({ url: 'https://example.com/soup' }) },
+      env: {
+        AI: { run: async () => { aiCalls += 1; return { response: '' }; } },
+        EXTRACT_RATE_PER_MIN: '10',
+      },
+      data: {
+        auth: { sub: 'g-1', email: 'missing-db@example.com' },
+        household: { household: { id: 'our-home' } },
+      },
+    });
+
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: 'server_misconfigured', reason: 'db_binding' });
+    assert.equal(fetchCalls, 0, 'doomed requests must not fetch the source page');
+    assert.equal(aiCalls, 0, 'doomed requests must not invoke Workers AI');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
