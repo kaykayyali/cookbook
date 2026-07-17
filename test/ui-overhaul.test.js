@@ -35,13 +35,59 @@ test('recipe cards use compact household identity and a four-ingredient preview'
   assert.match(fallback, /class="household-avatar household-initial"[^>]*>G</);
 });
 
-test('recipe metadata formats imported list values for people', () => {
-  const card = recipeCardHTML({ ...recipe, recipeCuisine: ['Italian', 'American'] }, []);
-  assert.match(card, /Italian · American/);
-  const meta = metaRowHTML({ recipeYield: ['4', '1 10-inch pizza'] });
-  assert.match(meta, /4 servings · 1 10-inch pizza/);
-  assert.doesNotMatch(meta, />4,1 10-inch pizza</);
+test('recipe cards format category and cuisine arrays with readable separators', () => {
+  const card = recipeCardHTML({
+    ...recipe,
+    recipeCategory: ['Dinner', 'Weeknight'],
+    recipeCuisine: ['Italian', 'American'],
+  }, []);
+  assert.match(card, /<span class="badge badge-accent">Dinner · Weeknight<\/span>/);
+  assert.match(card, /<span class="badge">Italian · American<\/span>/);
+  assert.doesNotMatch(card, /Dinner,Weeknight|Italian,American/);
 });
+
+for (const [recipeYield, text] of [
+  ['4 servings', 'Serves 4'],
+  ['Makes 1 pizza', 'Makes One pizza'],
+  [['4 servings', '1 10-inch pizza'], 'Serves 4 · One 10-inch pizza'],
+  [['Serves 4', 'Makes 1 pizza'], 'Serves 4 · Makes one pizza'],
+]) {
+  test(`recipe card yield ${JSON.stringify(recipeYield)} renders as ${text}`, () => {
+    const card = recipeCardHTML({ ...recipe, recipeYield }, []);
+    assert.match(card, new RegExp(`<span class="meta-pill"><svg class="icon"[\\s\\S]*?<\\/svg>${text}<\\/span>`));
+    assert.doesNotMatch(card, /Serves Makes|Serves Serves|Makes Makes|4 servings,1 10-inch pizza/);
+  });
+}
+
+test('recipe card yield stays escaped and omits empty or unsupported values', () => {
+  const unsafe = recipeCardHTML({ ...recipe, recipeYield: '<img src=x onerror=alert(1)>' }, []);
+  assert.match(unsafe, /Yield &lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.doesNotMatch(unsafe, /<img src=x/);
+
+  for (const recipeYield of [undefined, null, '', [], [' ', null], {}, true, false, Number.NaN, Infinity]) {
+    const card = recipeCardHTML({ ...recipe, recipeYield }, []);
+    assert.doesNotMatch(card, /class="meta-pill"/);
+    assert.doesNotMatch(card, /class="card-meta"/);
+  }
+});
+
+for (const [recipeYield, label, value] of [
+  ['4 servings', 'Serves', '4'],
+  ['1 serving', 'Serves', '1'],
+  [4, 'Serves', '4'],
+  ['Serves 6 hungry people', 'Serves', '6 hungry people'],
+  ['Makes 1 pizza', 'Makes', 'One pizza'],
+  ['1 10-inch pizza', 'Yield', 'One 10-inch pizza'],
+  [['4 servings', '1 10-inch pizza'], 'Serves', '4 · One 10-inch pizza'],
+  [[4, 'Makes 1 pizza'], 'Serves', '4 · Makes one pizza'],
+  ['About 12 cookies', 'Yield', 'About 12 cookies'],
+]) {
+  test(`recipe yield ${JSON.stringify(recipeYield)} renders as ${label} ${value}`, () => {
+    const meta = metaRowHTML({ recipeYield });
+    assert.match(meta, new RegExp(`<span class="k">${label}<\\/span><span class="v">${value}<\\/span>`));
+    assert.doesNotMatch(meta, /Serves<\/span><span class="v">(?:Serves|Makes)/);
+  });
+}
 
 test('overhaul stylesheet establishes readable surfaces and 44px mobile actions', () => {
   const css = readFileSync(new URL('../docs/css/app.css', import.meta.url), 'utf8');
