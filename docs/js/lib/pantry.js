@@ -11,6 +11,7 @@ import {
   COUNT_LABELS,
   INGREDIENT_CATEGORIES,
 } from './cart.js';
+import { effectiveIngredientRecords } from './ingredient-corrections.js';
 
 const LEADING_QTY = /^[\d¼½¾⅓⅔⅛⅜⅝⅞\s.,/-]+/;
 const LEADING_UNIT =
@@ -25,8 +26,10 @@ const LEADING_UNIT =
  * @returns {boolean}
  */
 export function haveIngredient(ing, pantry) {
-  if (typeof ing !== 'string') return false;
-  const ingredientName = normalizeIngredient(ing).name;
+  const ingredientName = typeof ing === 'string'
+    ? normalizeIngredient(ing).name
+    : typeof ing?.name === 'string' ? canonicalName(ing.name) : '';
+  if (!ingredientName) return false;
   return (Array.isArray(pantry) ? pantry : []).some((entry) => {
     const name = typeof entry === 'string' ? entry : entry?.name;
     if (typeof name !== 'string') return false;
@@ -43,7 +46,7 @@ export function haveIngredient(ing, pantry) {
  * @returns {'complete'|'partial'|'none'}
  */
 export function eligibility(recipe, pantry) {
-  const ings = recipe.recipeIngredient || [];
+  const ings = effectiveIngredientRecords(recipe);
   if (!ings.length) return 'none';
   const have = ings.filter((i) => haveIngredient(i, pantry)).length;
   if (have === ings.length) return 'complete';
@@ -57,7 +60,7 @@ export function eligibility(recipe, pantry) {
  * @returns {{have:number,total:number}}
  */
 export function ingredientCounts(recipe, pantry) {
-  const ings = recipe.recipeIngredient || [];
+  const ings = effectiveIngredientRecords(recipe);
   const have = ings.filter((i) => haveIngredient(i, pantry)).length;
   return { have, total: ings.length };
 }
@@ -103,8 +106,9 @@ export function baseName(raw) {
 export function allRecipeIngredients(recipes) {
   const seen = new Set();
   recipes.forEach((r) => {
-    (r.recipeIngredient || []).forEach((raw) => {
-      const base = baseName(raw);
+    effectiveIngredientRecords(r).forEach((ingredient) => {
+      const raw = ingredient.raw;
+      const base = ingredient.name;
       if (base) seen.add(base);
       const full = raw.trim().toLowerCase();
       if (full) seen.add(full);

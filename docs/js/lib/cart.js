@@ -1,7 +1,7 @@
 // cart.js — deterministic normalized shopping-cart logic (no DOM)
 export const NORMALIZATION_VERSION = 2;
 export const INGREDIENT_CATEGORIES = ['produce', 'meat-seafood', 'dairy-eggs', 'bakery', 'pantry', 'frozen', 'other'];
-export const COUNT_LABELS = ['', 'clove', 'slice', 'sheet', 'portion', 'can', 'jar', 'bottle', 'package', 'piece'];
+export const COUNT_LABELS = ['', 'clove', 'leaf', 'bunch', 'slice', 'sheet', 'portion', 'can', 'jar', 'bottle', 'package', 'piece'];
 
 const FRACTIONS = { '¼': .25, '½': .5, '¾': .75, '⅓': 1 / 3, '⅔': 2 / 3, '⅛': .125, '⅜': .375, '⅝': .625, '⅞': .875 };
 const OUNCE_FACTORS = {
@@ -294,7 +294,8 @@ export function formatCanonicalAmount(quantity, unit, options = {}) {
   if (unit === 'count') {
     const number = cleanNumber(quantity);
     const label = COUNT_LABELS.includes(options.countLabel) ? options.countLabel : '';
-    return label ? `${number} ${label}${Number(quantity) === 1 ? '' : 's'}` : number;
+    const plural = Number(quantity) === 1 ? label : label === 'leaf' ? 'leaves' : label ? `${label}s` : '';
+    return label ? `${number} ${plural}` : number;
   }
   const required = Number(options.requiredQuantity);
   const buffered = Number(quantity);

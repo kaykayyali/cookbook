@@ -13,6 +13,14 @@ import {
   NORMALIZATION_VERSION,
 } from '../lib/cart.js';
 import { normalizeRecipeIngredients } from '../lib/api.js';
+import {
+  AMOUNT_STATES,
+  FAMILY_UNITS,
+  applyReviewedIngredientCorrection,
+  effectiveIngredientRecords,
+  validateIngredientCorrection,
+} from '../lib/ingredient-corrections.js';
+import { COUNT_LABELS } from '../lib/cart.js';
 import { esc, formatListValue } from '../lib/format.js';
 import { householdIdentityHTML } from '../components/householdIdentity.js';
 import { interactionFeedback as defaultFeedback } from '../lib/interaction-feedback.js';
@@ -97,6 +105,7 @@ export function initDetail({
   onSchema = null,
   onChange = null,
   mutate = null,
+  mutateRecipe = null,
   normalizeIngredients = normalizeRecipeIngredients,
   notify = toast,
   getHistory = () => [],
@@ -112,6 +121,9 @@ export function initDetail({
 }) {
   let current = null;
   let opener = null;
+  let correction = null;
+  let correctionOpener = null;
+  let correctionPending = false;
   const pendingAudits = new Set();
 
   function openRecipe(r, ctx = { source: 'local' }) {
@@ -166,6 +178,244 @@ export function initDetail({
     if (el) el.style.display = display;
   }
 
+  const correctionIds = {
+    modal: 'ingredient-correction-modal', overlay: 'ingredient-correction-overlay',
+    form: 'ingredient-correction-form', name: 'ingredient-correction-name',
+    state: 'ingredient-correction-state', amount: 'ingredient-correction-amount',
+    family: 'ingredient-correction-family', unit: 'ingredient-correction-unit',
+    countLabel: 'ingredient-correction-count-label', error: 'ingredient-correction-error',
+    pending: 'ingredient-correction-pending', save: 'ingredient-correction-save',
+    close: 'ingredient-correction-close', cancel: 'ingredient-correction-cancel',
+  };
+
+  function correctionElement(key) { return document.getElementById(correctionIds[key] || key); }
+
+  function setSelectOptions(select, values, selected, labels = {}) {
+    if (!select) return;
+    select.innerHTML = values.map((value) => `<option value="${esc(value)}">${esc(labels[value] || value || 'None')}</option>`).join('');
+    select.value = values.includes(selected) ? selected : values[0];
+  }
+
+  function renderCorrectionDependencies() {
+    const amountState = correctionElement('state')?.value;
+    const numeric = amountState === 'numeric';
+    for (const id of ['ingredient-correction-amount-group', 'ingredient-correction-family-group', 'ingredient-correction-unit-group']) {
+      const group = document.getElementById(id);
+      if (group) group.hidden = !numeric;
+    }
+    const family = correctionElement('family')?.value || 'count';
+    const units = FAMILY_UNITS[family] || FAMILY_UNITS.count;
+    const unit = correctionElement('unit');
+    setSelectOptions(unit, units, unit?.value, {
+      count: 'Count', dozen: 'Dozen', tsp: 'Teaspoon', tbsp: 'Tablespoon', cup: 'Cup',
+      'fl-oz': 'Fluid ounce', ml: 'Milliliter', l: 'Liter', oz: 'Ounce', lb: 'Pound', g: 'Gram', kg: 'Kilogram',
+    });
+    if (unit) unit.disabled = !numeric;
+    const countGroup = document.getElementById('ingredient-correction-count-label-group');
+    if (countGroup) countGroup.hidden = !numeric || family !== 'count';
+    const countLabel = correctionElement('countLabel');
+    if (countLabel) countLabel.disabled = !numeric || family !== 'count';
+    const amount = correctionElement('amount');
+    if (amount) amount.disabled = !numeric;
+    const familySelect = correctionElement('family');
+    if (familySelect) familySelect.disabled = !numeric;
+  }
+
+  function safeSourceUrl(value) {
+    try {
+      const url = new URL(value);
+      return ['http:', 'https:'].includes(url.protocol) ? url.href : null;
+    } catch { return null; }
+  }
+
+  function renderProvenance(provenance) {
+    const target = document.getElementById('ingredient-correction-provenance');
+    if (!target) return;
+    target.replaceChildren?.();
+    const sourceUrl = safeSourceUrl(provenance?.sourceUrl);
+    if (sourceUrl) {
+      const link = document.createElement('a');
+      link.href = sourceUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.dataset.feedback = 'touch';
+      link.textContent = 'Open import source';
+      target.append(link);
+    }
+    const method = [provenance?.extractorMethod, provenance?.extractorVersion].filter(Boolean).join(' · ');
+    if (method) {
+      const detail = document.createElement('p');
+      detail.textContent = method;
+      target.append(detail);
+    }
+    if (!sourceUrl && !method) target.textContent = 'Manually entered recipe';
+  }
+
+  function correctionStatusText(record) {
+    if (record.reviewStatus !== 'reviewed') return `Not reviewed · parser v${record.parserVersion}`;
+    const reviewer = record.reviewedBy?.name || 'Household member';
+    return `Reviewed by ${reviewer} · parser v${record.parserVersion}`;
+  }
+
+  function showCorrectionError(message, field = '') {
+    const error = correctionElement('error');
+    if (error) { error.textContent = message || ''; error.hidden = !message; }
+    if (field) correctionElement(field)?.setAttribute?.('aria-invalid', 'true');
+  }
+
+  function clearCorrectionError() {
+    showCorrectionError('');
+    for (const key of ['name', 'state', 'amount', 'family', 'unit', 'countLabel']) correctionElement(key)?.removeAttribute?.('aria-invalid');
+  }
+
+  function openCorrection(ingredientId, sourceElement) {
+    const recipe = current?.r;
+    const record = effectiveIngredientRecords(recipe).find((item) => item.id === ingredientId);
+    if (!recipe || !record) { notify('Ingredient evidence changed. Reload and try again.'); return false; }
+    correction = { recipeId: String(recipe._id || recipe.id), ingredientId, record };
+    correctionOpener = sourceElement || document.activeElement;
+    correctionPending = false;
+    correctionElement('name').value = record.name;
+    correctionElement('state').value = AMOUNT_STATES.includes(record.amountState) ? record.amountState : 'unknown';
+    correctionElement('amount').value = record.amount || (record.quantityState === 'range' && record.quantityMin != null ? `${record.quantityMin} to ${record.quantity}` : record.quantity ?? '');
+    correctionElement('family').value = record.measurementFamily || 'count';
+    setSelectOptions(correctionElement('countLabel'), COUNT_LABELS, record.countLabel || '', { '': 'None', leaf: 'Leaf', bunch: 'Bunch' });
+    renderCorrectionDependencies();
+    correctionElement('unit').value = (FAMILY_UNITS[correctionElement('family').value] || []).includes(record.sourceUnit) ? record.sourceUnit : FAMILY_UNITS[correctionElement('family').value][0];
+    const raw = document.getElementById('ingredient-correction-raw');
+    if (raw) raw.textContent = record.raw;
+    renderProvenance(recipe._provenance);
+    const status = document.getElementById('ingredient-correction-review-status');
+    if (status) status.textContent = correctionStatusText(record);
+    clearCorrectionError();
+    const pending = correctionElement('pending');
+    if (pending) pending.textContent = '';
+    const modal = correctionElement('modal');
+    const overlay = correctionElement('overlay');
+    if (modal) {
+      modal.hidden = false; modal.removeAttribute('inert'); modal.removeAttribute('aria-hidden'); modal.removeAttribute('aria-busy'); modal.setAttribute('aria-modal', 'true');
+    }
+    for (const key of ['close', 'cancel', 'save']) if (correctionElement(key)) correctionElement(key).disabled = false;
+    if (overlay) overlay.hidden = false;
+    correctionElement('name')?.focus?.();
+    return true;
+  }
+
+  function closeCorrection({ restoreFocus = true } = {}) {
+    if (correctionPending) return false;
+    const modal = correctionElement('modal');
+    const overlay = correctionElement('overlay');
+    if (modal) {
+      modal.setAttribute('inert', ''); modal.setAttribute('aria-hidden', 'true'); modal.removeAttribute('aria-modal'); modal.hidden = true;
+    }
+    if (overlay) overlay.hidden = true;
+    const restore = correctionOpener;
+    correction = null;
+    correctionOpener = null;
+    correctionPending = false;
+    if (restoreFocus && restore?.isConnected !== false) restore?.focus?.();
+  }
+
+  function correctionFocusable() {
+    return [...(correctionElement('modal')?.querySelectorAll?.('button, a[href], input, select, [tabindex]:not([tabindex="-1"])') || [])]
+      .filter((element) => !element.disabled && !element.closest?.('[hidden]'));
+  }
+
+  function handleCorrectionKey(event) {
+    if (correctionElement('modal')?.hidden) return;
+    if (event.key === 'Escape') {
+      event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation?.();
+      if (!correctionPending) closeCorrection();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = correctionFocusable();
+    if (!focusable.length) { event.preventDefault(); correctionElement('modal')?.focus?.(); return; }
+    const first = focusable[0]; const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
+
+  function correctionDraft() {
+    return {
+      name: correctionElement('name')?.value,
+      amountState: correctionElement('state')?.value,
+      amount: correctionElement('amount')?.value,
+      measurementFamily: correctionElement('family')?.value,
+      sourceUnit: correctionElement('unit')?.value,
+      countLabel: correctionElement('countLabel')?.value,
+    };
+  }
+
+  async function saveCorrection(event) {
+    event?.preventDefault?.();
+    if (!correction || correctionPending) return false;
+    clearCorrectionError();
+    const draft = correctionDraft();
+    const validation = validateIngredientCorrection(draft);
+    if (!validation.ok) {
+      showCorrectionError(validation.error, validation.field);
+      correctionElement(validation.field)?.focus?.();
+      feedback.emit('blocked', { target: correctionElement('save'), interaction: feedback.contextFromEvent?.(event, correctionElement('save')) });
+      return false;
+    }
+    if (!mutateRecipe) {
+      showCorrectionError('Ingredient review is temporarily unavailable. Your recipe is unchanged.');
+      return false;
+    }
+    const recipe = state.recipes.find((item) => String(item._id || item.id) === correction.recipeId);
+    if (!recipe) { showCorrectionError('This recipe changed. Reload and try again.'); return false; }
+    const interaction = feedback.contextFromEvent?.(event, correctionElement('save'));
+    correctionPending = true;
+    correctionElement('modal')?.setAttribute?.('aria-busy', 'true');
+    for (const key of ['save', 'close', 'cancel']) if (correctionElement(key)) correctionElement(key).disabled = true;
+    const pending = correctionElement('pending');
+    if (pending) pending.textContent = 'Saving reviewed correction…';
+    const payload = {
+      id: correction.recipeId,
+      ingredientId: correction.ingredientId,
+      expectedUpdatedAt: Number(recipe._updatedAt) || 0,
+      correction: validation.correction,
+    };
+    let accepted = false;
+    try { accepted = await mutateRecipe('recipe.ingredient.review', payload); }
+    catch { accepted = false; }
+    for (const key of ['save', 'close', 'cancel']) if (correctionElement(key)) correctionElement(key).disabled = false;
+    correctionElement('modal')?.removeAttribute?.('aria-busy');
+    correctionPending = false;
+    if (!accepted) {
+      if (pending) pending.textContent = '';
+      showCorrectionError('We could not save this review. Check sync status and try again.');
+      feedback.emit('blocked', { target: correctionElement('save'), interaction: interaction ? { ...interaction, deferred: true } : null });
+      return false;
+    }
+    const latest = state.recipes.find((item) => String(item._id || item.id) === correction.recipeId) || recipe;
+    const pendingRecord = latest.ingredientNormalizations?.find?.((item) => item.id === correction.ingredientId);
+    if (pendingRecord?.reviewedBy?.sub === 'pending') {
+      pendingRecord.reviewedBy = {
+        sub: state.auth?.sub || 'pending',
+        name: state.household?.member?.displayName || state.auth?.name || 'You',
+      };
+    }
+    if (!effectiveIngredientRecords(latest).some((item) => item.id === correction.ingredientId && item.reviewStatus === 'reviewed')) {
+      const optimistic = applyReviewedIngredientCorrection(latest, {
+        ingredientId: correction.ingredientId,
+        correction: validation.correction,
+        reviewer: { sub: state.auth?.sub || '', name: state.auth?.name || 'You' },
+        reviewedAt: Date.now(),
+      });
+      if (optimistic.ok) Object.assign(latest, optimistic.recipe);
+    }
+    if (current?.r && String(current.r._id || current.r.id) === correction.recipeId) current.r = latest;
+    const successTarget = correctionOpener || correctionElement('save');
+    closeCorrection();
+    renderIngredients();
+    onChange?.();
+    notify('Reviewed ingredient correction saved');
+    feedback.emit('success', { target: successTarget, interaction: interaction ? { ...interaction, deferred: true } : null });
+    return true;
+  }
+
   function open(id) {
     const r = state.recipes.find((x) => x._id === id);
     if (!r) return;
@@ -178,12 +428,12 @@ export function initDetail({
   function renderIngredients() {
     const r = current && current.r;
     if (!r) return;
-    const ings = r.recipeIngredient || [];
+    const ingredients = effectiveIngredientRecords(r);
     const list = document.getElementById('dm-ingredients');
-    if (list) list.innerHTML = ingredientListHTML(ings, state.pantry);
+    if (list) list.innerHTML = ingredientListHTML(ingredients, state.pantry);
     const note = document.getElementById('dm-pantry-note');
     if (note) {
-      const html = pantryNoteHTML(ings, state.pantry);
+      const html = pantryNoteHTML(ingredients, state.pantry);
       note.style.display = html ? '' : 'none';
       if (html) note.innerHTML = html;
     }
@@ -235,6 +485,7 @@ export function initDetail({
   }
 
   function closeSheet() {
+    if (!correctionElement('modal')?.hidden) closeCorrection({ restoreFocus: false });
     const modal = document.getElementById('detail-modal');
     const overlay = document.getElementById('detail-overlay');
     if (modal) {
@@ -378,16 +629,18 @@ export function initDetail({
 
   function performAddToCart(recipe, cancellationGeneration) {
     if (cancellationGeneration !== (Number(state.cartCancellationGeneration) || 0)) return false;
-    const lines = (recipe.recipeIngredient || []).filter((line) => typeof line === 'string' && line.trim());
+    const reviewedIngredients = effectiveIngredientRecords(recipe);
+    const lines = reviewedIngredients.map((ingredient) => ingredient.raw).filter((line) => typeof line === 'string' && line.trim());
     if (!lines.length) { notify('This recipe has no ingredients'); return false; }
     state.normalizations ||= {};
     state.normalizationAudit ||= {};
     const recipeId = String(recipe._id || recipe.id || recipe.name);
     const hasCache = cacheMatches(recipeId, lines);
-    const ingredients = hasCache ? state.normalizations[recipeId].ingredients : normalizeIngredientsLocal(lines);
+    const hasReviewedCorrection = reviewedIngredients.some((ingredient) => ingredient.reviewStatus === 'reviewed');
+    const ingredients = hasCache && !hasReviewedCorrection ? state.normalizations[recipeId].ingredients : reviewedIngredients;
     commitSelection(recipe, lines, ingredients);
     notify(`Added “${recipe.name}” to shopping list`);
-    if (!hasCache) scheduleAudit(recipe, lines, cancellationGeneration);
+    if (!hasCache && !hasReviewedCorrection) scheduleAudit(recipe, lines, cancellationGeneration);
     return true;
   }
 
@@ -406,6 +659,13 @@ export function initDetail({
   }
 
   function wireDetail() {
+    correctionElement('modal')?.addEventListener('keydown', handleCorrectionKey);
+    correctionElement('form')?.addEventListener('submit', (event) => { void saveCorrection(event); });
+    document.getElementById('ingredient-correction-close')?.addEventListener('click', () => closeCorrection());
+    document.getElementById('ingredient-correction-cancel')?.addEventListener('click', () => closeCorrection());
+    correctionElement('overlay')?.addEventListener('click', () => { if (!correctionPending) closeCorrection(); });
+    correctionElement('state')?.addEventListener('change', renderCorrectionDependencies);
+    correctionElement('family')?.addEventListener('change', renderCorrectionDependencies);
     document.getElementById('detail-modal')?.addEventListener('keydown', handleModalKey);
     const closeBtn = document.getElementById('detail-close-btn');
     if (closeBtn) closeBtn.addEventListener('click', closeSheet);
@@ -490,8 +750,16 @@ export function initDetail({
     const ings = document.getElementById('dm-ingredients');
     if (ings) {
       ings.addEventListener('click', (e) => {
+        const correctionAction = e.target.closest('[data-action="correct-ingredient"]');
+        if (correctionAction) {
+          e.preventDefault();
+          e.stopPropagation();
+          openCorrection(correctionAction.dataset.ingredientId, correctionAction);
+          return;
+        }
         const item = e.target.closest('.detail-ing-item');
-        if (!item || !item.dataset.ing) return;
+        const pantryAction = e.target.closest('[data-action="toggle-ingredient-pantry"]');
+        if (!item || (!pantryAction && e.target !== item) || !item.dataset.ing) return;
         const input = normalizePantryEntry(item.dataset.ing.toLowerCase(), { updatedAt: Date.now() });
         const { pantry, added, name, item: pantryItem } = togglePantry(state.pantry, input);
         state.pantry = pantry;
@@ -528,6 +796,15 @@ export function initDetail({
     openRecipe(r, { source: 'local', author: r._author, isAuthor });
   }
 
+  const initialCorrectionModal = correctionElement('modal');
+  if (initialCorrectionModal) {
+    initialCorrectionModal.setAttribute?.('inert', '');
+    initialCorrectionModal.setAttribute?.('aria-hidden', 'true');
+    initialCorrectionModal.removeAttribute?.('aria-modal');
+    initialCorrectionModal.hidden = true;
+  }
+  const initialCorrectionOverlay = correctionElement('overlay');
+  if (initialCorrectionOverlay) initialCorrectionOverlay.hidden = true;
   const initialModal = document.getElementById('detail-modal');
   if (initialModal && !initialModal.classList.contains('open')) {
     initialModal.setAttribute?.('inert', '');
@@ -540,6 +817,7 @@ export function initDetail({
   wireDetail();
   return {
     open, close: closeSheet, restore, _renderIngredients: renderIngredients, _addToCart: addToCartHandler,
+    openCorrection, closeCorrection,
     _waitForAudits: () => Promise.allSettled([...pendingAudits]),
   };
 }

@@ -5,6 +5,7 @@
 import { esc, formatDuration, formatListValue, formatRecipeYield } from '../lib/format.js';
 import { Icon, IconButton } from '../lib/ui.js';
 import { eligibility, haveIngredient, ingredientCounts } from '../lib/pantry.js';
+import { effectiveIngredientLines } from '../lib/ingredient-corrections.js';
 import { householdIdentityHTML } from './householdIdentity.js';
 
 const STATUS_TEXT = {
@@ -21,7 +22,7 @@ const STATUS_TEXT = {
  */
 export function recipeCardHTML(r, pantry, { currentUserSub = null, history = null } = {}) {
   const e = eligibility(r, pantry);
-  const ings = r.recipeIngredient || [];
+  const ings = effectiveIngredientLines(r);
   const { have, total } = ingredientCounts(r, pantry);
   const statusText = e === 'partial' ? STATUS_TEXT.partial(have, total) : STATUS_TEXT[e];
   const recipeYield = formatRecipeYield(r.recipeYield);

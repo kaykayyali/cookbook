@@ -56,7 +56,8 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
     ),
   });
   detail = initDetail({
-    state, mutate: runtime.mutate, onEdit: (id) => drawer.open(id), onSchema: showRecipeSchema,
+    state, mutate: runtime.mutate, mutateRecipe: recipeRuntime?.mutate,
+    onEdit: (id) => drawer.open(id), onSchema: showRecipeSchema,
     onChange: () => recipes.render(), getHistory: engagement.history,
     getReactions: () => state.cookReactions || [], onMarkCooked: engagement.markRecipe,
     onCookMode: cookingMode.open,
@@ -92,7 +93,12 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
   globalThis.window?.addEventListener?.('online', () => { void engagement.load(); });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
-    if ($('pantry-item-modal') && !$('pantry-item-modal').hidden) {
+    if ($('ingredient-correction-modal') && !$('ingredient-correction-modal').hidden) {
+      event.preventDefault();
+      event.stopImmediatePropagation?.();
+      detail.closeCorrection();
+    }
+    else if ($('pantry-item-modal') && !$('pantry-item-modal').hidden) {
       event.preventDefault();
       event.stopImmediatePropagation?.();
       pantry.closeEditor();

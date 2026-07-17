@@ -4,35 +4,47 @@
 
 import { esc, formatDuration, formatRecipeYield } from '../lib/format.js';
 import { Icon } from '../lib/ui.js';
-import { haveIngredient, ingredientCounts } from '../lib/pantry.js';
+import { haveIngredient } from '../lib/pantry.js';
+import { formatEffectiveIngredient } from '../lib/ingredient-corrections.js';
 
 /**
  * Ingredient checklist markup for the detail sheet.
- * @param {string[]} ings
- * @param {string[]} pantry
+ * Reviewed normalized values are displayed while the immutable source line stays
+ * available to the correction dialog.
+ * @param {object[]} ingredients
+ * @param {Array} pantry
  * @returns {string}
  */
-export function ingredientListHTML(ings, pantry) {
-  return `<ul class="detail-ing-list">${ings.map((i) => {
-    const has = haveIngredient(i, pantry);
+export function ingredientListHTML(ingredients, pantry) {
+  return `<ul class="detail-ing-list">${ingredients.map((ingredient) => {
+    const has = haveIngredient(ingredient, pantry);
     const cls = has ? 'detail-ing-item' : 'detail-ing-item missing-item';
     const checkCls = has ? 'detail-ing-check have' : 'detail-ing-check';
-    const title = has ? 'Tap to remove from pantry' : 'Tap to add to pantry';
-    return `<li class="${cls}" data-ing="${esc(i)}" data-feedback="${has ? 'toggle-off' : 'toggle-on'}" role="button" tabindex="0" title="${esc(title)}">
-      <span class="${checkCls}">${has ? Icon({ name: 'check' }) : ''}</span>
-      <span class="detail-ing-text">${esc(i)}</span></li>`;
+    const title = has ? 'Remove from Pantry' : 'Add to Pantry';
+    const display = formatEffectiveIngredient(ingredient);
+    const reviewed = ingredient.reviewStatus === 'reviewed'
+      ? '<span class="ingredient-review-status">Reviewed</span>' : '';
+    return `<li class="${cls}" data-ing="${esc(ingredient.name)}" data-ingredient-id="${esc(ingredient.id)}">
+      <button type="button" class="detail-ing-toggle" data-action="toggle-ingredient-pantry" data-feedback="${has ? 'toggle-off' : 'toggle-on'}" aria-label="${esc(`${title}: ${display}`)}">
+        <span class="${checkCls}">${has ? Icon({ name: 'check' }) : ''}</span>
+        <span class="detail-ing-text">${esc(display)}</span>
+      </button>
+      ${reviewed}
+      <button type="button" class="ingredient-correction-action" data-action="correct-ingredient" data-feedback="select" data-ingredient-id="${esc(ingredient.id)}" aria-label="${esc(`Correct ${ingredient.raw}`)}">Correct</button>
+    </li>`;
   }).join('')}</ul>`;
 }
 
 /**
  * Pantry summary note shown beneath the ingredient list.
- * @param {string[]} ings
- * @param {string[]} pantry
+ * @param {object[]} ingredients
+ * @param {Array} pantry
  * @returns {string}
  */
-export function pantryNoteHTML(ings, pantry) {
-  if (!ings.length) return '';
-  const { have, total } = ingredientCounts({ recipeIngredient: ings }, pantry);
+export function pantryNoteHTML(ingredients, pantry) {
+  if (!ingredients.length) return '';
+  const have = ingredients.filter((ingredient) => haveIngredient(ingredient, pantry)).length;
+  const total = ingredients.length;
   const missing = total - have;
   return missing === 0
     ? '<strong>You have everything.</strong> Ready to cook.'

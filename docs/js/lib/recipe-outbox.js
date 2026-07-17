@@ -1,4 +1,5 @@
 const clone = (value) => JSON.parse(JSON.stringify(value));
+import { applyReviewedIngredientCorrection } from './ingredient-corrections.js';
 const makeMutationId = () => globalThis.crypto?.randomUUID?.() || `recipe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const recipeId = (item) => String(item?._id || item?.id || '');
 
@@ -6,6 +7,19 @@ export function applyRecipeOperation(recipes, request) {
   const next = clone(recipes);
   const payload = request.payload || {};
   if (request.op === 'recipe.delete') return next.filter((item) => recipeId(item) !== String(payload.id));
+  if (request.op === 'recipe.ingredient.review') {
+    const index = next.findIndex((item) => recipeId(item) === String(payload.id));
+    if (index < 0) return next;
+    const reviewedAt = Math.max(Date.now(), Number(next[index]._updatedAt) + 1 || 0);
+    const reviewed = applyReviewedIngredientCorrection(next[index], {
+      ingredientId: payload.ingredientId,
+      correction: payload.correction,
+      reviewer: { sub: 'pending', name: 'You' },
+      reviewedAt,
+    });
+    if (reviewed.ok) next[index] = { ...reviewed.recipe, _updatedAt: reviewedAt };
+    return next;
+  }
   if (request.op === 'recipe.create' || request.op === 'recipe.update') {
     const item = clone(payload.item || { ...payload.recipe, id: payload.id, _id: payload.id });
     const id = String(payload.id || recipeId(item));
@@ -97,7 +111,14 @@ export function createRecipeOutbox({
       let response;
       sendingMutationId = row.mutationId;
       neverAttempted.delete(row.mutationId);
-      try { response = await send({ mutationId: row.mutationId, op: row.op, payload: row.payload }); }
+      try {
+        const outgoingPayload = clone(row.payload);
+        if (row.op === 'recipe.ingredient.review') {
+          const base = confirmed.find((item) => recipeId(item) === String(outgoingPayload.id));
+          if (base && Number.isSafeInteger(Number(base._updatedAt))) outgoingPayload.expectedUpdatedAt = Number(base._updatedAt);
+        }
+        response = await send({ mutationId: row.mutationId, op: row.op, payload: outgoingPayload });
+      }
       catch {
         syncStatus = 'offline'; blockedSequence = row.sequence; discardable = false; report(); return false;
       }

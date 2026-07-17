@@ -10,7 +10,7 @@ export async function onRequestPost(context) {
   if (!author) return json(401, { error: 'invalid_token' });
   let body;
   try { body = await context.request.json(); } catch { return json(400, { error: 'bad_json' }); }
-  if (!body?.mutationId || !body?.op || typeof body.payload !== 'object') {
+  if (!body?.mutationId || !body?.op || !body.payload || typeof body.payload !== 'object' || Array.isArray(body.payload)) {
     return json(400, { error: 'invalid_recipe_mutation' });
   }
   const store = context.data?.recipeMutationStore || await createD1RecipeMutationStore(context.env.DB);
