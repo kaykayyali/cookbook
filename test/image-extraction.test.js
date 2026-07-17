@@ -16,6 +16,24 @@ test('server vision preserves page order and returns structured recipe confidenc
   assert.equal(result.recipe.name, 'Soup');
   assert.deepEqual(result.provenance.pages, [1, 2]);
   assert.deepEqual(result.confidence.uncertainFields, []);
+  assert.equal(result.extractorMethod, 'workers-ai-vision');
+  assert.equal(result.extractorVersion, 'image-extractor-v1');
+  assert.match(result.evidence.pageText, /Page 1:\nSoup ingredients: water/);
+  assert.match(result.evidence.pageText, /Page 2:\nMethod: boil/);
+  assert.equal(JSON.stringify(result.evidence).includes('data:image'), false);
+});
+
+test('server vision bounds multibyte OCR evidence by UTF-8 bytes', async () => {
+  const result = await extractRecipeFromImages({
+    imageRefs: ['data:image/png;base64,b25l'],
+    runVision: async () => `Original OCR ${'🍲'.repeat(20_000)}`,
+    runText: async () => JSON.stringify({ name: 'Soup', recipeIngredient: ['water'], recipeInstructions: ['Boil'] }),
+  });
+  const serialized = JSON.stringify(result.evidence);
+  assert.doesNotThrow(() => JSON.parse(serialized));
+  assert.ok(new TextEncoder().encode(serialized).byteLength <= 16_384);
+  assert.match(serialized, /Original OCR/);
+  assert.equal(serialized.includes('data:image'), false);
 });
 
 test('failed vision remains a recoverable draft result', async () => {

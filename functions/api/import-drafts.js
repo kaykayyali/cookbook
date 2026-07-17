@@ -90,7 +90,14 @@ export async function onRequestPost(context) {
       });
       const extracted = await updateDraftExtraction(ready.db, {
         id: result.body.id, householdId: ready.householdId,
-        extracted: { recipe: extraction.recipe, provenance: extraction.provenance, error: extraction.error || null },
+        extracted: {
+          recipe: extraction.recipe,
+          extractorMethod: extraction.extractorMethod,
+          extractorVersion: extraction.extractorVersion,
+          evidence: extraction.evidence,
+          provenance: extraction.provenance,
+          error: extraction.error || null,
+        },
         confidence: extraction.confidence, duplicateIds: [], now: Date.now(),
       });
       return json(result.status, { ...result.body, ...extracted.body });

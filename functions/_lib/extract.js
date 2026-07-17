@@ -2,6 +2,8 @@
 // extract.js — recipe extraction pipeline (pure, deps injected)
 // ════════════════════════════════════════════════════════
 
+import { boundedJsonValue } from './bounded-json.js';
+
 // Matches <script type=application/ld+json>, <script type="application/ld+json">,
 // and <script type='application/ld+json'> — unquoted attributes are valid HTML5.
 const LD_BLOCK = /<script[^>]*type\s*=\s*(?:["'])?application\/ld\+json(?:["'])?[^>]*>([\s\S]*?)<\/script>/gi;
@@ -290,19 +292,7 @@ export function cleanText(html) {
 }
 
 function boundedExtractionEvidence(value) {
-  const serialized = JSON.stringify(value || {});
-  if (serialized.length <= EVIDENCE_CAP) return value || {};
-  const envelope = {
-    truncated: true,
-    originalLength: serialized.length,
-    jsonPrefix: serialized.slice(0, EVIDENCE_CAP - 200),
-  };
-  let length = JSON.stringify(envelope).length;
-  while (length > EVIDENCE_CAP && envelope.jsonPrefix.length) {
-    envelope.jsonPrefix = envelope.jsonPrefix.slice(0, envelope.jsonPrefix.length - (length - EVIDENCE_CAP));
-    length = JSON.stringify(envelope).length;
-  }
-  return envelope;
+  return boundedJsonValue(value || {}, EVIDENCE_CAP);
 }
 
 function extracted(recipe, extractorMethod, evidence) {

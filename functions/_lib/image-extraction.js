@@ -1,4 +1,9 @@
 import { parseLLMRecipe } from './extract.js';
+import { boundedJsonValue } from './bounded-json.js';
+
+export const IMAGE_EXTRACTOR_METHOD = 'workers-ai-vision';
+export const IMAGE_EXTRACTOR_VERSION = 'image-extractor-v1';
+const EVIDENCE_CAP = 16_384;
 
 function decodeImage(ref) {
   const match = /^data:image\/[a-z0-9.+-]+;base64,([a-z0-9+/=]+)$/i.exec(ref || '');
@@ -24,12 +29,18 @@ export async function extractRecipeFromImages({ imageRefs, runVision, runText })
       recipe,
       confidence: { uncertainFields, source: 'workers-ai-vision' },
       provenance: { pages: imageRefs.map((_, index) => index + 1), preservedImages: true },
+      extractorMethod: IMAGE_EXTRACTOR_METHOD,
+      extractorVersion: IMAGE_EXTRACTOR_VERSION,
+      evidence: boundedJsonValue({ pageText: pages.join('\n\n') }, EVIDENCE_CAP),
     };
   } catch (error) {
     return {
       recipe: null,
       confidence: { uncertainFields: ['name', 'recipeIngredient', 'recipeInstructions'], source: 'workers-ai-vision' },
       provenance: { pages: imageRefs.map((_, index) => index + 1), preservedImages: true },
+      extractorMethod: IMAGE_EXTRACTOR_METHOD,
+      extractorVersion: IMAGE_EXTRACTOR_VERSION,
+      evidence: boundedJsonValue({ pageText: pages.join('\n\n') }, EVIDENCE_CAP),
       error: error?.message || 'image_extraction_failed',
     };
   }

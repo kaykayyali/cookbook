@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { confirmDraft, ensureImportDraftsSchema } from '../functions/_lib/import-drafts.js';
 import { editRecipe, getCommunity, listCommunity } from '../functions/_lib/community.js';
 import { extractRecipe } from '../functions/_lib/extract.js';
+import { boundedEvidenceJson } from '../functions/_lib/import-provenance.js';
 import { onRequestPost as extractRoute } from '../functions/api/extract.js';
 
 const migrationUrl = new URL('../docs/superpowers/migrations/0011_recipe_import_provenance.sql', import.meta.url);
@@ -81,7 +82,7 @@ test('confirming an import persists exact source metadata and bounded original e
     recipe: { name: 'Original Soup' },
     extractorMethod: 'json-ld',
     extractorVersion: 'url-extractor-v1',
-    evidence: { headline: 'Original', text: 'x'.repeat(40_000) },
+    evidence: { headline: 'Original', text: 'é'.repeat(40_000) },
   };
   const { db, calls } = stubDb({ first: [{
     id: 'draft-1', household_id: 'our-home', status: 'extracted', created_by_sub: 'kay',
@@ -104,7 +105,43 @@ test('confirming an import persists exact source metadata and bounded original e
   assert.ok(insert.values.includes(1500), 'import timestamp comes from the immutable draft creation time');
   const evidenceJson = insert.values.find((value) => typeof value === 'string' && value.includes('Original'));
   assert.ok(evidenceJson, 'original extraction evidence is retained');
-  assert.ok(evidenceJson.length <= 32_768, 'evidence is bounded before D1 persistence');
+  assert.doesNotThrow(() => JSON.parse(evidenceJson), 'bounded evidence remains valid JSON');
+  assert.ok(new TextEncoder().encode(evidenceJson).byteLength <= 32_768, 'evidence is UTF-8 byte-bounded before D1 persistence');
+});
+
+test('provenance evidence byte bounding preserves useful valid JSON for multibyte input', () => {
+  const bounded = boundedEvidenceJson({ headline: 'Original OCR', text: '🍲'.repeat(20_000) });
+  const parsed = JSON.parse(bounded);
+  assert.ok(new TextEncoder().encode(bounded).byteLength <= 32_768);
+  assert.equal(parsed.truncated, true);
+  assert.match(parsed.jsonPrefix, /Original OCR/);
+});
+
+test('confirming a current image import persists its versioned OCR evidence without image data', async () => {
+  const extracted = {
+    recipe: { name: 'Soup' },
+    extractorMethod: 'workers-ai-vision',
+    extractorVersion: 'image-extractor-v1',
+    evidence: { pageText: 'Page 1:\nOriginal OCR: Soup ingredients water.' },
+  };
+  const { db, calls } = stubDb({ first: [{
+    id: 'draft-image', household_id: 'our-home', status: 'extracted', created_by_sub: 'kay',
+    source_type: 'image', source_urls_json: '[]',
+    image_refs_json: JSON.stringify(['data:image/png;base64,b25l']),
+    extracted_json: JSON.stringify(extracted), confidence_json: '{}', duplicate_ids_json: '[]',
+    recipe_json: JSON.stringify(extracted.recipe), created_at: 1700, updated_at: 1800,
+  }] });
+
+  const result = await confirmDraft(db, {
+    id: 'draft-image', householdId: 'our-home', actorSub: 'kay', recipe: { name: 'Reviewed Soup' }, now: 2000,
+  });
+
+  assert.equal(result.status, 200);
+  const insert = calls.find((call) => call.op === 'run' && call.sql.includes('recipe_import_provenance'));
+  assert.equal(insert.values[6], 'workers-ai-vision');
+  assert.equal(insert.values[7], 'image-extractor-v1');
+  assert.match(insert.values[8], /Original OCR/);
+  assert.equal(insert.values[8].includes('data:image'), false);
 });
 
 test('recipes expose nullable provenance and can be queried by exact source URL', async () => {
@@ -170,6 +207,24 @@ test('URL extractor identifies its method/version and returns bounded non-HTML e
   assert.equal(result.evidence.recipe.name, 'Soup');
   assert.equal(JSON.stringify(result.evidence).includes('<html>'), false, 'raw HTML is never retained');
   assert.ok(JSON.stringify(result.evidence).length <= 16_384);
+});
+
+test('URL extractor bounds multibyte evidence by UTF-8 bytes', async () => {
+  const description = '🍲'.repeat(9_000);
+  const result = await extractRecipe(EXACT_URL, {
+    fetchPage: async () => ({
+      ok: true,
+      html: `<script type="application/ld+json">${JSON.stringify({
+        '@type': 'Recipe', name: 'Soup', description,
+        recipeIngredient: ['water'], recipeInstructions: ['Boil'],
+      })}</script>`,
+    }),
+    runLLM: async () => '',
+  });
+  const serialized = JSON.stringify(result.evidence);
+  assert.equal(result.ok, true);
+  assert.doesNotThrow(() => JSON.parse(serialized));
+  assert.ok(new TextEncoder().encode(serialized).byteLength <= 16_384);
 });
 
 test('direct URL extraction creates an import draft carrying the exact submitted URL', async () => {

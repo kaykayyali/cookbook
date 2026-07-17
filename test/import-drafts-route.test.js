@@ -94,6 +94,10 @@ test('image draft runs server-side vision while retaining explicit confirmation'
   assert.equal(res.status, 201);
   assert.equal(body.status, 'extracted');
   assert.equal(body.extracted.recipe.name, 'Soup');
+  assert.equal(body.extracted.extractorMethod, 'workers-ai-vision');
+  assert.equal(body.extracted.extractorVersion, 'image-extractor-v1');
+  assert.match(body.extracted.evidence.pageText, /Soup ingredients: water/);
+  assert.equal(JSON.stringify(body.extracted.evidence).includes('data:image'), false);
   assert.equal(body.confirmedAt, null);
 });
 

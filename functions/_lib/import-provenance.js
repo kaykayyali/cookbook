@@ -1,5 +1,7 @@
 // Durable import provenance kept independently from editable recipe JSON.
 
+import { boundedJsonString } from './bounded-json.js';
+
 export const MAX_EVIDENCE_JSON_LENGTH = 32_768;
 
 export const PROVENANCE_TABLE_SQL = `CREATE TABLE IF NOT EXISTS recipe_import_provenance (
@@ -47,20 +49,7 @@ function summarizeImageRefs(raw) {
 }
 
 export function boundedEvidenceJson(value, maxLength = MAX_EVIDENCE_JSON_LENGTH) {
-  let serialized;
-  try { serialized = JSON.stringify(value ?? {}); } catch { serialized = '{}'; }
-  if (serialized.length <= maxLength) return serialized;
-  const envelope = {
-    truncated: true,
-    originalLength: serialized.length,
-    jsonPrefix: serialized.slice(0, Math.max(0, maxLength - 100)),
-  };
-  let bounded = JSON.stringify(envelope);
-  while (bounded.length > maxLength && envelope.jsonPrefix.length) {
-    envelope.jsonPrefix = envelope.jsonPrefix.slice(0, envelope.jsonPrefix.length - (bounded.length - maxLength));
-    bounded = JSON.stringify(envelope);
-  }
-  return bounded.length <= maxLength ? bounded : '{}';
+  return boundedJsonString(value, maxLength);
 }
 
 export function provenanceStatement(db, { draft, recipeId, importedAt }) {
