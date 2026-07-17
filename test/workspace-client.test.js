@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyWorkspaceOperation, createWorkspaceSync, isWorkspace } from '../docs/js/lib/workspace-sync.js';
+import { PANTRY_RAW_EVIDENCE_LIMITS } from '../docs/js/lib/pantry.js';
 
 const workspace = (overrides = {}) => ({
   householdId: 'our-home', revision: 0, plan: [], cart: [], pantry: [],
@@ -54,6 +55,28 @@ test('invalid optimistic mutation does not poison the queue for a later valid mu
   assert.equal(await sync.mutate('pantry.add', { name: 'flour' }), true);
   assert.equal(sent.length, 1);
   assert.deepEqual(sync.current().pantry.map((item) => item.name), ['flour']);
+});
+
+test('non-durable client sends only bounded Pantry evidence', async () => {
+  let sent;
+  const sync = createWorkspaceSync({
+    initial: workspace(), makeId: () => 'bounded-client',
+    send: async (request) => {
+      sent = request;
+      return { ok: true, workspace: workspace({ revision: 1, pantry: [request.payload.item] }) };
+    },
+  });
+  const oversized = '🥚'.repeat(60_000);
+  const rawEvidence = [
+    'eggs', ...Array.from({ length: 220 }, (_, index) => `client-${index}-eggs`), oversized, '3 eggs',
+  ];
+  assert.equal(await sync.mutate('pantry.add', { item: {
+    raw: '3 eggs', rawEvidence, name: 'egg', displayName: 'Egg',
+    quantity: 3, unit: 'count', kind: 'indivisible',
+  } }), true);
+  assert.equal(sent.payload.item.raw, '3 eggs');
+  assert.ok(sent.payload.item.rawEvidence.length <= PANTRY_RAW_EVIDENCE_LIMITS.maxEntries);
+  assert.ok(new TextEncoder().encode(JSON.stringify(sent)).length < 10_000);
 });
 
 test('mutation applies optimistically and confirms the authoritative response', async () => {

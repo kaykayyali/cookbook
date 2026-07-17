@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { aggregateCart } from '../docs/js/lib/cart.js';
-import { applyWorkspaceMutation, emptyWorkspace } from '../functions/_lib/workspace.js';
+import { PANTRY_RAW_EVIDENCE_LIMITS } from '../docs/js/lib/pantry.js';
+import { applyWorkspaceMutation, emptyWorkspace, workspaceFromRow } from '../functions/_lib/workspace.js';
 
 const egg = {
   raw: '2 eggs',
@@ -260,4 +261,36 @@ test('authoritative Pantry update preserves record identity and server timestamp
   assert.equal(workspace.pantry[0].id, original.id);
   assert.equal(workspace.pantry[0].amountState, 'known');
   assert.equal(workspace.pantry[0].updatedAt, 200);
+});
+
+test('D1 authority bounds historical Pantry evidence and preserves known primary through mutation replay', () => {
+  const bytes = (value) => new TextEncoder().encode(value).length;
+  const historical = {
+    raw: '3 eggs',
+    rawEvidence: [
+      'eggs',
+      ...Array.from({ length: 220 }, (_, index) => `historical-${index}-eggs`),
+      '🥚'.repeat(60_000),
+      '3 eggs',
+    ],
+    name: 'egg', displayName: 'Egg', quantity: 3, unit: 'count', kind: 'indivisible',
+  };
+  const authority = workspaceFromRow({
+    household_id: 'our-home', revision: 7, plan_json: '[]', cart_json: '[]',
+    pantry_json: JSON.stringify([historical]), shopping_checked_json: '{}',
+    manual_items_json: '[]', recent_mutations_json: '[]', updated_at: 100,
+  }, 'our-home');
+  const bounded = authority.pantry[0];
+  assert.equal(bounded.raw, '3 eggs');
+  assert.ok(bounded.rawEvidence.length <= PANTRY_RAW_EVIDENCE_LIMITS.maxEntries);
+  assert.ok(bounded.rawEvidence.reduce((total, value) => total + bytes(value), 0)
+    <= PANTRY_RAW_EVIDENCE_LIMITS.maxTotalBytes);
+
+  const replayed = applyWorkspaceMutation(authority, mutation('qualitative-context', 'pantry.add', {
+    item: { raw: 'eggs', name: 'egg', quantity: null, unit: 'qualitative', kind: 'qualitative' },
+  }), { now: 200 }).workspace;
+  assert.equal(replayed.pantry[0].raw, '3 eggs');
+  assert.ok(replayed.pantry[0].rawEvidence.includes('eggs'));
+  assert.ok(JSON.stringify(replayed.pantry).length < 10_000,
+    'one bounded Pantry record stays safely below the 50k workspace mutation cap');
 });

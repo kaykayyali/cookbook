@@ -1,4 +1,9 @@
-import { applyWorkspaceOperation, isWorkspace, normalizeWorkspace } from './workspace-sync.js';
+import {
+  applyWorkspaceOperation,
+  isWorkspace,
+  normalizeWorkspace,
+  normalizeWorkspaceMutationPayload,
+} from './workspace-sync.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const makeMutationId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
@@ -24,7 +29,10 @@ export async function createWorkspaceOutbox({
   let confirmed = normalizeWorkspace(
     isWorkspace(cached) && cached.revision >= initial.revision ? cached : initial,
   );
-  let rows = await repo.listOutbox(authSub, householdId);
+  let rows = (await repo.listOutbox(authSub, householdId)).map((row) => ({
+    ...row,
+    payload: normalizeWorkspaceMutationPayload(row.op, row.payload),
+  }));
   let optimistic = clone(confirmed);
   let draining = null;
   let persistence = Promise.resolve();
@@ -69,7 +77,10 @@ export async function createWorkspaceOutbox({
     const startedAt = mutationGeneration;
     const preserve = new Set(persisting);
     const presentAtStart = new Set(rows.map((row) => row.mutationId));
-    const listed = await repo.listOutbox(authSub, householdId);
+    const listed = (await repo.listOutbox(authSub, householdId)).map((row) => ({
+      ...row,
+      payload: normalizeWorkspaceMutationPayload(row.op, row.payload),
+    }));
     const stillPresent = new Set(rows.map((row) => row.mutationId));
     const merged = new Map(listed
       .filter((row) => !presentAtStart.has(row.mutationId) || stillPresent.has(row.mutationId))
@@ -326,7 +337,8 @@ export async function createWorkspaceOutbox({
       }
       const provisional = {
         mutationId, authSub, householdId, scope: 'workspace',
-        op, payload: clone(payload || {}), createdAt: Date.now(), status: 'pending',
+        op, payload: normalizeWorkspaceMutationPayload(op, payload),
+        createdAt: Date.now(), status: 'pending',
         attempts: 0, nextAttemptAt: 0, lastError: null,
       };
       mutationGeneration += 1;

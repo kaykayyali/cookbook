@@ -13,6 +13,7 @@ import {
   togglePantry,
   normalizePantry,
   normalizePantryEntry,
+  PANTRY_RAW_EVIDENCE_LIMITS,
   formatPantryAmount,
   updatePantryRecord,
 } from '../docs/js/lib/pantry.js';
@@ -380,6 +381,88 @@ test('qualitative replacement and numeric consolidation preserve unique raw evid
   const consolidated = normalizePantry(['2 eggs', '3 eggs', '2 eggs']);
   assert.equal(consolidated[0].raw, '3 eggs');
   assert.deepEqual(consolidated[0].rawEvidence, ['2 eggs', '3 eggs']);
+});
+
+test('qualitative evidence cannot displace primary evidence for a trusted known amount', () => {
+  const known = normalizePantry(['3 eggs']);
+  const added = addToPantry(known, 'eggs');
+
+  assert.equal(added.item.quantity, 3);
+  assert.equal(added.item.unit, 'count');
+  assert.equal(added.item.raw, '3 eggs');
+  assert.deepEqual(added.item.rawEvidence, ['3 eggs', 'eggs']);
+  assert.deepEqual(normalizePantry(added.pantry), added.pantry,
+    'primary ranking and evidence order survive replay normalization');
+});
+
+test('raw evidence bounds oversized, numerous, incremental, and multibyte history deterministically', () => {
+  assert.deepEqual(PANTRY_RAW_EVIDENCE_LIMITS, {
+    maxPrimaryBytes: 512,
+    maxEntryBytes: 512,
+    maxTotalBytes: 4096,
+    maxEntries: 16,
+  });
+  const bytes = (value) => new TextEncoder().encode(value).length;
+  const oversized = '🥚'.repeat(60_000);
+  assert.equal(oversized.length, 120_000, 'probe contains 120k UTF-16 code units');
+  assert.equal(bytes(oversized), 240_000, 'probe is also genuinely multibyte UTF-8');
+  const history = [
+    'eggs',
+    ...Array.from({ length: 220 }, (_, index) => `legacy-${String(index).padStart(3, '0')}-eggs`),
+    oversized,
+    '3 eggs',
+  ];
+  const source = {
+    raw: '3 eggs', rawEvidence: history, name: 'egg', displayName: 'Egg',
+    quantity: 3, unit: 'count', kind: 'indivisible', countLabel: '',
+  };
+  const first = normalizePantryEntry(source);
+  const second = normalizePantryEntry(source);
+
+  assert.deepEqual(second, first, 'the same hostile input has byte-for-byte deterministic output');
+  assert.equal(first.raw, '3 eggs', 'the current known primary survives pruning');
+  assert.ok(first.rawEvidence.includes('eggs'), 'useful legacy context survives pruning');
+  assert.ok(first.rawEvidence.includes('3 eggs'), 'the current primary remains in evidence');
+  assert.ok(bytes(first.raw) <= PANTRY_RAW_EVIDENCE_LIMITS.maxPrimaryBytes);
+  assert.ok(first.rawEvidence.length <= PANTRY_RAW_EVIDENCE_LIMITS.maxEntries);
+  assert.ok(first.rawEvidence.every((value) => bytes(value) <= PANTRY_RAW_EVIDENCE_LIMITS.maxEntryBytes));
+  assert.ok(first.rawEvidence.reduce((total, value) => total + bytes(value), 0)
+    <= PANTRY_RAW_EVIDENCE_LIMITS.maxTotalBytes);
+  assert.ok(first.rawEvidence.every((value) => !value.includes('\uFFFD')),
+    'UTF-8 truncation never leaves a split replacement character');
+
+  const oversizedPrimary = normalizePantryEntry({
+    raw: oversized, rawEvidence: [oversized], name: 'egg', displayName: 'Egg',
+    quantity: null, unit: 'qualitative', kind: 'qualitative',
+  });
+  assert.ok(bytes(oversizedPrimary.raw) <= PANTRY_RAW_EVIDENCE_LIMITS.maxPrimaryBytes);
+  assert.ok(oversizedPrimary.rawEvidence.includes(oversizedPrimary.raw),
+    'a truncated unknown primary remains represented in its evidence');
+
+  const accumulate = () => {
+    let pantry = normalizePantry(['3 eggs']);
+    for (let index = 0; index < 250; index += 1) {
+      pantry = addToPantry(pantry, {
+        raw: `correction-${String(index).padStart(3, '0')}-${'🥚'.repeat(200)}`,
+        name: 'egg', displayName: 'Egg', quantity: null, unit: 'qualitative', kind: 'qualitative',
+      }).pantry;
+    }
+    return pantry[0];
+  };
+  const incrementallyBounded = accumulate();
+  assert.deepEqual(accumulate(), incrementallyBounded, 'incremental retention is deterministic');
+  assert.equal(incrementallyBounded.raw, '3 eggs');
+  assert.ok(incrementallyBounded.rawEvidence.length <= PANTRY_RAW_EVIDENCE_LIMITS.maxEntries);
+  assert.ok(incrementallyBounded.rawEvidence.reduce((total, value) => total + bytes(value), 0)
+    <= PANTRY_RAW_EVIDENCE_LIMITS.maxTotalBytes);
+
+  const unknownContext = addToPantry(normalizePantry(['eggs']), {
+    raw: 'eggs from market', name: 'egg', displayName: 'Egg',
+    quantity: null, unit: 'qualitative', kind: 'qualitative',
+  }).item;
+  assert.equal(unknownContext.raw, 'eggs from market',
+    'unknown amounts prefer the newest explicit correction context');
+  assert.deepEqual(unknownContext.rawEvidence, ['eggs', 'eggs from market']);
 });
 
 test('raw evidence treats explicit semicolon-bearing source lines losslessly', () => {

@@ -120,6 +120,12 @@ function plainDisplayName(value, fallback) {
 
 export const PANTRY_RECORD_VERSION = 1;
 export const PANTRY_CONFIDENCE_THRESHOLD = 0.7;
+export const PANTRY_RAW_EVIDENCE_LIMITS = Object.freeze({
+  maxPrimaryBytes: 512,
+  maxEntryBytes: 512,
+  maxTotalBytes: 4096,
+  maxEntries: 16,
+});
 
 const pantryKey = (item) => `${item.name}\u0000${item.unit}\u0000${item.unit === 'count' ? item.countLabel : ''}`;
 const finiteTimestamp = (value) => Number.isFinite(Number(value)) && Number(value) >= 0
@@ -182,32 +188,101 @@ function legacyRawValues(value) {
   return value.split('; ').map((item) => item.trim()).filter(Boolean);
 }
 
+const UTF8_ENCODER = new TextEncoder();
+const UTF8_DECODER = new TextDecoder();
+
+function utf8Length(value) {
+  return UTF8_ENCODER.encode(value).length;
+}
+
+function boundedUtf8(value, maxBytes) {
+  const normalized = UTF8_DECODER.decode(UTF8_ENCODER.encode(String(value || ''))).trim();
+  if (!normalized || utf8Length(normalized) <= maxBytes) return normalized;
+  const output = [];
+  let used = 0;
+  for (const character of normalized) {
+    const size = utf8Length(character);
+    if (used + size > maxBytes) break;
+    output.push(character);
+    used += size;
+  }
+  return output.join('').trimEnd();
+}
+
+function sanitizedEvidenceValues(values) {
+  return [...new Set(values
+    .filter((value) => typeof value === 'string')
+    .map((value) => boundedUtf8(value, PANTRY_RAW_EVIDENCE_LIMITS.maxEntryBytes))
+    .filter(Boolean))];
+}
+
 function evidenceValues(value, source) {
-  const explicit = Array.isArray(source?.rawEvidence)
-    ? source.rawEvidence.map((item) => String(item || '').trim()).filter(Boolean) : [];
+  const explicit = Array.isArray(source?.rawEvidence) ? source.rawEvidence : [];
   const raw = explicit.length && typeof source?.raw === 'string'
-    ? [source.raw.trim()].filter(Boolean)
+    ? [source.raw]
     : legacyRawValues(source?.raw);
   const generated = explicit.length || raw.length ? '' : generatedEvidence(value, source);
-  return [...new Set([...explicit, ...raw, generated].filter(Boolean))];
+  return sanitizedEvidenceValues([...explicit, ...raw, generated]);
 }
 
 function evidenceText(value, source, evidence) {
   if (typeof source?.raw === 'string' && source.raw.trim()) {
-    if (Array.isArray(source.rawEvidence)) return source.raw.trim();
+    if (Array.isArray(source.rawEvidence)) return source.raw;
     const legacy = legacyRawValues(source.raw);
-    return legacy.at(-1) || source.raw.trim();
+    return legacy.at(-1) || source.raw;
   }
   if (Array.isArray(source?.raw)) return legacyRawValues(source.raw).at(-1) || '';
-  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'string') return value;
   return evidence.at(-1) || generatedEvidence(value, source);
 }
 
+function parsedKnownEvidence(record, value, { exactQuantity = false } = {}) {
+  const parsed = normalizeIngredient(value);
+  if (parsed.quantityState === 'range' || parsed.unit !== record.unit
+      || canonicalName(parsed.name) !== record.name || !Number.isFinite(parsed.quantity)) return false;
+  if (record.unit === 'count' && parsed.countLabel !== record.countLabel) return false;
+  return !exactQuantity || Math.abs(parsed.quantity - record.quantity) < 1e-9;
+}
+
+function rankedPrimary(record, preferred, evidence) {
+  const requested = boundedUtf8(preferred, PANTRY_RAW_EVIDENCE_LIMITS.maxPrimaryBytes);
+  const candidates = sanitizedEvidenceValues([...evidence, requested]);
+  if (record.amountState !== 'known') return requested || candidates.at(-1) || '';
+  // Known amounts rank exact quantity/unit evidence first, then numeric evidence
+  // from the same unit family. Qualitative context can never displace either.
+  const exact = candidates.filter((value) => parsedKnownEvidence(record, value, { exactQuantity: true }));
+  if (requested && exact.includes(requested)) return requested;
+  if (exact.length) return exact.at(-1);
+  if (requested && parsedKnownEvidence(record, requested)) return requested;
+  const compatible = candidates.filter((value) => parsedKnownEvidence(record, value));
+  if (compatible.length) return compatible.at(-1);
+  return boundedUtf8(generatedEvidence(record, record), PANTRY_RAW_EVIDENCE_LIMITS.maxPrimaryBytes);
+}
+
+function boundedEvidence(evidence, primary) {
+  const candidates = sanitizedEvidenceValues([...evidence, primary]);
+  const selected = new Set();
+  let totalBytes = 0;
+  const retain = (value) => {
+    if (!value || selected.has(value) || selected.size >= PANTRY_RAW_EVIDENCE_LIMITS.maxEntries) return;
+    const size = utf8Length(value);
+    if (totalBytes + size > PANTRY_RAW_EVIDENCE_LIMITS.maxTotalBytes) return;
+    selected.add(value);
+    totalBytes += size;
+  };
+  // Reserve the current primary and oldest legacy context, then spend the
+  // remaining count/byte budget newest-first. Preserve chronological output.
+  retain(primary);
+  retain(candidates[0]);
+  for (let index = candidates.length - 1; index >= 0; index -= 1) retain(candidates[index]);
+  return candidates.filter((value) => selected.has(value));
+}
+
 function mergeEvidence(...records) {
-  return [...new Set(records.flatMap((record) => {
+  return sanitizedEvidenceValues(records.flatMap((record) => {
     if (Array.isArray(record?.rawEvidence)) return record.rawEvidence;
     return legacyRawValues(record?.raw);
-  }).map((value) => String(value || '').trim()).filter(Boolean))];
+  }));
 }
 
 function mergePrimary(existing, incoming) {
@@ -284,8 +359,8 @@ export function normalizePantryEntry(value, options = {}) {
   const updatedAt = options.overrideUpdatedAt === true
     ? optionUpdatedAt ?? sourceUpdatedAt ?? 0
     : sourceUpdatedAt ?? optionUpdatedAt ?? 0;
-  const rawEvidence = evidenceValues(value, source);
-  return {
+  const evidence = evidenceValues(value, source);
+  const record = {
     id: safeRecordId(options.id) || safeRecordId(source.id) || deterministicRecordId(candidate),
     name,
     displayName: plainDisplayName(source.displayName, fallback.displayName),
@@ -296,12 +371,16 @@ export function normalizePantryEntry(value, options = {}) {
     kind: unit === 'count' ? 'indivisible' : unit === 'ounce' ? 'divisible' : 'qualitative',
     countLabel,
     category: INGREDIENT_CATEGORIES.includes(source.category) ? source.category : fallback.category,
-    raw: evidenceText(value, source, rawEvidence),
-    rawEvidence,
     confidence,
     normalizationVersion: Number.isInteger(source.normalizationVersion) && source.normalizationVersion > 0
       ? source.normalizationVersion : PANTRY_RECORD_VERSION,
     updatedAt,
+  };
+  const raw = rankedPrimary(record, evidenceText(value, source, evidence), evidence);
+  return {
+    ...record,
+    raw,
+    rawEvidence: boundedEvidence(evidence, raw),
   };
 }
 

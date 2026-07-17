@@ -4,6 +4,7 @@ import { indexedDB } from 'fake-indexeddb';
 import { createWorkspaceOutbox } from '../docs/js/lib/workspace-outbox.js';
 import { applyWorkspaceOperation } from '../docs/js/lib/workspace-sync.js';
 import { openOfflineDb } from '../docs/js/lib/offline-db.js';
+import { PANTRY_RAW_EVIDENCE_LIMITS } from '../docs/js/lib/pantry.js';
 
 const base = (overrides = {}) => ({
   householdId: 'our-home', revision: 0, plan: [], cart: [], pantry: [], shoppingChecked: {},
@@ -130,6 +131,41 @@ test('raw Pantry evidence survives durable optimistic replay without duplication
   });
   assert.equal(manager.current().pantry[0].raw, '3 eggs');
   assert.deepEqual(manager.current().pantry[0].rawEvidence, ['eggs', '3 eggs']);
+});
+
+test('durable outbox stores and sends only bounded Pantry evidence payloads', async () => {
+  const repo = memoryRepo();
+  let online = false;
+  let sent;
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(),
+    isOnline: () => online, makeId: () => 'bounded-evidence',
+    send: async (request) => {
+      sent = request;
+      return { ok: true, workspace: base({ revision: 1, pantry: [request.payload.item] }) };
+    },
+  });
+  const rawEvidence = [
+    'eggs', ...Array.from({ length: 220 }, (_, index) => `queued-${index}-eggs`),
+    '🥚'.repeat(60_000), '3 eggs',
+  ];
+  assert.equal(await manager.mutate('pantry.add', { item: {
+    raw: '3 eggs', rawEvidence, name: 'egg', displayName: 'Egg',
+    quantity: 3, unit: 'count', kind: 'indivisible',
+  } }), true);
+
+  const [durable] = await repo.listOutbox();
+  assert.equal(durable.payload.item.raw, '3 eggs');
+  assert.ok(durable.payload.item.rawEvidence.length <= PANTRY_RAW_EVIDENCE_LIMITS.maxEntries);
+  assert.ok(new TextEncoder().encode(JSON.stringify(durable)).length < 10_000,
+    'the durable mutation remains safely below the 50k workspace API cap');
+
+  online = true;
+  assert.equal(await manager.drain(), true);
+  assert.ok(new TextEncoder().encode(JSON.stringify(sent)).length < 10_000);
+  assert.equal(sent.payload.item.raw, '3 eggs');
+  assert.deepEqual(manager.current().pantry[0].rawEvidence, sent.payload.item.rawEvidence,
+    'authority acknowledgement and replay preserve the same bounded evidence');
 });
 
 test('online mutation returns after durable optimistic publication without waiting for D1', async () => {

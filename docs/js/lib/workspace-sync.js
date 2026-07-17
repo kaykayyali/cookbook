@@ -23,6 +23,16 @@ const TRANSFER_PREFIX = 'pantry-transfer:';
 const PLAN_SLOTS = new Set(['breakfast', 'lunch', 'dinner']);
 const slotOrder = { breakfast: 0, lunch: 1, dinner: 2 };
 
+export function normalizeWorkspaceMutationPayload(op, payload) {
+  const normalized = clone(payload || {});
+  if ((op === 'pantry.add' || op === 'pantry.update')
+      && Object.prototype.hasOwnProperty.call(normalized, 'item')) {
+    const item = normalizePantryEntry(normalized.item);
+    if (item) normalized.item = item;
+  }
+  return normalized;
+}
+
 function pruneTransferMarkers(workspace) {
   const valid = new Set([
     ...aggregateCart(workspace.cart).map((item) => item.name),
@@ -63,7 +73,7 @@ export function isWorkspace(value) {
 
 export function applyWorkspaceOperation(source, request) {
   const workspace = normalizeWorkspace(source);
-  const payload = request.payload || {};
+  const payload = normalizeWorkspaceMutationPayload(request.op, request.payload);
   switch (request.op) {
     case 'plan.upsert': {
       const entry = clone(payload);
@@ -240,7 +250,11 @@ export function createWorkspaceSync({ initial, send, onChange = () => {}, onErro
       return true;
     },
     mutate(op, payload) {
-      return enqueue({ mutationId: makeId(), op, payload: clone(payload || {}), createdAt: Date.now() });
+      return enqueue({
+        mutationId: makeId(), op,
+        payload: normalizeWorkspaceMutationPayload(op, payload),
+        createdAt: Date.now(),
+      });
     },
   };
 }
