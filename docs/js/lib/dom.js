@@ -12,14 +12,55 @@ export const el = (sel, root = document) => root.querySelector(sel);
 export const els = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 let toastTimer;
-/** Show a transient toast message. */
-export function toast(msg) {
-  const t = $('toast');
-  if (!t) return;
-  t.textContent = msg;
-  t.classList.add('show');
+let activeToast = null;
+
+/** Revoke the current toast action and remove it from focus/navigation. */
+export function dismissToast() {
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+  toastTimer = undefined;
+  if (!activeToast) return false;
+  const { container, action, listener } = activeToast;
+  if (action) {
+    action.removeEventListener('click', listener);
+    action.disabled = true;
+    action.remove();
+  }
+  container.classList.remove('show');
+  activeToast = null;
+  return true;
+}
+
+/** Show a transient toast message, optionally with one accessible action. */
+export function toast(msg, { actionLabel = '', onAction = null, duration = 4200 } = {}) {
+  const t = $('toast');
+  if (!t) return () => false;
+  dismissToast();
+  let action = null;
+  let listener = null;
+  if (actionLabel && typeof onAction === 'function' && t.ownerDocument?.createElement && t.replaceChildren) {
+    const copy = t.ownerDocument.createElement('span');
+    copy.textContent = msg;
+    action = t.ownerDocument.createElement('button');
+    action.type = 'button';
+    action.dataset.toastAction = '';
+    action.textContent = actionLabel;
+    listener = () => {
+      if (activeToast?.action !== action) return;
+      dismissToast();
+      void onAction();
+    };
+    action.addEventListener('click', listener);
+    t.replaceChildren(copy, action);
+  } else {
+    t.textContent = msg;
+  }
+  const token = { container: t, action, listener };
+  activeToast = token;
+  t.classList.add('show');
+  toastTimer = setTimeout(() => {
+    if (activeToast === token) dismissToast();
+  }, duration);
+  return () => activeToast === token && dismissToast();
 }
 
 /** Announce `msg` to screen readers via a singleton live region. */

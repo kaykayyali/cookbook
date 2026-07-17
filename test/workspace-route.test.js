@@ -135,6 +135,95 @@ test('stale revision returns 409 with the current authoritative workspace', asyn
   assert.deepEqual(body.workspace.pantry.map((item) => item.name), ['flour']);
 });
 
+test('Pantry conditional remove and expected-absent restore return actionable 409 without changing authority', async () => {
+  const store = workspaceDb();
+  const add = await onRequestPatch(context(store.db, { body: {
+    mutationId: 'seed-oil', baseRevision: 0, op: 'pantry.add', payload: { item: {
+      id: 'oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+      quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1,
+    } },
+  } }));
+  const authority = await add.json();
+  const item = authority.pantry[0];
+  const unguardedRemove = await onRequestPatch(context(store.db, { body: {
+    mutationId: 'unguarded-remove', baseRevision: 1, op: 'pantry.remove', payload: { id: item.id },
+  } }));
+  assert.equal(unguardedRemove.status, 400);
+  assert.deepEqual(await unguardedRemove.json(), { error: 'invalid_pantry_remove' });
+  const staleRemove = await onRequestPatch(context(store.db, { body: {
+    mutationId: 'stale-remove', baseRevision: 1, op: 'pantry.remove',
+    payload: { id: item.id, expectedFingerprint: 'pantry-v1:stale' },
+  } }));
+  assert.equal(staleRemove.status, 409);
+  assert.deepEqual(await staleRemove.json(), {
+    error: 'pantry_record_conflict', workspace: authority,
+  });
+  const duplicateRestore = await onRequestPatch(context(store.db, { body: {
+    mutationId: 'duplicate-restore', baseRevision: 1, op: 'pantry.restore',
+    payload: { item, expectedAbsent: true },
+  } }));
+  assert.equal(duplicateRestore.status, 409);
+  assert.deepEqual(await duplicateRestore.json(), {
+    error: 'pantry_restore_conflict', workspace: authority,
+  });
+  assert.equal(store.current().revision, 1);
+});
+
+test('Pantry restore rejects a qualitative/numeric merge-equivalent authority record before CAS', async () => {
+  const store = workspaceDb();
+  const seed = await onRequestPatch(context(store.db, { body: {
+    mutationId: 'seed-qualitative-oil', baseRevision: 0, op: 'pantry.add', payload: { item: {
+      id: 'remote-oil', raw: 'Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+      quantity: null, unit: 'qualitative', kind: 'qualitative', confidence: 0.5,
+    } },
+  } }));
+  assert.equal(seed.status, 200);
+  const authority = await seed.json();
+  const restore = await onRequestPatch(context(store.db, { body: {
+    mutationId: 'restore-numeric-oil', baseRevision: 1, op: 'pantry.restore', payload: { item: {
+      id: 'removed-oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+      quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1,
+    }, expectedAbsent: true },
+  } }));
+  assert.equal(restore.status, 409);
+  assert.deepEqual(await restore.json(), { error: 'pantry_restore_conflict', workspace: authority });
+  assert.equal(store.current().revision, 1, 'rejected restore performs no authority write');
+});
+
+test('Pantry update coalescence returns actionable 409 without authority write or receipt batch', async () => {
+  const store = workspaceDb();
+  for (const [mutationId, baseRevision, item] of [
+    ['seed-bottles', 0, {
+      id: 'oil-bottles', raw: '2 bottles Oil', name: 'oil', displayName: 'Oil',
+      quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle', confidence: 1,
+    }],
+    ['seed-ounce', 1, {
+      id: 'oil-ounce', raw: '1 ounce Oil', name: 'oil', displayName: 'Oil',
+      quantity: 1, unit: 'ounce', kind: 'divisible', countLabel: '', confidence: 1,
+    }],
+  ]) {
+    assert.equal((await onRequestPatch(context(store.db, { body: {
+      mutationId, baseRevision, op: 'pantry.add', payload: { item },
+    } }))).status, 200);
+  }
+  const authority = await (await onRequestGet(context(store.db))).json();
+  const commitBatches = store.batches.length;
+  const bottles = authority.pantry.find(({ id }) => id === 'oil-bottles');
+  const response = await onRequestPatch(context(store.db, { body: {
+    mutationId: 'coalescing-update', baseRevision: authority.revision, op: 'pantry.update',
+    payload: { id: bottles.id, item: {
+      ...bottles, quantity: null, unit: 'qualitative', kind: 'qualitative',
+      countLabel: '', amountState: 'unknown',
+    } },
+  } }));
+
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: 'pantry_record_conflict', workspace: authority });
+  assert.equal(store.current().revision, authority.revision);
+  assert.equal(store.batches.length, commitBatches, 'rejected update creates no workspace/receipt batch');
+  assert.deepEqual((await (await onRequestGet(context(store.db))).json()).pantry, authority.pantry);
+});
+
 test('planner attribution comes from authenticated membership, not client payload', async () => {
   const store = workspaceDb();
   const response = await onRequestPatch(context(store.db, { body: {

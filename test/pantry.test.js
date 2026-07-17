@@ -15,6 +15,8 @@ import {
   normalizePantryEntry,
   PANTRY_RAW_EVIDENCE_LIMITS,
   formatPantryAmount,
+  pantryRecordsWouldCoalesce,
+  restorePantryRecord,
   updatePantryRecord,
 } from '../docs/js/lib/pantry.js';
 import { normalizeIngredient } from '../docs/js/lib/cart.js';
@@ -155,6 +157,87 @@ test('addToPantry immediately repairs a supplied ID owned by a different record'
     result.item.id,
     'the deterministic repair is stable at later normalization',
   );
+});
+
+test('restore collision semantics exactly match every pair normalization would coalesce', () => {
+  const record = (id, overrides = {}) => normalizePantryEntry({
+    id, raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1,
+    ...overrides,
+  });
+  const cases = [
+    ['qualitative then numeric', record('remote-q', { raw: 'Olive Oil', quantity: null, unit: 'qualitative', kind: 'qualitative' }), record('removed-n'), true],
+    ['numeric then qualitative', record('remote-n'), record('removed-q', { raw: 'Olive Oil', quantity: null, unit: 'qualitative', kind: 'qualitative' }), true],
+    ['same ounce identity', record('remote-ounce'), record('removed-ounce', { raw: '1 cup Olive Oil', quantity: 8 }), true],
+    ['same count label', record('remote-bottle', { raw: '2 bottles water', name: 'water', displayName: 'Water', quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle' }), record('removed-bottle', { raw: '1 bottle water', name: 'water', displayName: 'Water', quantity: 1, unit: 'count', kind: 'indivisible', countLabel: 'bottle' }), true],
+    ['different count labels', record('remote-can', { raw: '2 cans water', name: 'water', displayName: 'Water', quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'can' }), record('removed-bottle-2', { raw: '1 bottle water', name: 'water', displayName: 'Water', quantity: 1, unit: 'count', kind: 'indivisible', countLabel: 'bottle' }), false],
+    ['different numeric families', record('remote-fluid'), record('removed-count', { raw: '2 Olive Oils', quantity: 2, unit: 'count', kind: 'indivisible', countLabel: '' }), false],
+    ['different names', record('remote-oil'), record('removed-vinegar', { raw: '1 cup Vinegar', name: 'vinegar', displayName: 'Vinegar', quantity: 8 }), false],
+  ];
+
+  for (const [label, authority, restoring, wouldMerge] of cases) {
+    assert.equal(pantryRecordsWouldCoalesce(authority, restoring), wouldMerge, label);
+    assert.equal(pantryRecordsWouldCoalesce(restoring, authority), wouldMerge, `${label} is symmetric`);
+    const normalized = normalizePantry([authority, restoring]);
+    assert.equal(normalized.length < 2, wouldMerge, `${label} predicate matches normalizePantry`);
+    if (wouldMerge) {
+      assert.throws(() => restorePantryRecord([authority], restoring), /pantry_restore_conflict/, label);
+    } else {
+      const restored = restorePantryRecord([authority], restoring);
+      assert.equal(restored.restored, true, label);
+      assert.deepEqual(new Set(normalizePantry(restored.pantry).map(({ id }) => id)),
+        new Set([authority.id, restoring.id]), `${label} preserves both stable IDs after normalization`);
+    }
+  }
+});
+
+test('update collision semantics preserve stable IDs across all 90 ordered identity pairs', () => {
+  const record = (id, overrides = {}) => normalizePantryEntry({
+    id, raw: '1 ounce Oil', name: 'oil', displayName: 'Oil',
+    quantity: 1, unit: 'ounce', kind: 'divisible', countLabel: '', confidence: 1,
+    ...overrides,
+  });
+  const identities = [
+    record('qualitative', { raw: 'Oil', quantity: null, unit: 'qualitative', kind: 'qualitative' }),
+    record('ounce-1'),
+    record('ounce-2', { raw: '2 ounces Oil', quantity: 2 }),
+    record('count', { raw: '1 Oil', quantity: 1, unit: 'count', kind: 'indivisible' }),
+    record('bottle-1', { raw: '1 bottle Oil', quantity: 1, unit: 'count', kind: 'indivisible', countLabel: 'bottle' }),
+    record('bottle-2', { raw: '2 bottles Oil', quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle' }),
+    record('can', { raw: '1 can Oil', quantity: 1, unit: 'count', kind: 'indivisible', countLabel: 'can' }),
+    record('jar', { raw: '1 jar Oil', quantity: 1, unit: 'count', kind: 'indivisible', countLabel: 'jar' }),
+    record('package', { raw: '1 package Oil', quantity: 1, unit: 'count', kind: 'indivisible', countLabel: 'package' }),
+    record('piece', { raw: '1 piece Oil', quantity: 1, unit: 'count', kind: 'indivisible', countLabel: 'piece' }),
+  ];
+  const target = normalizePantryEntry({
+    id: 'edited-stable-id', raw: '1 Before Item', name: 'before item', displayName: 'Before Item',
+    quantity: 1, unit: 'count', kind: 'indivisible', countLabel: '', confidence: 1,
+  });
+  let pairs = 0;
+
+  for (const candidate of identities) {
+    for (const authority of identities) {
+      if (candidate === authority) continue;
+      pairs += 1;
+      const current = normalizePantry([target, authority]);
+      const wouldCoalesce = pantryRecordsWouldCoalesce(authority, candidate);
+      const label = `${candidate.id} edited beside ${authority.id}`;
+      if (wouldCoalesce) {
+        assert.throws(
+          () => updatePantryRecord(current, target.id, candidate, { updatedAt: 200 }),
+          /pantry_record_conflict/,
+          label,
+        );
+      } else {
+        const updated = updatePantryRecord(current, target.id, candidate, { updatedAt: 200 });
+        const expectedIds = new Set([target.id, authority.id]);
+        assert.deepEqual(new Set(updated.map(({ id }) => id)), expectedIds, label);
+        assert.deepEqual(new Set(normalizePantry(updated).map(({ id }) => id)), expectedIds,
+          `${label} remains identity-stable after normalization`);
+      }
+    }
+  }
+  assert.equal(pairs, 90);
 });
 
 test('count package labels are part of Pantry quantity compatibility and removal identity', () => {

@@ -1,13 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyWorkspaceOperation, createWorkspaceSync, isWorkspace } from '../docs/js/lib/workspace-sync.js';
-import { PANTRY_RAW_EVIDENCE_LIMITS } from '../docs/js/lib/pantry.js';
+import { PANTRY_RAW_EVIDENCE_LIMITS, pantryRecordFingerprint } from '../docs/js/lib/pantry.js';
 
 const workspace = (overrides = {}) => ({
   householdId: 'our-home', revision: 0, plan: [], cart: [], pantry: [],
   shoppingChecked: {}, manualItems: [], recentMutations: [], updatedAt: 0,
   ...overrides,
 });
+
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+};
 
 test('workspace response validation rejects partial or malformed authority state', () => {
   assert.equal(isWorkspace(workspace()), true);
@@ -98,24 +104,92 @@ test('mutation applies optimistically and confirms the authoritative response', 
   assert.equal(changes.at(-1).meta.optimistic, false);
 });
 
-test('revision conflict rebases the absolute operation and retries once', async () => {
+test('revision conflict rebases a guarded Pantry remove only when the target is unchanged', async () => {
   const sent = [];
+  const initial = workspace({ pantry: ['flour'] });
+  const target = applyWorkspaceOperation(initial, { op: 'unknown.noop', payload: {} }).pantry[0];
   const sync = createWorkspaceSync({
-    initial: workspace({ pantry: ['flour'] }), makeId: () => 'm1',
+    initial, makeId: () => 'm1',
     send: async (request) => {
       sent.push(request);
       if (sent.length === 1) return {
-        ok: false, status: 409, workspace: workspace({ revision: 4, pantry: ['flour', 'salt'] }),
+        ok: false, status: 409, workspace: workspace({ revision: 4, pantry: [target, 'salt'] }),
       };
       return { ok: true, workspace: workspace({ revision: 5, pantry: ['salt'] }) };
     },
   });
-  assert.equal(await sync.mutate('pantry.remove', { name: 'flour' }), true);
+  assert.equal(await sync.mutate('pantry.remove', {
+    id: target.id, expectedFingerprint: pantryRecordFingerprint(target),
+  }), true);
   assert.equal(sent.length, 2);
   assert.equal(sent[0].baseRevision, 0);
   assert.equal(sent[1].baseRevision, 4);
   assert.equal(sent[1].mutationId, 'm1');
   assert.deepEqual(sync.current().pantry.map((item) => item.name), ['salt']);
+});
+
+test('stale Pantry remove never rebases over a remote update to the same stable record', async () => {
+  const initial = workspace({ pantry: [{
+    id: 'oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1, updatedAt: 10,
+  }] });
+  const target = applyWorkspaceOperation(initial, { op: 'unknown.noop', payload: {} }).pantry[0];
+  const remote = workspace({ revision: 1, pantry: [{ ...target, raw: '3 cups Olive Oil', quantity: 24, updatedAt: 20 }] });
+  const sent = [];
+  const errors = [];
+  const sync = createWorkspaceSync({
+    initial, makeId: () => 'remove-stale', onError: (error) => errors.push(error),
+    send: async (request) => { sent.push(request); return { ok: false, status: 409, workspace: remote }; },
+  });
+  assert.equal(await sync.mutate('pantry.remove', {
+    id: target.id, expectedFingerprint: pantryRecordFingerprint(target),
+  }), false);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sync.current().pantry.map(({ id, quantity }) => ({ id, quantity })), [{ id: 'oil', quantity: 24 }]);
+  assert.equal(errors[0].code, 'pantry_record_conflict');
+});
+
+test('non-durable Undo queued behind a sending remove is cancelled on remote record conflict', async () => {
+  const initial = workspace({ revision: 1, pantry: [{
+    id: 'oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1, updatedAt: 10,
+  }] });
+  const target = applyWorkspaceOperation(initial, { op: 'unknown.noop', payload: {} }).pantry[0];
+  const remote = workspace({ revision: 2, pantry: [{ ...target, raw: '3 cups Olive Oil', quantity: 24, updatedAt: 20 }] });
+  const started = deferred();
+  const response = deferred();
+  const sent = [];
+  const errors = [];
+  const ids = ['remove-oil', 'undo-oil'];
+  const unhandled = [];
+  const onUnhandled = (error) => { unhandled.push(error); };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const sync = createWorkspaceSync({
+      initial, makeId: () => ids.shift(), onError: (error) => errors.push(error),
+      send: async (request) => {
+        sent.push(request.op);
+        if (request.op !== 'pantry.remove') throw new Error('invalid dependent restore must not send');
+        started.resolve();
+        return response.promise;
+      },
+    });
+    const remove = sync.mutate('pantry.remove', {
+      id: target.id, expectedFingerprint: pantryRecordFingerprint(target),
+    });
+    await started.promise;
+    const undo = sync.mutate('pantry.restore', { item: target, expectedAbsent: true });
+    response.resolve({ ok: false, status: 409, error: 'pantry_record_conflict', workspace: remote });
+
+    assert.deepEqual(await Promise.all([remove, undo]), [false, false]);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(sent, ['pantry.remove']);
+    assert.deepEqual(errors.map(({ code }) => code), ['pantry_record_conflict', 'pantry_restore_conflict']);
+    assert.deepEqual(sync.current().pantry.map(({ id, quantity }) => ({ id, quantity })), [{ id: 'oil', quantity: 24 }]);
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
 });
 
 test('older response cannot overwrite a newer confirmed revision', async () => {
@@ -184,6 +258,62 @@ test('optimistic pantry.update targets one stable record ID', () => {
   assert.equal(next.pantry.find((item) => item.id === target.id).amountState, 'known');
   assert.equal(next.pantry.find((item) => item.id === target.id).updatedAt, 300);
   assert.ok(next.pantry.some((item) => item.name === 'salt'));
+});
+
+test('optimistic pantry.update rejects identity loss before publishing two coalescing IDs', () => {
+  const initial = workspace({ pantry: [
+    {
+      id: 'oil-bottles', raw: '2 bottles Oil', name: 'oil', displayName: 'Oil',
+      quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle', confidence: 1,
+    },
+    {
+      id: 'oil-ounce', raw: '1 ounce Oil', name: 'oil', displayName: 'Oil',
+      quantity: 1, unit: 'ounce', kind: 'divisible', countLabel: '', confidence: 1,
+    },
+  ] });
+  const authority = applyWorkspaceOperation(initial, { op: 'unknown.noop', payload: {} });
+
+  assert.throws(() => applyWorkspaceOperation(authority, {
+    op: 'pantry.update', createdAt: 300, payload: {
+      id: 'oil-bottles',
+      item: {
+        ...authority.pantry.find(({ id }) => id === 'oil-bottles'),
+        quantity: null, unit: 'qualitative', kind: 'qualitative', countLabel: '', amountState: 'unknown',
+      },
+    },
+  }), /pantry_record_conflict/);
+  assert.deepEqual(authority.pantry.map(({ id }) => id).sort(), ['oil-bottles', 'oil-ounce']);
+});
+
+test('remote coalescence reports pantry_record_conflict without retrying a non-durable update', async () => {
+  const bottles = {
+    id: 'oil-bottles', raw: '2 bottles Oil', name: 'oil', displayName: 'Oil',
+    quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle', confidence: 1,
+  };
+  const ounce = {
+    id: 'oil-ounce', raw: '1 ounce Oil', name: 'oil', displayName: 'Oil',
+    quantity: 1, unit: 'ounce', kind: 'divisible', countLabel: '', confidence: 1,
+  };
+  const remote = workspace({ revision: 1, pantry: [bottles, ounce] });
+  const sent = [];
+  const errors = [];
+  const sync = createWorkspaceSync({
+    initial: workspace({ pantry: [bottles] }), makeId: () => 'coalescing-update',
+    send: async (request) => {
+      sent.push(request);
+      return { ok: false, status: 409, error: 'pantry_record_conflict', workspace: remote };
+    },
+    onError: (error) => errors.push(error),
+  });
+  const target = sync.current().pantry[0];
+
+  assert.equal(await sync.mutate('pantry.update', { id: target.id, item: {
+    ...target, quantity: null, unit: 'qualitative', kind: 'qualitative',
+    countLabel: '', amountState: 'unknown',
+  } }), false);
+  assert.equal(sent.length, 1);
+  assert.equal(errors.at(-1).code, 'pantry_record_conflict');
+  assert.deepEqual(sync.current().pantry.map(({ id }) => id).sort(), ['oil-bottles', 'oil-ounce']);
 });
 
 test('non-rebasable pantry.update rolls back cleanly when another member removed the record', async () => {
