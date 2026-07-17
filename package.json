@@ -9,6 +9,7 @@
     "build:watch": "node scripts/build.js --watch",
     "dev": "npm run build && wrangler pages dev docs",
     "test:e2e": "npm run build && node --test --test-concurrency=1 test/e2e-smoke.test.js test/e2e-week-cooking.test.js test/e2e-recipe-detail.test.js test/e2e-pantry-item-modal.test.js test/e2e-interaction-feedback.test.js test/e2e-ingredient-corrections.test.js",
+    "capture:issue21": "node scripts/capture-issue21-evidence.js",
     "capture:issue22": "npm run build && node scripts/capture-issue22-evidence.js"
   },
   "keywords": [
@@ -20,16 +21,16 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "jose": "^5.9.6"
+    "jose": "^6.2.3"
   },
   "devDependencies": {
     "esbuild": "^0.28.1",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^29.1.1",
     "playwright": "^1.61.1",
-    "wrangler": "^3.90.0"
+    "wrangler": "^4.112.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   }
 }

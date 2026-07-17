@@ -1,0 +1,140 @@
+{
+  "capture": {
+    "baselineDocs": "cookbook-issue21-baseline/docs",
+    "featureDocs": "cookbook-agent-21/docs",
+    "browser": "Playwright pinned Chromium",
+    "reducedMotion": true,
+    "deviceScaleFactor": 2,
+    "launchFlags": [
+      "--hide-scrollbars",
+      "--disable-gpu",
+      "--disable-threaded-animation",
+      "--disable-threaded-scrolling",
+      "--force-color-profile=srgb"
+    ]
+  },
+  "scenarios": [
+    {
+      "state": "before",
+      "viewport": "mobile",
+      "file": "mobile-before.png",
+      "heading": "Edit Pantry item (baseline)",
+      "visibleRecipeRows": 0
+    },
+    {
+      "state": "before",
+      "viewport": "desktop",
+      "file": "desktop-before.png",
+      "heading": "Edit Pantry item (baseline)",
+      "visibleRecipeRows": 0
+    },
+    {
+      "state": "after",
+      "viewport": "mobile",
+      "file": "mobile-after.png",
+      "heading": "Recipes using Basil",
+      "visibleRecipeRows": 4
+    },
+    {
+      "state": "after",
+      "viewport": "desktop",
+      "file": "desktop-after.png",
+      "heading": "Recipes using Basil",
+      "visibleRecipeRows": 4
+    }
+  ],
+  "metadata": [
+    {
+      "file": "desktop-after.png",
+      "sha256": "d211f1c5d313bf7a4749467084c3140854ac4a1be6c9e8c1a5d95293b29a632d",
+      "bytes": 228765,
+      "format": "png",
+      "width": 2560,
+      "height": 1800,
+      "space": "srgb",
+      "channels": 3,
+      "depth": "uchar",
+      "density": 72,
+      "hasAlpha": false,
+      "orientation": null,
+      "exifBytes": 0,
+      "iccBytes": 0,
+      "xmpBytes": 0
+    },
+    {
+      "file": "desktop-before.png",
+      "sha256": "10773cc098fb1579848ebfda9903c0a0815c85d7ee09eeb39f08b071a8bf138c",
+      "bytes": 175261,
+      "format": "png",
+      "width": 2560,
+      "height": 1800,
+      "space": "srgb",
+      "channels": 3,
+      "depth": "uchar",
+      "density": 72,
+      "hasAlpha": false,
+      "orientation": null,
+      "exifBytes": 0,
+      "iccBytes": 0,
+      "xmpBytes": 0
+    },
+    {
+      "file": "mobile-after.png",
+      "sha256": "0514e4c9474a05d3487d738af39413f8b4a163a932bc14353c92ad1c1ea331ae",
+      "bytes": 126294,
+      "format": "png",
+      "width": 804,
+      "height": 1748,
+      "space": "srgb",
+      "channels": 3,
+      "depth": "uchar",
+      "density": 72,
+      "hasAlpha": false,
+      "orientation": null,
+      "exifBytes": 0,
+      "iccBytes": 0,
+      "xmpBytes": 0
+    },
+    {
+      "file": "mobile-before.png",
+      "sha256": "d2a94954b32417a79091e0c7557ab9459323d0f60ba49f0dfb3ab15e2767759d",
+      "bytes": 119587,
+      "format": "png",
+      "width": 804,
+      "height": 1748,
+      "space": "srgb",
+      "channels": 3,
+      "depth": "uchar",
+      "density": 72,
+      "hasAlpha": false,
+      "orientation": null,
+      "exifBytes": 0,
+      "iccBytes": 0,
+      "xmpBytes": 0
+    }
+  ],
+  "diffs": {
+    "mobile": {
+      "changedPixels": 823442,
+      "totalPixels": 1405392,
+      "changedPercent": 58.5916,
+      "boundingBox": {
+        "left": 0,
+        "top": 15,
+        "right": 803,
+        "bottom": 1622
+      }
+    },
+    "desktop": {
+      "changedPixels": 1370552,
+      "totalPixels": 4608000,
+      "changedPercent": 29.7429,
+      "boundingBox": {
+        "left": 647,
+        "top": 131,
+        "right": 1912,
+        "bottom": 1716
+      }
+    }
+  }
+}

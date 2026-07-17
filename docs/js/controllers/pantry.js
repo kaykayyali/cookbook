@@ -20,6 +20,7 @@ import {
 import { save as persist } from '../lib/store.js';
 import { toast } from '../lib/dom.js';
 import { interactionFeedback as defaultFeedback } from '../lib/interaction-feedback.js';
+import { discoverPantryRecipes } from '../lib/pantry-recipe-discovery.js';
 
 const PANTRY_CATEGORIES = [
   ['produce', 'Produce'],
@@ -56,7 +57,14 @@ export function pantryCategory(item) {
  * Pantry controller. The workspace runtime remains the only shared-state source;
  * this controller publishes optimistic edits through its existing mutation path.
  */
-export function initPantry({ state, document = globalThis.document, onChange = null, mutate = null, feedback = defaultFeedback }) {
+export function initPantry({
+  state,
+  document = globalThis.document,
+  onChange = null,
+  mutate = null,
+  onOpenRecipe = null,
+  feedback = defaultFeedback,
+}) {
   state.pantry = normalizePantry(state.pantry);
   let query = '';
   let category = 'all';
@@ -67,6 +75,10 @@ export function initPantry({ state, document = globalThis.document, onChange = n
   let editorReturnId = null;
   let lastEditorUnit = '';
   let editorPending = false;
+  let recipeExpanded = false;
+  let editorSuspended = false;
+  let suspendedRecipeId = '';
+  let editorBodyOverflow = '';
 
   const byId = (id) => state.pantry.find((entry) => entry.id === id);
   const editorChanged = (record) => Boolean(editorId && record
@@ -83,6 +95,57 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     if (error) error.hidden = !message;
   };
   const setStatus = (message) => setText('pantry-item-status', message);
+
+  function renderRecipeDiscovery({ focusToggle = false } = {}) {
+    const section = get('pantry-recipe-discovery');
+    const resultsNode = get('pantry-recipe-results');
+    const toggle = get('pantry-recipe-toggle');
+    if (!section || !resultsNode || !toggle) return;
+    const record = editorId ? byId(editorId) : null;
+    if (!record) {
+      section.hidden = true;
+      resultsNode.innerHTML = '';
+      toggle.hidden = true;
+      return;
+    }
+    const body = section.closest?.('.pantry-item-body');
+    const scrollTop = body?.scrollTop || 0;
+    const focusedRecipeId = document.activeElement?.dataset?.pantryRecipeId || '';
+    const ingredientLabel = record.displayName || record.name;
+    setText('pantry-recipe-title', `Recipes using ${ingredientLabel}`);
+    const discovered = discoverPantryRecipes({
+      recipes: state.recipes,
+      pantry: state.pantry,
+      ingredientName: record.name,
+    });
+    const visible = recipeExpanded ? discovered : discovered.slice(0, 3);
+    if (!visible.length) {
+      resultsNode.innerHTML = '<div class="pantry-recipe-empty" role="status"><strong>No recipes use this item yet.</strong><p>Correct recipe ingredients or try another Pantry item. Saving this item still works normally.</p></div>';
+    } else {
+      resultsNode.innerHTML = visible.map((result) => {
+        const availability = `${result.availability.label} · ${result.availability.have} of ${result.availability.total} Pantry names`;
+        const image = result.imageUrl
+          ? `<img src="${esc(result.imageUrl)}" alt="" width="48" height="48" loading="lazy" decoding="async" referrerpolicy="no-referrer">`
+          : '<span class="pantry-recipe-image-fallback" aria-hidden="true">🍲</span>';
+        return `<button type="button" class="pantry-recipe-row" data-pantry-recipe-id="${esc(result.recipeId)}" data-feedback="select"${result.canOpen ? '' : ' disabled'} aria-label="Open ${esc(result.recipeName)} recipe. ${esc(availability)}. Matching ingredient: ${esc(result.matchingLine)}">
+          ${image}
+          <span class="pantry-recipe-copy"><strong>${esc(result.recipeName)}</strong><span class="pantry-recipe-match">${esc(result.matchingLine)}</span></span>
+          <span class="pantry-recipe-availability is-${result.availability.label.toLowerCase()}">${esc(availability)}</span>
+        </button>`;
+      }).join('');
+    }
+    section.hidden = false;
+    toggle.hidden = discovered.length <= 3;
+    toggle.textContent = recipeExpanded ? 'View fewer recipes' : 'View all recipes';
+    toggle.setAttribute?.('aria-expanded', String(recipeExpanded));
+    toggle.dataset.feedback = recipeExpanded ? 'toggle-off' : 'toggle-on';
+    if (body) body.scrollTop = scrollTop;
+    if (focusToggle) toggle.focus?.();
+    else if (focusedRecipeId) {
+      const escaped = globalThis.CSS?.escape?.(focusedRecipeId) || focusedRecipeId;
+      section.querySelector?.(`[data-pantry-recipe-id="${escaped}"]`)?.focus?.();
+    }
+  }
 
   function render() {
     const grid = get('pantry-grid');
@@ -127,6 +190,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       else if (!editorPending && editorChanged(current)) {
         setError('This item changed in the shared Pantry. Close and reopen it to review the latest version.');
       }
+      renderRecipeDiscovery();
     }
   }
 
@@ -268,6 +332,10 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     editorReturnFocus = document.activeElement || null;
     editorReturnId = recordId;
     editorPending = false;
+    recipeExpanded = false;
+    editorSuspended = false;
+    suspendedRecipeId = '';
+    editorBodyOverflow = document.body?.style?.overflow || '';
     setEditorPending(false);
     setText('pantry-item-title', recordId ? 'Edit Pantry item' : 'Add Pantry item');
     setText('pantry-item-description', recordId
@@ -285,11 +353,13 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     modal.hidden = false;
     modal.removeAttribute?.('aria-hidden');
     modal.removeAttribute?.('inert');
+    modal.setAttribute?.('aria-modal', 'true');
     modal.classList?.add('open');
     if (overlay) {
       overlay.hidden = false;
       overlay.classList?.add('open');
     }
+    renderRecipeDiscovery();
     if (sourceEvent) feedback.emit('select', { target, sourceEvent });
     globalThis.setTimeout?.(() => get('pantry-item-name')?.focus?.(), 0);
     return true;
@@ -303,9 +373,11 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       modal.hidden = true;
       modal.setAttribute?.('aria-hidden', 'true');
       modal.setAttribute?.('inert', '');
+      modal.removeAttribute?.('aria-modal');
       modal.classList?.remove('open');
     }
     if (overlay) { overlay.hidden = true; overlay.classList?.remove('open'); }
+    if (document.body?.style) document.body.style.overflow = editorBodyOverflow;
     const focusTarget = editorReturnId
       ? (document.querySelector?.(`[data-pantry-id="${globalThis.CSS?.escape?.(editorReturnId) || editorReturnId}"]`)
         || document.querySelector?.('.pantry-tag')
@@ -316,8 +388,86 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     editorBaseFingerprint = '';
     editorReturnId = null;
     editorPending = false;
+    recipeExpanded = false;
+    editorSuspended = false;
+    suspendedRecipeId = '';
+    editorBodyOverflow = '';
+    const discovery = get('pantry-recipe-discovery');
+    if (discovery) discovery.hidden = true;
     focusTarget?.focus?.();
     return true;
+  }
+
+  function suspendEditor(recipeId = '') {
+    if (editorPending || !editorId || !modalOpen()) return false;
+    const modal = get('pantry-item-modal');
+    const overlay = get('pantry-item-overlay');
+    editorSuspended = true;
+    suspendedRecipeId = recipeId;
+    if (modal) {
+      modal.hidden = true;
+      modal.setAttribute?.('aria-hidden', 'true');
+      modal.setAttribute?.('inert', '');
+      modal.removeAttribute?.('aria-modal');
+      modal.classList?.remove('open');
+    }
+    if (overlay) { overlay.hidden = true; overlay.classList?.remove('open'); }
+    return true;
+  }
+
+  function resumeEditor() {
+    if (!editorSuspended || !editorId) return false;
+    const modal = get('pantry-item-modal');
+    const overlay = get('pantry-item-overlay');
+    editorSuspended = false;
+    if (modal) {
+      modal.hidden = false;
+      modal.removeAttribute?.('aria-hidden');
+      modal.removeAttribute?.('inert');
+      modal.setAttribute?.('aria-modal', 'true');
+      modal.classList?.add('open');
+    }
+    if (overlay) { overlay.hidden = false; overlay.classList?.add('open'); }
+    render();
+    const returnId = suspendedRecipeId;
+    suspendedRecipeId = '';
+    if (returnId) {
+      const escaped = globalThis.CSS?.escape?.(returnId) || returnId;
+      get('pantry-recipe-discovery')?.querySelector?.(`[data-pantry-recipe-id="${escaped}"]`)?.focus?.();
+    }
+    return true;
+  }
+
+  function openDiscoveredRecipe(event) {
+    const row = event.target.closest?.('[data-pantry-recipe-id]');
+    if (!row || row.disabled) return false;
+    if (editorPending) {
+      setError('Wait for the Pantry change to finish before opening a recipe.');
+      feedback.emit('blocked', { target: row, sourceEvent: event });
+      return false;
+    }
+    if (typeof onOpenRecipe !== 'function') return false;
+    const recipeId = row.dataset.pantryRecipeId;
+    if (!suspendEditor(recipeId)) return false;
+    let opened = false;
+    try { opened = onOpenRecipe(recipeId, { opener: row }); } catch { /* Navigation stays fail-safe. */ }
+    if (opened === false) {
+      resumeEditor();
+      setError('That recipe is no longer available.');
+      feedback.emit('blocked', { target: row, sourceEvent: event });
+      return false;
+    }
+    return true;
+  }
+
+  function fallbackRecipeImage(event) {
+    const image = event.target?.closest?.('.pantry-recipe-row img');
+    if (!image) return;
+    const fallback = document.createElement('span');
+    fallback.className = 'pantry-recipe-image-fallback';
+    fallback.setAttribute('aria-hidden', 'true');
+    fallback.textContent = '🍲';
+    image.replaceWith(fallback);
   }
 
   function editorValues() {
@@ -582,6 +732,12 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       const button = event.target.closest('.pantry-filter');
       if (button) setCategory(button.dataset.category);
     });
+    get('pantry-recipe-results')?.addEventListener?.('click', openDiscoveredRecipe);
+    get('pantry-recipe-results')?.addEventListener?.('error', fallbackRecipeImage, true);
+    get('pantry-recipe-toggle')?.addEventListener?.('click', () => {
+      recipeExpanded = !recipeExpanded;
+      renderRecipeDiscovery({ focusToggle: true });
+    });
     get('pantry-item-form')?.addEventListener?.('submit', saveEditor);
     const family = get('pantry-item-family');
     const unit = get('pantry-item-unit');
@@ -627,6 +783,9 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     setCategory,
     openEditor,
     closeEditor,
+    suspendEditor,
+    resumeEditor,
+    renderRecipeDiscovery,
     editorRecordId: () => editorId,
   };
 }

@@ -16,7 +16,7 @@ import { verifyIdToken, makeJwksResolver } from '../functions/_lib/google.js';
 async function makeKeyPair() {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const pkcs8 = privateKey.export({ type: 'pkcs8', format: 'pem' });
-  const priv = await importPKCS8(pkcs8, { alg: 'RS256' });
+  const priv = await importPKCS8(pkcs8, 'RS256');
   const pubJwk = await exportJWK(publicKey);
   return { priv, pubJwk };
 }

@@ -96,6 +96,12 @@ test('round-trip preserves core fields', () => {
   assert.equal(back.nutrition.calories, '500 kcal');
 });
 
+test('round-trip preserves recipe image metadata for safe presentation at the edge', () => {
+  const image = [{ '@type': 'ImageObject', url: 'https://images.example.test/recipe.jpg' }];
+  const back = fromSchema(toSchema({ name: 'Photo recipe', image }));
+  assert.deepEqual(back.image, image);
+});
+
 test('parseImport handles a single object', () => {
   const out = parseImport({ '@type': 'Recipe', name: 'Solo' });
   assert.equal(out.length, 1);

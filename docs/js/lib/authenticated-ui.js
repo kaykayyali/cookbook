@@ -36,6 +36,7 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
     onClose: () => summerTheme.maybeShow(),
   });
   let detail;
+  let pantry;
   const reminders = initReminders();
   const engagement = initEngagement({
     state, refreshWorkspace: runtime.refresh, onOpenRecipe: (id) => detail?.open(id),
@@ -67,13 +68,18 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
     getReactions: () => state.cookReactions || [], onMarkCooked: engagement.markRecipe,
     onCookMode: cookingMode.open,
     onReact: engagement.react, onCorrectHistory: engagement.correct, onDeleteHistory: engagement.remove,
+    onClose: () => pantry?.resumeEditor(),
   });
   const recipes = initRecipes({
     state, onOpenDetail: (id) => detail.open(id), onEdit: (id) => drawer.open(id), onSchema: showRecipeSchema,
     offlineMutations: Boolean(recipeRuntime),
     removeRecipe: recipeRuntime ? async (id) => ({ ok: await recipeRuntime.mutate('recipe.delete', { id }) }) : undefined,
   });
-  const pantry = initPantry({ state, mutate: runtime.mutate });
+  pantry = initPantry({
+    state,
+    mutate: runtime.mutate,
+    onOpenRecipe: (id) => detail?.open(id) === true,
+  });
   const cart = initCart({ state, mutate: runtime.mutate });
   const extract = initExtract({
     state,
