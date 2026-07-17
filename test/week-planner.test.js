@@ -149,3 +149,16 @@ test('controller-generated planner payload is accepted by the authoritative redu
     ...request, mutationId: 'planner-invalid-slot', payload: { ...request.payload, slot: 'brunch' },
   }, { now: 2 }), /invalid_plan_entry/);
 });
+
+test('Week Skip activates skipped feedback and Unskip deactivates it', () => {
+  const { dom } = setup([
+    { id: 'active', date: '2026-07-14', type: 'recipe', recipeId: 'r1', targetServings: 2, status: 'active' },
+    { id: 'skipped', date: '2026-07-15', type: 'recipe', recipeId: 'r2', targetServings: 2, status: 'skipped' },
+  ]);
+  const active = dom.window.document.querySelector('[data-entry-id="active"] [data-action="skip"]');
+  const skipped = dom.window.document.querySelector('[data-entry-id="skipped"] [data-action="skip"]');
+  assert.equal(active.textContent, 'Skip');
+  assert.equal(active.dataset.feedback, 'toggle-on');
+  assert.equal(skipped.textContent, 'Unskip');
+  assert.equal(skipped.dataset.feedback, 'toggle-off');
+});

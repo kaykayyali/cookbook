@@ -111,6 +111,7 @@ export function initDetail({
   feedback = defaultFeedback,
 }) {
   let current = null;
+  let opener = null;
   const pendingAudits = new Set();
 
   function openRecipe(r, ctx = { source: 'local' }) {
@@ -215,9 +216,16 @@ export function initDetail({
     const overlay = document.getElementById('detail-overlay');
     const scroller = document.querySelector?.('.detail-body');
     if (scroller) scroller.scrollTop = 0;
-    if (modal) modal.classList.add('open');
+    opener = document.activeElement && document.activeElement !== document.body
+      ? document.activeElement
+      : opener;
+    if (modal) {
+      modal.setAttribute?.('aria-modal', 'true');
+      modal.classList.add('open');
+    }
     if (overlay) overlay.classList.add('open');
     document.body.style.overflow = 'hidden';
+    document.getElementById('detail-close-btn')?.focus?.();
   }
 
   function closeSheet() {
@@ -229,6 +237,39 @@ export function initDetail({
     state.detailId = null;
     current = null;
     try { localStorage.removeItem('cb_detail_id'); } catch { /* private mode */ }
+    const restore = opener;
+    opener = null;
+    if (restore?.isConnected !== false) {
+      try { restore?.focus?.(); } catch { /* Detached opener. */ }
+    }
+  }
+
+  function focusableElements(modal) {
+    return [...(modal?.querySelectorAll?.('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])') || [])]
+      .filter((element) => !element.disabled && element.getAttribute('aria-hidden') !== 'true'
+        && element.style?.display !== 'none' && !element.closest?.('[hidden]'));
+  }
+
+  function handleModalKey(event) {
+    const modal = document.getElementById('detail-modal');
+    if (!modal?.classList.contains('open')) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSheet();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = focusableElements(modal);
+    if (!focusable.length) { event.preventDefault(); modal.focus?.(); return; }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   function activeCartEntries() {
@@ -335,16 +376,22 @@ export function initDetail({
     return true;
   }
 
-  function addToCartHandler() {
+  function addToCartHandler(sourceEvent = null) {
     const recipe = current && current.r;
     if (!recipe) return Promise.resolve(false);
+    const target = document.getElementById('dm-add-all-btn');
+    const interaction = feedback.contextFromEvent?.(sourceEvent, target);
     const cancellationGeneration = Number(state.cartCancellationGeneration) || 0;
     const added = performAddToCart(recipe, cancellationGeneration);
-    feedback.emit(added ? 'success' : 'blocked', { target: document.getElementById('dm-add-all-btn') });
+    feedback.emit(added ? 'success' : 'blocked', {
+      target,
+      interaction: interaction ? { ...interaction, deferred: true } : null,
+    });
     return Promise.resolve(added);
   }
 
   function wireDetail() {
+    document.getElementById('detail-modal')?.addEventListener('keydown', handleModalKey);
     const closeBtn = document.getElementById('detail-close-btn');
     if (closeBtn) closeBtn.addEventListener('click', closeSheet);
     const overlay = document.getElementById('detail-overlay');
@@ -358,11 +405,16 @@ export function initDetail({
     const schemaBtn = document.getElementById('dm-schema-btn');
     if (schemaBtn) schemaBtn.addEventListener('click', () => { if (state.detailId && onSchema) onSchema(state.detailId); });
     const allBtn = document.getElementById('dm-add-all-btn');
-    if (allBtn) allBtn.addEventListener('click', () => { void addToCartHandler(); });
-    document.getElementById('dm-mark-cooked-btn')?.addEventListener('click', async () => {
+    if (allBtn) allBtn.addEventListener('click', (event) => { void addToCartHandler(event); });
+    document.getElementById('dm-mark-cooked-btn')?.addEventListener('click', async (event) => {
+      const target = document.getElementById('dm-mark-cooked-btn');
+      const interaction = feedback.contextFromEvent?.(event, target);
       const completed = Boolean(current && await onMarkCooked(current.r));
       if (completed) renderHistory();
-      feedback.emit(completed ? 'success' : 'blocked', { target: document.getElementById('dm-mark-cooked-btn') });
+      feedback.emit(completed ? 'success' : 'blocked', {
+        target,
+        interaction: interaction ? { ...interaction, deferred: true } : null,
+      });
     });
     document.getElementById('dm-cook-mode-btn')?.addEventListener('click', () => {
       if (current) onCookMode(current.r);
@@ -376,29 +428,32 @@ export function initDetail({
         selectStar(star);
         return;
       }
-      const action = event.target.closest('[data-action]')?.dataset.action;
+      const actionTarget = event.target.closest('[data-action]');
+      const action = actionTarget?.dataset.action;
+      const interaction = feedback.contextFromEvent?.(event, actionTarget || card);
+      const outcome = interaction ? { ...interaction, deferred: true } : null;
       if (action === 'save-review') {
         const taste = Number(card.querySelector('[data-rating="taste"]')?.dataset.selected) || null;
         const complexity = Number(card.querySelector('[data-rating="complexity"]')?.dataset.selected) || null;
         const review = card.querySelector('[data-review]')?.value || '';
-        if (!taste && !complexity && !review.trim()) { notify('Add a rating or review'); feedback.emit('blocked', { target: card }); return; }
+        if (!taste && !complexity && !review.trim()) { notify('Add a rating or review'); feedback.emit('blocked', { target: card, interaction: outcome }); return; }
         const saved = await onReact(eventId, { taste, complexity, review });
         if (saved) renderHistory();
-        feedback.emit(saved ? 'success' : 'blocked', { target: card });
+        feedback.emit(saved ? 'success' : 'blocked', { target: card, interaction: outcome });
       } else if (action === 'save-occasion') {
         const saved = await onCorrectHistory(eventId, { occasion: card.querySelector('[data-occasion]')?.value || '' });
         if (saved) renderHistory();
-        feedback.emit(saved ? 'success' : 'blocked', { target: card });
+        feedback.emit(saved ? 'success' : 'blocked', { target: card, interaction: outcome });
       } else if (action === 'edit-history') {
         const existing = getHistory(String(current?.r?._id || current?.r?.id || '')).find((item) => item.id === eventId);
         const occasion = prompt?.('Edit this occasion', existing?.occasion || existing?.notes || '');
         if (occasion != null && await onCorrectHistory(eventId, { occasion })) renderHistory();
       } else if (action === 'delete-history') {
         if (!confirm?.('Delete this cooking history entry?')) return;
-        feedback.emit('destructive', { target, sourceEvent: event });
+        feedback.emit('destructive', { target: actionTarget, sourceEvent: event, interaction });
         const removed = await onDeleteHistory(eventId);
         if (removed) renderHistory();
-        feedback.emit(removed ? 'success' : 'blocked', { target: card });
+        feedback.emit(removed ? 'success' : 'blocked', { target: card, interaction: outcome });
       }
     });
     document.getElementById('dm-history')?.addEventListener('keydown', (event) => {
@@ -415,7 +470,7 @@ export function initDetail({
     // replaces the old section-label "Add missing to cart" button.
     const note = document.getElementById('dm-pantry-note');
     if (note) note.addEventListener('click', (e) => {
-      if (e.target.closest('[data-action="add-missing"]')) void addToCartHandler();
+      if (e.target.closest('[data-action="add-missing"]')) void addToCartHandler(e);
     });
     const ings = document.getElementById('dm-ingredients');
     if (ings) {

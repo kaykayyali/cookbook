@@ -231,9 +231,11 @@ test('a household plans every meal period and remembers cooking without waiting 
   const removeBox = await tonight.locator('.week-meal-remove').first().boundingBox();
   assert.ok(removeBox.width >= 44 && removeBox.height >= 44, 'remove control must be touch-safe');
 
+  await page.waitForTimeout(80);
   const clickCount = await page.evaluate(() => window.__clickCount);
   await tonight.locator('[data-action="servings-up"]').first().click();
-  assert.equal(await page.evaluate(() => window.__clickCount), clickCount + 1, 'enabled buttons make one interface click');
+  await page.waitForTimeout(450);
+  assert.equal(await page.evaluate(() => window.__clickCount), clickCount + 3, 'initiating tone and two-tone successful outcome both remain reachable');
 
   const breakfast = tonight.locator('.week-meal', { hasText: 'Breakfast' });
   const cookedStarted = Date.now();

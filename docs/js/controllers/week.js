@@ -46,7 +46,7 @@ function entryHTML(entry, recipes) {
     <div class="week-meal-controls">
       <button class="icon-btn icon-btn-sm" data-action="servings-down" data-feedback="select" aria-label="Decrease servings">−</button><span>${esc(entry.targetServings || 2)}</span><button class="icon-btn icon-btn-sm" data-action="servings-up" data-feedback="select" aria-label="Increase servings">+</button>
       <button class="btn btn-ghost btn-sm" data-action="move-next" data-feedback="commit">Tomorrow</button>
-      <button class="btn btn-ghost btn-sm" data-action="skip" data-feedback="${skipped ? 'toggle-on' : 'toggle-off'}">${skipped ? 'Unskip' : 'Skip'}</button>
+      <button class="btn btn-ghost btn-sm" data-action="skip" data-feedback="${skipped ? 'toggle-off' : 'toggle-on'}">${skipped ? 'Unskip' : 'Skip'}</button>
       ${entry.type === 'recipe' ? cooked ? '<span class="week-cooked">Cooked</span>' : '<button class="btn btn-secondary btn-sm" data-action="mark-cooked" data-feedback="commit">Mark cooked</button>' : ''}
     </div>
   </article>`;
@@ -87,8 +87,10 @@ export function initWeek({ state, mutate, onMarkCooked = async () => false, docu
     return state.plan.find((entry) => entry.id === id);
   }
 
-  async function handleAction(target) {
+  async function handleAction(target, sourceEvent = null) {
     const action = target.dataset.action;
+    const interaction = feedback.contextFromEvent?.(sourceEvent, target) || null;
+    const outcome = interaction ? { ...interaction, deferred: true } : null;
     if (action === 'toggle-meal-slot') {
       const split = target.closest('.week-add-split');
       const menu = split.querySelector('[data-meal-slot-menu]');
@@ -118,7 +120,7 @@ export function initWeek({ state, mutate, onMarkCooked = async () => false, docu
         targetServings: 2,
         plannedBySub: state.auth?.sub || '', cookSub: null, note: '', status: 'active',
       });
-      feedback.emit(saved === false ? 'blocked' : 'success', { target });
+      feedback.emit(saved === false ? 'blocked' : 'success', { target, interaction: outcome });
       return;
     }
     const entry = findEntry(target);
@@ -126,12 +128,12 @@ export function initWeek({ state, mutate, onMarkCooked = async () => false, docu
     if (action === 'mark-cooked') {
       const completed = await onMarkCooked(entry);
       if (completed) { entry.status = 'cooked'; render(); }
-      feedback.emit(completed ? 'success' : 'blocked', { target });
+      feedback.emit(completed ? 'success' : 'blocked', { target, interaction: outcome });
       return;
     }
     if (action === 'remove') {
       const removed = await mutate('plan.remove', { id: entry.id });
-      feedback.emit(removed === false ? 'blocked' : 'success', { target });
+      feedback.emit(removed === false ? 'blocked' : 'success', { target, interaction: outcome });
       return removed;
     }
     const next = { ...entry };
@@ -140,13 +142,13 @@ export function initWeek({ state, mutate, onMarkCooked = async () => false, docu
     if (action === 'servings-up') next.targetServings = Number(entry.targetServings || 2) + 1;
     if (action === 'servings-down') next.targetServings = Math.max(1, Number(entry.targetServings || 2) - 1);
     const saved = await mutate('plan.upsert', next);
-    feedback.emit(saved === false ? 'blocked' : 'success', { target });
+    feedback.emit(saved === false ? 'blocked' : 'success', { target, interaction: outcome });
     return saved;
   }
 
   root?.addEventListener('click', (event) => {
     const target = event.target.closest('[data-action]');
-    if (target) void handleAction(target);
+    if (target) void handleAction(target, event);
   });
   return { render, days: () => days };
 }

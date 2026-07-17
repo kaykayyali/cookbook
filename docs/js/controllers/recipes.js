@@ -99,22 +99,31 @@ export function initRecipes({
       const card = e.target.closest('.recipe-card');
       if (card && onOpenDetail) onOpenDetail(card.dataset.id);
     });
+    grid.addEventListener('keydown', (event) => {
+      if (!['Enter', ' '].includes(event.key) || event.target.closest('[data-action]')) return;
+      const card = event.target.closest('.recipe-card');
+      if (!card) return;
+      event.preventDefault();
+      onOpenDetail?.(card.dataset.id);
+    });
   }
 
   async function deleteById(id, { target = null, sourceEvent = null } = {}) {
+    const interaction = feedback.contextFromEvent?.(sourceEvent, target);
+    const outcome = interaction ? { ...interaction, deferred: true } : null;
     if (state.offlineCache && !offlineMutations) {
       const error = 'Recipe changes are unavailable while offline';
       notify(error);
-      feedback.emit('blocked', { target });
+      feedback.emit('blocked', { target, interaction: outcome });
       return { ok: false, error };
     }
     if (!confirmDelete('Delete this recipe?')) return { ok: false, cancelled: true };
     feedback.emit('destructive', { target, sourceEvent });
     const res = await removeRecipe(id);
-    if (!res.ok) { notify(res.error || 'Could not delete recipe'); feedback.emit('blocked', { target }); return { ok: false, error: res.error }; }
+    if (!res.ok) { notify(res.error || 'Could not delete recipe'); feedback.emit('blocked', { target, interaction: outcome }); return { ok: false, error: res.error }; }
     state.recipes = state.recipes.filter((r) => r._id !== id);
 
-    feedback.emit('success', { target });
+    feedback.emit('success', { target, interaction: outcome });
     render();
     notify('Recipe deleted');
     return { ok: true };

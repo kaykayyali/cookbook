@@ -46,7 +46,7 @@ export function recipeCardHTML(r, pantry, { currentUserSub = null, history = nul
   const canManage = !!(author && currentUserSub && author.sub === currentUserSub);
 
   return `
-    <article class="card recipe-card card-fold-${e}" data-id="${esc(r._id)}" data-feedback="select">
+    <article class="card recipe-card card-fold-${e}" data-id="${esc(r._id)}" data-feedback="select" role="button" tabindex="0" aria-label="Open ${esc(r.name)} recipe">
       <div class="card-stripe"></div>
       <div class="card-body">
         <span class="badge ${e === 'complete' ? 'badge-success' : 'badge-accent'}">${esc(formatListValue(r.recipeCategory) || 'Recipe')}</span>

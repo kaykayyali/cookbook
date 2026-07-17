@@ -191,9 +191,10 @@ export function initSettings({
       hapticToggle.disabled = !hapticsSupported;
       hapticToggle.checked = hapticsSupported && feedback.haptics.enabled();
       hapticToggle.addEventListener('change', (event) => {
-        if (!hapticToggle.checked) feedback.emit('toggle-off', { target: hapticToggle, sourceEvent: event });
-        feedback.haptics.setEnabled(hapticToggle.checked);
-        if (hapticToggle.checked) feedback.emit('toggle-on', { target: hapticToggle, sourceEvent: event });
+        const interaction = feedback.contextFromEvent?.(event, hapticToggle) || null;
+        if (!hapticToggle.checked) feedback.emit('toggle-off', { target: hapticToggle, sourceEvent: event, interaction });
+        feedback.haptics.setEnabled(hapticToggle.checked, { interaction });
+        if (hapticToggle.checked) feedback.emit('toggle-on', { target: hapticToggle, sourceEvent: event, interaction });
       });
     }
     renderThemePicker();

@@ -168,9 +168,13 @@ export function initDrawer({
     const overlay = document.getElementById('drawer-overlay');
     if (overlay) overlay.addEventListener('click', closeSheet);
     const saveBtn = document.getElementById('save-recipe-btn');
-    if (saveBtn) saveBtn.addEventListener('click', async () => {
+    if (saveBtn) saveBtn.addEventListener('click', async (event) => {
+      const interaction = feedback.contextFromEvent?.(event, saveBtn);
       const result = await save();
-      feedback.emit(result?.ok ? 'success' : 'blocked', { target: saveBtn });
+      feedback.emit(result?.ok ? 'success' : 'blocked', {
+        target: saveBtn,
+        interaction: interaction ? { ...interaction, deferred: true } : null,
+      });
     });
     const schemaBtn = document.getElementById('view-schema-btn');
     if (schemaBtn) schemaBtn.addEventListener('click', () => onSchema && onSchema(null));
