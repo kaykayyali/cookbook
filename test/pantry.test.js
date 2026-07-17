@@ -16,6 +16,7 @@ import {
   formatPantryAmount,
   updatePantryRecord,
 } from '../docs/js/lib/pantry.js';
+import { normalizeIngredient } from '../docs/js/lib/cart.js';
 
 test('haveIngredient matches by substring', () => {
   const pantry = [
@@ -328,6 +329,65 @@ test('Pantry amount state hides missing and low-confidence guesses but keeps kno
   assert.doesNotMatch(formatPantryAmount(lowConfidence), /as needed/i);
 });
 
+test('ambiguous quantity ranges stay unknown for Pantry across dash variants', () => {
+  for (const raw of [
+    '2-4 basil leaves',
+    '2 - 4 basil leaves',
+    '2–4 basil leaves',
+    '2—4 basil leaves',
+    '2 to 4 basil leaves',
+  ]) {
+    const parsed = normalizeIngredient(raw);
+    const record = normalizePantryEntry(raw);
+    assert.equal(parsed.quantityState, 'range', raw);
+    assert.equal(record.amountState, 'unknown', raw);
+    assert.equal(formatPantryAmount(record), 'Not sure', raw);
+    assert.notEqual(formatPantryAmount(record), '4', raw);
+  }
+
+  assert.equal(normalizePantryEntry('4 basil leaves').amountState, 'known');
+  assert.equal(normalizePantryEntry('2 cups olive oil').amountState, 'known');
+  assert.equal(normalizePantryEntry('2 10-inch tortillas').amountState, 'known',
+    'a quantity followed by a hyphenated item name is not a range');
+  assert.equal(normalizeIngredient('sugar-free basil').quantityState, undefined,
+    'an ordinary hyphenated ingredient name is not a range');
+});
+
+test('explicit normalized range evidence cannot be promoted to a known endpoint', () => {
+  const record = normalizePantryEntry({
+    raw: '2-4 basil leaves', name: 'basil leaf', displayName: 'Basil Leaves',
+    quantity: 4, unit: 'count', kind: 'indivisible', confidence: 0.99,
+  });
+  assert.equal(record.amountState, 'unknown');
+  assert.equal(formatPantryAmount(record), 'Not sure');
+});
+
+test('qualitative replacement and numeric consolidation preserve unique raw evidence', () => {
+  const migrated = normalizePantry(['eggs', '3 eggs']);
+  assert.equal(migrated.length, 1);
+  assert.equal(migrated[0].raw, '3 eggs', 'the numeric line is the useful primary UI evidence');
+  assert.deepEqual(migrated[0].rawEvidence, ['eggs', '3 eggs']);
+  assert.deepEqual(normalizePantry(migrated), migrated, 're-normalization does not duplicate evidence');
+
+  const added = addToPantry(normalizePantry(['eggs']), '3 eggs');
+  assert.equal(added.item.raw, '3 eggs');
+  assert.deepEqual(added.item.rawEvidence, ['eggs', '3 eggs']);
+
+  const consolidated = normalizePantry(['2 eggs', '3 eggs', '2 eggs']);
+  assert.equal(consolidated[0].raw, '3 eggs');
+  assert.deepEqual(consolidated[0].rawEvidence, ['2 eggs', '3 eggs']);
+});
+
+test('raw evidence treats explicit semicolon-bearing source lines losslessly', () => {
+  const [record] = normalizePantry([{
+    raw: 'salt; smoked', rawEvidence: ['salt; smoked'], name: 'smoked salt',
+    displayName: 'Smoked Salt', quantity: null, unit: 'qualitative', kind: 'qualitative',
+  }]);
+  assert.equal(record.raw, 'salt; smoked');
+  assert.deepEqual(record.rawEvidence, ['salt; smoked']);
+  assert.deepEqual(normalizePantry([record]), [record]);
+});
+
 test('updatePantryRecord edits by stable ID and advances only that record timestamp', () => {
   const current = normalizePantry(['to 4 basil leaves', 'salt']);
   const original = current.find((item) => item.raw === 'to 4 basil leaves');
@@ -342,6 +402,14 @@ test('updatePantryRecord edits by stable ID and advances only that record timest
   assert.equal(updated.find((item) => item.id === original.id).updatedAt, 200);
   assert.deepEqual(updated.find((item) => item.id === salt.id), salt, 'unrelated Pantry records are untouched');
   assert.throws(() => updatePantryRecord(updated, 'missing-id', 'basil'), /pantry_record_not_found/);
+});
+
+test('updatePantryRecord keeps old and new raw lines without changing the new primary', () => {
+  const [original] = normalizePantry(['basil leaves']);
+  const [updated] = updatePantryRecord([original], original.id, '4 basil leaves', { updatedAt: 200 });
+  assert.equal(updated.raw, '4 basil leaves');
+  assert.deepEqual(updated.rawEvidence, ['basil leaves', '4 basil leaves']);
+  assert.deepEqual(normalizePantry([updated])[0].rawEvidence, updated.rawEvidence);
 });
 
 test('migration deterministically repairs duplicate historical record IDs', () => {

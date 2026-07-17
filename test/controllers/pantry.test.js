@@ -247,12 +247,11 @@ test('render with empty pantry shows the empty hint', () => {
 
 test('render identifies records stably and displays unknown quantities exactly as Not sure', () => {
   const { document, grid } = makeDom();
-  const state = { pantry: [{
-    id: 'pantry-basil', raw: 'to 4 basil leaves', name: 'basil leaf', displayName: 'Basil Leaves',
+  const state = { pantry: normalizePantry([{
+    id: 'pantry-basil', raw: '2-4 basil leaves', name: 'basil leaf', displayName: 'Basil Leaves',
     quantity: 4, unit: 'count', kind: 'indivisible', countLabel: '', category: 'produce',
-    confidence: 0.4, amountState: 'unknown', measurementFamily: 'count',
-    normalizationVersion: 1, updatedAt: 10,
-  }], recipes: [] };
+    confidence: 0.99, normalizationVersion: 1, updatedAt: 10,
+  }]), recipes: [] };
   mod.initPantry({ state, document }).render();
   assert.match(grid.innerHTML, /data-pantry-id="pantry-basil"/);
   assert.match(grid.innerHTML, />Not sure</);

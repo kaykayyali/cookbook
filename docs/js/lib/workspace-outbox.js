@@ -316,8 +316,16 @@ export async function createWorkspaceOutbox({
     current: () => clone(optimistic),
     pending: () => rows.length,
     async mutate(op, payload) {
+      const mutationId = String(makeId() || '');
+      if (!mutationId
+          || rows.some((row) => row.mutationId === mutationId)
+          || confirmed.recentMutations.includes(mutationId)
+          || persisting.has(mutationId)) {
+        status('failed', { code: 'mutation_id_collision' });
+        return false;
+      }
       const provisional = {
-        mutationId: makeId(), authSub, householdId, scope: 'workspace',
+        mutationId, authSub, householdId, scope: 'workspace',
         op, payload: clone(payload || {}), createdAt: Date.now(), status: 'pending',
         attempts: 0, nextAttemptAt: 0, lastError: null,
       };
@@ -332,9 +340,22 @@ export async function createWorkspaceOutbox({
         const persisted = persistence.then(() => repo.enqueue(provisional));
         persistence = persisted.catch(() => undefined);
         row = await persisted;
-        rows = rows.map((item) => item.mutationId === row.mutationId ? row : item);
+        rows = rows.map((item) => item === provisional ? row : item);
       } catch {
-        rows = rows.filter((item) => item.mutationId !== provisional.mutationId);
+        await withAuthorityWrite(async () => {
+          const unpersisted = rows.filter((item) => item !== provisional && item.sequence == null);
+          try {
+            const durable = await repo.listOutbox(authSub, householdId);
+            durable.forEach((item) => restored.add(item.mutationId));
+            const durableIds = new Set(durable.map((item) => item.mutationId));
+            rows = [
+              ...durable,
+              ...unpersisted.filter((item) => !durableIds.has(item.mutationId)),
+            ].sort((a, b) => (a.sequence ?? Number.MAX_SAFE_INTEGER) - (b.sequence ?? Number.MAX_SAFE_INTEGER));
+          } catch {
+            rows = rows.filter((item) => item !== provisional);
+          }
+        });
         neverAttempted.delete(provisional.mutationId);
         localGenerations.delete(provisional.mutationId);
         publish({ rolledBack: true });

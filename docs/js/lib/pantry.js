@@ -162,27 +162,58 @@ function measurementFamily(unit) {
   return 'unknown';
 }
 
-function evidenceText(value, source) {
-  if (typeof source?.raw === 'string' && source.raw.trim()) return source.raw.trim();
-  if (Array.isArray(source?.raw)) {
-    const values = [...new Set(source.raw.map((item) => String(item || '').trim()).filter(Boolean))];
-    if (values.length) return values.join('; ');
-  }
+function generatedEvidence(value, source) {
   if (typeof value === 'string') return value.trim();
-  const name = String(value?.displayName || value?.name || source?.displayName || source?.name || '').trim();
+  const displayName = String(value?.displayName || source?.displayName || '').trim();
+  const canonical = String(value?.name || source?.name || '').trim();
+  const name = value?.quantity == null ? (canonical || displayName) : (displayName || canonical);
   if (!name) return '';
   if (typeof value?.quantity === 'string' && value.quantity.trim()) return `${value.quantity.trim()} ${name}`;
-  if (Number.isFinite(Number(value?.quantity))) {
+  if (value?.quantity != null && Number.isFinite(Number(value.quantity))) {
     const unit = String(value?.countLabel || value?.unit || '').trim();
     return `${Number(value.quantity)}${unit ? ` ${unit}` : ''} ${name}`;
   }
   return name;
 }
 
-function mergeEvidence(first, second) {
-  return [...new Set([first, second]
-    .flatMap((value) => String(value || '').split('; '))
-    .map((value) => value.trim()).filter(Boolean))].join('; ');
+function legacyRawValues(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean);
+  if (typeof value !== 'string' || !value.trim()) return [];
+  return value.split('; ').map((item) => item.trim()).filter(Boolean);
+}
+
+function evidenceValues(value, source) {
+  const explicit = Array.isArray(source?.rawEvidence)
+    ? source.rawEvidence.map((item) => String(item || '').trim()).filter(Boolean) : [];
+  const raw = explicit.length && typeof source?.raw === 'string'
+    ? [source.raw.trim()].filter(Boolean)
+    : legacyRawValues(source?.raw);
+  const generated = explicit.length || raw.length ? '' : generatedEvidence(value, source);
+  return [...new Set([...explicit, ...raw, generated].filter(Boolean))];
+}
+
+function evidenceText(value, source, evidence) {
+  if (typeof source?.raw === 'string' && source.raw.trim()) {
+    if (Array.isArray(source.rawEvidence)) return source.raw.trim();
+    const legacy = legacyRawValues(source.raw);
+    return legacy.at(-1) || source.raw.trim();
+  }
+  if (Array.isArray(source?.raw)) return legacyRawValues(source.raw).at(-1) || '';
+  if (typeof value === 'string') return value.trim();
+  return evidence.at(-1) || generatedEvidence(value, source);
+}
+
+function mergeEvidence(...records) {
+  return [...new Set(records.flatMap((record) => {
+    if (Array.isArray(record?.rawEvidence)) return record.rawEvidence;
+    return legacyRawValues(record?.raw);
+  }).map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function mergePrimary(existing, incoming) {
+  const incomingRaw = typeof incoming?.raw === 'string' ? incoming.raw.trim() : '';
+  const existingEvidence = mergeEvidence(existing);
+  return incomingRaw && !existingEvidence.includes(incomingRaw) ? incomingRaw : existing.raw;
 }
 
 function legacyIngredient(entry) {
@@ -234,8 +265,11 @@ export function normalizePantryEntry(value, options = {}) {
   const countLabel = COUNT_LABELS.includes(source.countLabel) ? source.countLabel : fallback.countLabel;
   const confidence = Number.isFinite(source.confidence) && source.confidence >= 0 && source.confidence <= 1
     ? source.confidence : unit === 'qualitative' ? 0.4 : 0.85;
+  const primaryNormalization = typeof source.raw === 'string' ? normalizeIngredient(source.raw) : null;
   const amountState = unit === 'qualitative'
     || source.amountState === 'unknown'
+    || source.quantityState === 'range'
+    || primaryNormalization?.quantityState === 'range'
     || confidence < PANTRY_CONFIDENCE_THRESHOLD ? 'unknown' : 'known';
   const candidate = {
     name,
@@ -247,6 +281,7 @@ export function normalizePantryEntry(value, options = {}) {
   const updatedAt = options.overrideUpdatedAt === true
     ? optionUpdatedAt ?? sourceUpdatedAt ?? 0
     : sourceUpdatedAt ?? optionUpdatedAt ?? 0;
+  const rawEvidence = evidenceValues(value, source);
   return {
     id: safeRecordId(options.id) || safeRecordId(source.id) || deterministicRecordId(candidate),
     name,
@@ -258,12 +293,21 @@ export function normalizePantryEntry(value, options = {}) {
     kind: unit === 'count' ? 'indivisible' : unit === 'ounce' ? 'divisible' : 'qualitative',
     countLabel,
     category: INGREDIENT_CATEGORIES.includes(source.category) ? source.category : fallback.category,
-    raw: evidenceText(value, source),
+    raw: evidenceText(value, source, rawEvidence),
+    rawEvidence,
     confidence,
     normalizationVersion: Number.isInteger(source.normalizationVersion) && source.normalizationVersion > 0
       ? source.normalizationVersion : PANTRY_RECORD_VERSION,
     updatedAt,
   };
+}
+
+function mergeRecordEvidence(existing, incoming, { primary = mergePrimary(existing, incoming) } = {}) {
+  return normalizePantryEntry({
+    ...existing,
+    raw: primary,
+    rawEvidence: mergeEvidence(existing, incoming),
+  });
 }
 
 function mergeNumericRecords(existing, incoming) {
@@ -272,7 +316,8 @@ function mergeNumericRecords(existing, incoming) {
     ...existing,
     ...incoming,
     id: existing.id,
-    raw: mergeEvidence(existing.raw, incoming.raw),
+    raw: mergePrimary(existing, incoming),
+    rawEvidence: mergeEvidence(existing, incoming),
     quantity: existing.quantity + incoming.quantity,
     confidence,
     amountState: existing.amountState === 'unknown' || incoming.amountState === 'unknown'
@@ -290,10 +335,22 @@ export function addToPantry(pantry, value, options = {}) {
   const exact = current.findIndex((entry) => pantryKey(entry) === pantryKey(item));
 
   if (item.unit === 'qualitative' && sameName >= 0) {
-    return { pantry: current, added: false, name: item.name, item: current[sameName] };
+    const existing = current[sameName];
+    const merged = mergeRecordEvidence(existing, item);
+    const changed = merged.raw !== existing.raw
+      || merged.rawEvidence.length !== existing.rawEvidence.length;
+    const next = changed
+      ? current.map((entry, index) => index === sameName ? merged : entry)
+      : current;
+    return { pantry: next, added: changed, name: item.name, item: changed ? merged : existing };
   }
   if (item.unit !== 'qualitative' && sameName >= 0 && current[sameName].unit === 'qualitative') {
-    const replacement = normalizePantryEntry({ ...item, id: current[sameName].id }, { updatedAt: item.updatedAt });
+    const existing = current[sameName];
+    const replacement = normalizePantryEntry({
+      ...item,
+      id: existing.id,
+      rawEvidence: mergeEvidence(existing, item),
+    }, { updatedAt: item.updatedAt });
     const next = current.map((entry, index) => index === sameName ? replacement : entry);
     return { pantry: next, added: true, name: item.name, item: replacement };
   }
@@ -318,8 +375,12 @@ export function updatePantryRecord(pantry, recordId, value, options = {}) {
       && !Object.prototype.hasOwnProperty.call(value || {}, 'amountState')) {
     delete source.amountState;
   }
-  const updated = normalizePantryEntry(source, { ...options, id, overrideUpdatedAt: true });
+  let updated = normalizePantryEntry(source, { ...options, id, overrideUpdatedAt: true });
   if (!updated) throw new Error('invalid_pantry_item');
+  updated = normalizePantryEntry({
+    ...updated,
+    rawEvidence: mergeEvidence(current[index], updated),
+  }, { ...options, id, overrideUpdatedAt: true });
   if (current.some((entry, entryIndex) => entryIndex !== index && pantryKey(entry) === pantryKey(updated))) {
     throw new Error('duplicate_pantry_identity');
   }
@@ -379,12 +440,25 @@ export function normalizePantry(raw, options = {}) {
     if (!item) continue;
     item = withUniqueRecordId(item, output);
     const exact = output.findIndex((entry) => pantryKey(entry) === pantryKey(item));
+    const sameName = output.findIndex((entry) => entry.name === item.name);
     const qualitative = output.findIndex((entry) => entry.name === item.name && entry.unit === 'qualitative');
     if (exact >= 0 && item.unit !== 'qualitative') {
       output[exact] = mergeNumericRecords(output[exact], item);
-    } else if (exact < 0 && item.unit !== 'qualitative' && qualitative >= 0) {
-      output[qualitative] = normalizePantryEntry({ ...item, id: output[qualitative].id });
-    } else if (exact < 0 && !(item.unit === 'qualitative' && output.some((entry) => entry.name === item.name))) {
+    } else if (exact >= 0) {
+      output[exact] = mergeRecordEvidence(output[exact], item);
+    } else if (item.unit !== 'qualitative' && qualitative >= 0) {
+      output[qualitative] = normalizePantryEntry({
+        ...item,
+        id: output[qualitative].id,
+        rawEvidence: mergeEvidence(output[qualitative], item),
+      });
+    } else if (item.unit === 'qualitative' && sameName >= 0) {
+      output[sameName] = mergeRecordEvidence(output[sameName], item, {
+        primary: output[sameName].unit === 'qualitative'
+          ? mergePrimary(output[sameName], item)
+          : output[sameName].raw,
+      });
+    } else {
       output.push(item);
     }
   }

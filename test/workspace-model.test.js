@@ -111,7 +111,8 @@ test('authoritative pantry mutations accumulate compatible purchased quantities'
     countLabel: '', category: 'dairy-eggs', amountState: 'known',
   }]);
   assert.match(workspace.pantry[0].id, /^pantry-/);
-  assert.equal(workspace.pantry[0].raw, '9 count Eggs; 3 count Eggs');
+  assert.equal(workspace.pantry[0].raw, '3 count Eggs');
+  assert.deepEqual(workspace.pantry[0].rawEvidence, ['eggs', '9 count Eggs', '3 count Eggs']);
 });
 
 test('authoritative Shopping transfer source is idempotent across distinct mutations', () => {

@@ -44,10 +44,11 @@ test('local normalization implements the approved water-equivalent conversion ta
 test('local normalization handles ranges, cloves, and package weights conservatively', () => {
   for (const raw of ['1-2 cups milk', '1 1/2-2 cups milk']) {
     assert.deepEqual(normalizeIngredient(raw), {
-      raw, name: 'milk', displayName: 'Milk', countLabel: '', category: 'dairy-eggs', quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 0.8,
+      raw, name: 'milk', displayName: 'Milk', countLabel: '', category: 'dairy-eggs', quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 0.8, quantityState: 'range',
     });
   }
   assert.equal(normalizeIngredient('1/2-1 cup milk').quantity, 8);
+  assert.equal(normalizeIngredient('1/2-1 cup milk').quantityState, 'range');
   assert.equal(normalizeIngredient('1 clove garlic').name, 'garlic');
   assert.equal(normalizeIngredient('2 cloves garlic').name, 'garlic');
   for (const [raw, quantity] of [

@@ -53,6 +53,85 @@ test('mutation publishes before persistence and survives a reload once locally d
   assert.deepEqual(reloaded.current().pantry.map((item) => item.name), ['flour']);
 });
 
+test('a deterministic mutation-ID collision restores the pre-existing durable optimistic row', async () => {
+  const repo = await openOfflineDb({ indexedDB, name: dbName() });
+  await repo.enqueue({
+    mutationId: 'collision', authSub: 'cook-1', householdId: 'our-home', scope: 'workspace',
+    op: 'pantry.add', payload: { name: 'flour' }, createdAt: 1,
+  });
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => false,
+    makeId: () => 'collision',
+  });
+
+  assert.equal(await manager.mutate('pantry.add', { name: 'salt' }), false);
+  assert.deepEqual(manager.current().pantry.map((item) => item.name), ['flour'],
+    'the failed provisional row cannot erase the durable row with the same ID');
+  assert.deepEqual((await repo.listOutbox('cook-1', 'our-home')).map((row) => row.mutationId), ['collision']);
+  repo.close();
+});
+
+test('a concurrent persistence collision reloads the winning durable row atomically', async () => {
+  const repo = await openOfflineDb({ indexedDB, name: dbName() });
+  const releaseSecond = deferred();
+  const secondAttempted = deferred();
+  let online = false;
+  const statuses = [];
+  const secondRepo = {
+    ...repo,
+    enqueue: async (row) => {
+      secondAttempted.resolve();
+      await releaseSecond.promise;
+      return repo.enqueue(row);
+    },
+  };
+  const winner = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => false,
+    makeId: () => 'raced-id',
+  });
+  const loser = await createWorkspaceOutbox({
+    repo: secondRepo, authSub: 'cook-1', householdId: 'our-home', initial: base(),
+    isOnline: () => online, makeId: () => 'raced-id', onStatus: (value) => statuses.push(value),
+    send: async () => ({ ok: false, status: 400 }),
+  });
+
+  const losingMutation = loser.mutate('pantry.add', { name: 'salt' });
+  await secondAttempted.promise;
+  assert.equal(await winner.mutate('pantry.add', { name: 'flour' }), true);
+  releaseSecond.resolve();
+  assert.equal(await losingMutation, false);
+  assert.deepEqual(loser.current().pantry.map((item) => item.name), ['flour']);
+  assert.deepEqual((await repo.listOutbox('cook-1', 'our-home')).map((row) => row.payload.name), ['flour']);
+
+  online = true;
+  assert.equal(await loser.drain(), false);
+  const [durable] = await repo.listOutbox('cook-1', 'our-home');
+  assert.equal(statuses.at(-1).discardable, false,
+    'a row recovered from another runtime remains retry-only after a later rejection');
+  assert.equal(await loser.discard(durable.sequence), false);
+  assert.equal(loser.pending(), 1);
+  repo.close();
+});
+
+test('raw Pantry evidence survives durable optimistic replay without duplication', async () => {
+  const initial = base({ pantry: ['eggs'] });
+  const repo = memoryRepo(initial);
+  let manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => false,
+    makeId: () => 'add-eggs',
+  });
+  assert.equal(await manager.mutate('pantry.add', { item: {
+    raw: '3 eggs', name: 'egg', quantity: 3, unit: 'count', kind: 'indivisible',
+  } }), true);
+  assert.deepEqual(manager.current().pantry[0].rawEvidence, ['eggs', '3 eggs']);
+
+  manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => false,
+  });
+  assert.equal(manager.current().pantry[0].raw, '3 eggs');
+  assert.deepEqual(manager.current().pantry[0].rawEvidence, ['eggs', '3 eggs']);
+});
+
 test('online mutation returns after durable optimistic publication without waiting for D1', async () => {
   const repo = memoryRepo();
   const response = deferred();
