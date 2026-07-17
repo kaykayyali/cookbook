@@ -61,7 +61,7 @@ after(async () => {
   await new Promise((resolve) => server?.close(resolve));
 });
 
-async function createPantryPage(viewport = { width: 1440, height: 900 }) {
+async function createPantryPage(viewport = { width: 1440, height: 900 }, options = {}) {
   const context = await browser.newContext({ viewport, reducedMotion: 'reduce' });
   const token = [
     Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url'),
@@ -74,10 +74,16 @@ async function createPantryPage(viewport = { width: 1440, height: 900 }) {
     localStorage.setItem('cb_tour_cookbook_v1_kay', 'complete');
     localStorage.setItem('cb_summer_theme_recommendation_v1:kay', '1');
   }, { tokenValue: token });
+  if (options.disableIndexedDb) {
+    await context.addInitScript(() => {
+      Object.defineProperty(globalThis, 'indexedDB', { value: undefined, configurable: true });
+    });
+  }
 
   const pantry = normalizePantry([
     {
-      id: 'pantry-olive-oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+      id: 'pantry-olive-oil', raw: '2 cups Olive Oil', rawEvidence: ['olive oil from bottle', '2 cups Olive Oil'],
+      name: 'olive oil', displayName: 'Olive Oil',
       quantity: 16, unit: 'ounce', kind: 'divisible', countLabel: '', category: 'pantry',
       confidence: 0.91, normalizationVersion: 1, updatedAt: 100,
     },
@@ -85,6 +91,11 @@ async function createPantryPage(viewport = { width: 1440, height: 900 }) {
       id: 'pantry-oil-bottles', raw: '2 bottles olive oil', name: 'olive oil', displayName: 'Olive Oil',
       quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle', category: 'pantry',
       confidence: 0.88, normalizationVersion: 1, updatedAt: 101,
+    },
+    {
+      id: 'pantry-eggs', raw: 'eggs', rawEvidence: ['eggs'], name: 'egg', displayName: 'Eggs',
+      quantity: null, unit: 'qualitative', kind: 'qualitative', countLabel: '', category: 'dairy-eggs',
+      confidence: 0.4, normalizationVersion: 1, updatedAt: 102, amountState: 'unknown',
     },
   ]);
   let workspace = {
@@ -107,6 +118,9 @@ async function createPantryPage(viewport = { width: 1440, height: 900 }) {
     if (url.pathname === '/api/workspace' && request.method() === 'PATCH') {
       const mutation = request.postDataJSON();
       mutations.push(mutation);
+      options.onPatch?.(mutation);
+      if (options.patchGate) await options.patchGate;
+      if (options.patchFailureStatus) return json(route, { error: 'workspace_unavailable' }, options.patchFailureStatus);
       if (mutation.baseRevision !== workspace.revision) return json(route, { error: 'revision_conflict', workspace }, 409);
       workspace = {
         ...applyWorkspaceOperation(workspace, mutation),
@@ -134,7 +148,10 @@ async function createPantryPage(viewport = { width: 1440, height: 900 }) {
   await page.locator('button[data-panel="pantry"]').click();
   await page.waitForFunction(() => document.body.dataset.panel === 'pantry', null, { timeout: 60_000 });
   await page.locator('[data-pantry-id="pantry-olive-oil"]').waitFor({ state: 'visible', timeout: 60_000 });
-  return { context, page, browserErrors, mutations, workspace: () => workspace };
+  return {
+    context, page, browserErrors, mutations, workspace: () => workspace,
+    setWorkspace: (next) => { workspace = next; },
+  };
 }
 
 test('desktop Pantry row opens an immediately editable item modal', { timeout: 60_000 }, async () => {
@@ -154,6 +171,7 @@ test('desktop Pantry row opens an immediately editable item modal', { timeout: 6
     assert.equal(await page.locator('#pantry-item-quantity').inputValue(), '2');
     assert.equal(await page.locator('#pantry-item-unit').inputValue(), 'cup');
     assert.match(await modal.innerText(), /Original text[\s\S]*2 cups Olive Oil/i);
+    assert.match(await modal.innerText(), /olive oil from bottle/i, 'earlier unique evidence remains visible');
     await page.locator('#pantry-item-family').selectOption('unknown');
     assert.equal(await page.locator('#pantry-item-quantity').inputValue(), '');
     assert.equal(await page.locator('#pantry-item-quantity').isDisabled(), true);
@@ -190,8 +208,9 @@ test('desktop edit converts, persists by stable ID, removes exactly, and undoes'
     assert.equal(mutations[0].op, 'pantry.update');
     assert.equal(mutations[0].payload.id, 'pantry-olive-oil');
     assert.equal(mutations[0].payload.item.raw, '16 ounces Avocado Oil');
-    assert.deepEqual(mutations[0].payload.item.rawEvidence, ['2 cups Olive Oil', '16 ounces Avocado Oil']);
-    assert.equal(mutations[0].payload.item.confidence, 0.91);
+    assert.deepEqual(mutations[0].payload.item.rawEvidence, ['olive oil from bottle', '2 cups Olive Oil', '16 ounces Avocado Oil']);
+    assert.equal(mutations[0].payload.item.confidence, 1);
+    assert.equal(mutations[0].payload.item.amountSource, 'manual');
     assert.equal(mutations[0].payload.item.normalizationVersion, 1);
     assert.ok(mutations[0].payload.item.updatedAt > 100, 'correction advances updatedAt');
     assert.equal(workspace().pantry.find(({ id }) => id === 'pantry-olive-oil').name, 'avocado oil');
@@ -214,7 +233,8 @@ test('desktop edit converts, persists by stable ID, removes exactly, and undoes'
     await removeResponse;
     assert.equal(await page.locator('[data-pantry-id="pantry-olive-oil"]').count(), 0);
     assert.equal(await page.locator('[data-pantry-id="pantry-oil-bottles"]').count(), 1);
-    assert.equal(await page.evaluate(() => document.activeElement?.dataset.pantryId), 'pantry-oil-bottles', 'removal focuses the next Pantry record');
+    assert.notEqual(await page.evaluate(() => document.activeElement?.dataset.pantryId), 'pantry-olive-oil', 'removal never focuses the deleted record');
+    assert.ok(await page.evaluate(() => Boolean(document.activeElement?.dataset.pantryId)), 'removal focuses a remaining Pantry record');
     assert.deepEqual({ op: mutations[1].op, id: mutations[1].payload.id }, { op: 'pantry.remove', id: 'pantry-olive-oil' });
 
     const undoResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/workspace'
@@ -222,11 +242,134 @@ test('desktop edit converts, persists by stable ID, removes exactly, and undoes'
     await page.locator('#toast [data-toast-action]', { hasText: 'Undo' }).click();
     await undoResponse;
     await page.locator('[data-pantry-id="pantry-olive-oil"]').waitFor();
-    assert.equal(mutations[2].op, 'pantry.add');
+    assert.equal(mutations[2].op, 'pantry.restore');
+    assert.equal(mutations[2].payload.expectedAbsent, true);
     assert.equal(mutations[2].payload.item.id, 'pantry-olive-oil');
     assert.equal(await page.evaluate(() => document.activeElement?.dataset.pantryId), 'pantry-olive-oil', 'Undo returns focus to the restored record');
     assert.deepEqual(browserErrors, []);
   } finally {
+    await context.close();
+  }
+});
+
+test('two production tabs block stale remove after the other tab updates the same record', { timeout: 60_000 }, async () => {
+  const fixture = await createPantryPage({ width: 1440, height: 900 }, { disableIndexedDb: true });
+  const { context, page: first, mutations, workspace } = fixture;
+  const second = await context.newPage();
+  try {
+    await second.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 10_000 });
+    await second.locator('button[data-panel="pantry"]').waitFor({ state: 'visible', timeout: 10_000 });
+    await second.locator('button[data-panel="pantry"]').click({ timeout: 10_000 });
+    await second.locator('[data-pantry-id="pantry-olive-oil"]').waitFor({ state: 'visible', timeout: 10_000 });
+
+    await first.locator('[data-pantry-id="pantry-olive-oil"]').click();
+    await second.locator('[data-pantry-id="pantry-olive-oil"]').click();
+    await second.locator('#pantry-item-quantity').fill('3');
+    const updateResponse = second.waitForResponse((response) => response.request().method() === 'PATCH'
+      && response.request().postDataJSON()?.op === 'pantry.update');
+    await second.locator('#pantry-item-save').click();
+    assert.equal((await updateResponse).status(), 200);
+
+    await first.locator('#pantry-item-remove').click();
+    const removeResponse = first.waitForResponse((response) => response.request().method() === 'PATCH'
+      && response.request().postDataJSON()?.op === 'pantry.remove');
+    await first.locator('[data-action="confirm-pantry-remove"]').click();
+    assert.equal((await removeResponse).status(), 409);
+    await first.locator('[data-pantry-id="pantry-olive-oil"]').waitFor();
+    await first.waitForFunction(() => document.querySelector('[data-pantry-id="pantry-olive-oil"]')?.textContent.includes('3 cups'));
+    assert.deepEqual(workspace().pantry.filter(({ id }) => id === 'pantry-olive-oil').map(({ id, quantity }) => ({ id, quantity })),
+      [{ id: 'pantry-olive-oil', quantity: 24 }]);
+    assert.equal(mutations.filter(({ op }) => op === 'pantry.remove').length, 1, 'same-record change prevents remove rebase');
+    assert.equal(await first.locator('#pantry-item-modal').isVisible(), true, 'the conflict keeps the editor open');
+    assert.match(await first.locator('#pantry-item-error').textContent(), /could not be removed.*changed.*restored.*review.*try again/i);
+  } finally {
+    await context.close();
+  }
+});
+
+test('production Undo collision keeps remotely recreated stable ID and shows actionable conflict', { timeout: 60_000 }, async () => {
+  const fixture = await createPantryPage({ width: 1440, height: 900 }, { disableIndexedDb: true });
+  const { context, page, mutations, workspace, setWorkspace } = fixture;
+  try {
+    const removed = structuredClone(workspace().pantry.find(({ id }) => id === 'pantry-olive-oil'));
+    await page.locator('[data-pantry-id="pantry-olive-oil"]').click();
+    await page.locator('#pantry-item-remove').click();
+    const removeResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/workspace'
+      && response.request().method() === 'PATCH');
+    await page.locator('[data-action="confirm-pantry-remove"]').click();
+    await removeResponse;
+    const remote = normalizePantry([{ ...removed, raw: '3 cups Olive Oil', quantity: 24, updatedAt: 300 }])[0];
+    setWorkspace({
+      ...workspace(), revision: workspace().revision + 1, updatedAt: 300,
+      pantry: [remote, ...workspace().pantry],
+    });
+    const restoreResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/workspace'
+      && response.request().method() === 'PATCH');
+    await page.locator('#toast [data-toast-action]', { hasText: 'Undo' }).click();
+    assert.equal((await restoreResponse).status(), 409);
+    await page.locator('[data-pantry-id="pantry-olive-oil"]').waitFor();
+    assert.deepEqual(workspace().pantry.filter(({ id }) => id === removed.id).map(({ id, quantity }) => ({ id, quantity })),
+      [{ id: removed.id, quantity: 24 }]);
+    assert.deepEqual(mutations.filter(({ op }) => op === 'pantry.restore').map(({ payload }) => ({
+      id: payload.item.id, expectedAbsent: payload.expectedAbsent,
+    })), [{ id: removed.id, expectedAbsent: true }]);
+    assert.equal(mutations.some(({ op }) => op === 'pantry.add'), false);
+    assert.match(await page.locator('#toast').textContent(), /could not restore.*shared Pantry changed/i);
+  } finally {
+    await context.close();
+  }
+});
+
+test('production editor turns low-confidence eggs into trusted 12-count authority and reopens known', { timeout: 60_000 }, async () => {
+  const { context, page, mutations, workspace } = await createPantryPage();
+  try {
+    const eggs = page.locator('[data-pantry-id="pantry-eggs"]');
+    await eggs.click();
+    assert.equal(await page.locator('#pantry-item-family').inputValue(), 'unknown');
+    await page.locator('#pantry-item-family').selectOption('count');
+    await page.locator('#pantry-item-quantity').fill('12');
+    await page.locator('#pantry-item-unit').selectOption('item');
+    const response = page.waitForResponse((value) => new URL(value.url()).pathname === '/api/workspace'
+      && value.request().method() === 'PATCH');
+    await page.locator('#pantry-item-save').click();
+    await response;
+    await eggs.click();
+    assert.equal(await page.locator('#pantry-item-family').inputValue(), 'count');
+    assert.equal(await page.locator('#pantry-item-quantity').inputValue(), '12');
+    const record = workspace().pantry.find(({ id }) => id === 'pantry-eggs');
+    assert.deepEqual({ amountState: record.amountState, quantity: record.quantity, unit: record.unit },
+      { amountState: 'known', quantity: 12, unit: 'count' });
+    assert.equal(record.confidence, 1);
+    assert.equal(record.amountSource, 'manual');
+    assert.equal(mutations[0].payload.item.raw, '12 items Eggs');
+  } finally {
+    await context.close();
+  }
+});
+
+test('production Escape during pending failure is refused and preserves the draft and feedback', { timeout: 60_000 }, async () => {
+  let releasePatch;
+  let observePatch;
+  const patchGate = new Promise((resolve) => { releasePatch = resolve; });
+  const patchSeen = new Promise((resolve) => { observePatch = resolve; });
+  const { context, page } = await createPantryPage({ width: 1440, height: 900 }, {
+    patchGate, patchFailureStatus: 500, onPatch: observePatch, disableIndexedDb: true,
+  });
+  try {
+    await page.locator('[data-pantry-id="pantry-olive-oil"]').click();
+    await page.locator('#pantry-item-name').fill('Draft Oil');
+    await page.locator('#pantry-item-save').click();
+    await patchSeen;
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#pantry-item-modal').isVisible(), true);
+    assert.equal(await page.locator('#pantry-item-name').inputValue(), 'Draft Oil');
+    assert.match(await page.locator('#pantry-item-status').textContent(), /saving/i);
+    releasePatch();
+    await page.locator('#pantry-item-error').filter({ hasText: /could not be saved/i }).waitFor();
+    assert.equal(await page.locator('#pantry-item-modal').isVisible(), true);
+    assert.equal(await page.locator('#pantry-item-name').inputValue(), 'Draft Oil');
+  } finally {
+    releasePatch?.();
     await context.close();
   }
 });

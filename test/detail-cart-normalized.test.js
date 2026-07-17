@@ -129,7 +129,9 @@ test('recipe-detail Pantry removal syncs the matched stored stable ID', async ()
   dom.window.document.querySelector('.detail-ing-item').click();
 
   assert.deepEqual(state.pantry.map((item) => item.id), ['manual-water-cans']);
-  assert.deepEqual(mutations, [{ op: 'pantry.remove', payload: { id: 'cart-water-bottles' } }]);
+  assert.equal(mutations[0].op, 'pantry.remove');
+  assert.equal(mutations[0].payload.id, 'cart-water-bottles');
+  assert.match(mutations[0].payload.expectedFingerprint, /^pantry-v1:/);
 });
 
 test('background audit failure keeps the immediate deterministic selection', async () => {

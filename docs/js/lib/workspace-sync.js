@@ -9,7 +9,9 @@ import {
   addToPantry,
   normalizePantry,
   normalizePantryEntry,
+  pantryRecordFingerprint,
   removeFromPantry,
+  restorePantryRecord,
   updatePantryRecord,
 } from './pantry.js';
 
@@ -25,12 +27,35 @@ const slotOrder = { breakfast: 0, lunch: 1, dinner: 2 };
 
 export function normalizeWorkspaceMutationPayload(op, payload) {
   const normalized = clone(payload || {});
-  if ((op === 'pantry.add' || op === 'pantry.update')
+  if ((op === 'pantry.add' || op === 'pantry.update' || op === 'pantry.restore')
       && Object.prototype.hasOwnProperty.call(normalized, 'item')) {
     const item = normalizePantryEntry(normalized.item);
     if (item) normalized.item = item;
   }
   return normalized;
+}
+
+/** Decide whether retrying the same absolute mutation over newer authority is still safe. */
+export function workspaceMutationRebaseDecision(request, authority) {
+  if (request.op === 'pantry.remove' && request.payload?.id) {
+    const target = authority.pantry.find((entry) => entry.id === request.payload.id);
+    const expected = String(request.payload.expectedFingerprint || '');
+    return target && expected && pantryRecordFingerprint(target) === expected
+      ? { safe: true, code: '' }
+      : { safe: false, code: 'pantry_record_conflict' };
+  }
+  if (request.op === 'pantry.restore') {
+    if (request.payload?.expectedAbsent !== true) return { safe: false, code: 'pantry_restore_conflict' };
+    try {
+      const result = restorePantryRecord(authority.pantry, request.payload.item);
+      return result.restored
+        ? { safe: true, code: '' }
+        : { safe: false, code: 'pantry_restore_conflict' };
+    } catch {
+      return { safe: false, code: 'pantry_restore_conflict' };
+    }
+  }
+  return { safe: SAFE_REBASE.has(request.op), code: '' };
 }
 
 function pruneTransferMarkers(workspace) {
@@ -113,6 +138,11 @@ export function applyWorkspaceOperation(source, request) {
     }
     case 'pantry.remove': {
       if (payload.id) {
+        const target = workspace.pantry.find((entry) => entry.id === payload.id);
+        if (!payload.expectedFingerprint) throw new Error('invalid_pantry_remove');
+        if (!target || pantryRecordFingerprint(target) !== payload.expectedFingerprint) {
+          throw new Error('pantry_record_conflict');
+        }
         workspace.pantry = removeFromPantry(workspace.pantry, { id: payload.id });
         break;
       }
@@ -122,6 +152,13 @@ export function applyWorkspaceOperation(source, request) {
         identity.countLabel = payload.countLabel;
       }
       workspace.pantry = removeFromPantry(workspace.pantry, identity);
+      break;
+    }
+    case 'pantry.restore': {
+      if (payload.expectedAbsent !== true) throw new Error('invalid_pantry_restore');
+      const restored = restorePantryRecord(workspace.pantry, payload.item);
+      if (!restored.restored) throw new Error('pantry_restore_conflict');
+      workspace.pantry = restored.pantry;
       break;
     }
     case 'cart.upsertSelection': {
@@ -190,10 +227,13 @@ export function createWorkspaceSync({ initial, send, onChange = () => {}, onErro
   };
 
   async function execute(request) {
+    let conflictCode = '';
     let response = await send({ ...request, baseRevision: confirmed.revision });
     if (!response.ok && response.status === 409 && isWorkspace(response.workspace)) {
       confirmed = normalizeWorkspace(response.workspace);
-      if (SAFE_REBASE.has(request.op)) {
+      const decision = workspaceMutationRebaseDecision(request, confirmed);
+      conflictCode = decision.code;
+      if (decision.safe) {
         rebuild();
         publish({ optimistic: true, rebased: true });
         response = await send({ ...request, baseRevision: confirmed.revision });
@@ -218,7 +258,7 @@ export function createWorkspaceSync({ initial, send, onChange = () => {}, onErro
     publish({ optimistic: false, rolledBack: true });
     onError({
       code: response.stale ? 'stale_workspace_response'
-        : response.status === 409 ? 'revision_conflict' : 'workspace_unavailable',
+        : conflictCode || (response.status === 409 ? 'revision_conflict' : 'workspace_unavailable'),
       retry: () => enqueue(request),
     });
     return false;

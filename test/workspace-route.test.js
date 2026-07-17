@@ -135,6 +135,40 @@ test('stale revision returns 409 with the current authoritative workspace', asyn
   assert.deepEqual(body.workspace.pantry.map((item) => item.name), ['flour']);
 });
 
+test('Pantry conditional remove and expected-absent restore return actionable 409 without changing authority', async () => {
+  const store = workspaceDb();
+  const add = await onRequestPatch(context(store.db, { body: {
+    mutationId: 'seed-oil', baseRevision: 0, op: 'pantry.add', payload: { item: {
+      id: 'oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+      quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1,
+    } },
+  } }));
+  const authority = await add.json();
+  const item = authority.pantry[0];
+  const unguardedRemove = await onRequestPatch(context(store.db, { body: {
+    mutationId: 'unguarded-remove', baseRevision: 1, op: 'pantry.remove', payload: { id: item.id },
+  } }));
+  assert.equal(unguardedRemove.status, 400);
+  assert.deepEqual(await unguardedRemove.json(), { error: 'invalid_pantry_remove' });
+  const staleRemove = await onRequestPatch(context(store.db, { body: {
+    mutationId: 'stale-remove', baseRevision: 1, op: 'pantry.remove',
+    payload: { id: item.id, expectedFingerprint: 'pantry-v1:stale' },
+  } }));
+  assert.equal(staleRemove.status, 409);
+  assert.deepEqual(await staleRemove.json(), {
+    error: 'pantry_record_conflict', workspace: authority,
+  });
+  const duplicateRestore = await onRequestPatch(context(store.db, { body: {
+    mutationId: 'duplicate-restore', baseRevision: 1, op: 'pantry.restore',
+    payload: { item, expectedAbsent: true },
+  } }));
+  assert.equal(duplicateRestore.status, 409);
+  assert.deepEqual(await duplicateRestore.json(), {
+    error: 'pantry_restore_conflict', workspace: authority,
+  });
+  assert.equal(store.current().revision, 1);
+});
+
 test('planner attribution comes from authenticated membership, not client payload', async () => {
   const store = workspaceDb();
   const response = await onRequestPatch(context(store.db, { body: {

@@ -10,7 +10,9 @@ import {
   addToPantry,
   normalizePantry,
   normalizePantryEntry,
+  pantryRecordFingerprint,
   removeFromPantry,
+  restorePantryRecord,
   updatePantryRecord,
 } from '../../docs/js/lib/pantry.js';
 
@@ -186,6 +188,12 @@ function applyOperation(workspace, operation, context) {
     case 'pantry.remove': {
       const recordId = text(payload.id, 100);
       if (recordId) {
+        const target = workspace.pantry.find((entry) => entry.id === recordId);
+        const expectedFingerprint = text(payload.expectedFingerprint, 100);
+        if (!expectedFingerprint) throw new Error('invalid_pantry_remove');
+        if (!target || pantryRecordFingerprint(target) !== expectedFingerprint) {
+          throw new Error('pantry_record_conflict');
+        }
         workspace.pantry = removeFromPantry(workspace.pantry, { id: recordId });
         break;
       }
@@ -195,6 +203,13 @@ function applyOperation(workspace, operation, context) {
         identity.countLabel = payload.countLabel;
       }
       workspace.pantry = removeFromPantry(workspace.pantry, identity);
+      break;
+    }
+    case 'pantry.restore': {
+      if (payload.expectedAbsent !== true) throw new Error('invalid_pantry_restore');
+      const restored = restorePantryRecord(workspace.pantry, payload.item);
+      if (!restored.restored) throw new Error('pantry_restore_conflict');
+      workspace.pantry = restored.pantry;
       break;
     }
     case 'cart.upsertSelection': {
@@ -381,7 +396,15 @@ export async function mutateWorkspace(db, householdId, request, context = {}) {
   }
   const recipes = request.op === 'shopping.regeneratePlanRange'
     ? await recipesForGeneration(db, householdId) : [];
-  const next = applyWorkspaceMutation(current, request, { recipes, actorSub: context.actorSub }).workspace;
+  let next;
+  try {
+    next = applyWorkspaceMutation(current, request, { recipes, actorSub: context.actorSub }).workspace;
+  } catch (error) {
+    if (['pantry_record_conflict', 'pantry_restore_conflict'].includes(error?.message)) {
+      return { status: 409, error: error.message, workspace: current };
+    }
+    throw error;
+  }
   const [result] = await db.batch([
     db.prepare(`UPDATE household_workspace SET
         revision = revision + 1, plan_json = ?, cart_json = ?, pantry_json = ?,

@@ -12,29 +12,55 @@ export const el = (sel, root = document) => root.querySelector(sel);
 export const els = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 let toastTimer;
+let activeToast = null;
+
+/** Revoke the current toast action and remove it from focus/navigation. */
+export function dismissToast() {
+  clearTimeout(toastTimer);
+  toastTimer = undefined;
+  if (!activeToast) return false;
+  const { container, action, listener } = activeToast;
+  if (action) {
+    action.removeEventListener('click', listener);
+    action.disabled = true;
+    action.remove();
+  }
+  container.classList.remove('show');
+  activeToast = null;
+  return true;
+}
+
 /** Show a transient toast message, optionally with one accessible action. */
 export function toast(msg, { actionLabel = '', onAction = null, duration = 4200 } = {}) {
   const t = $('toast');
-  if (!t) return;
-  clearTimeout(toastTimer);
+  if (!t) return () => false;
+  dismissToast();
+  let action = null;
+  let listener = null;
   if (actionLabel && typeof onAction === 'function' && t.ownerDocument?.createElement && t.replaceChildren) {
     const copy = t.ownerDocument.createElement('span');
     copy.textContent = msg;
-    const action = t.ownerDocument.createElement('button');
+    action = t.ownerDocument.createElement('button');
     action.type = 'button';
     action.dataset.toastAction = '';
     action.textContent = actionLabel;
-    action.addEventListener('click', () => {
-      clearTimeout(toastTimer);
-      t.classList.remove('show');
+    listener = () => {
+      if (activeToast?.action !== action) return;
+      dismissToast();
       void onAction();
-    }, { once: true });
+    };
+    action.addEventListener('click', listener);
     t.replaceChildren(copy, action);
   } else {
     t.textContent = msg;
   }
+  const token = { container: t, action, listener };
+  activeToast = token;
   t.classList.add('show');
-  toastTimer = setTimeout(() => t.classList.remove('show'), duration);
+  toastTimer = setTimeout(() => {
+    if (activeToast === token) dismissToast();
+  }, duration);
+  return () => activeToast === token && dismissToast();
 }
 
 /** Announce `msg` to screen readers via a singleton live region. */

@@ -3,14 +3,11 @@ import {
   isWorkspace,
   normalizeWorkspace,
   normalizeWorkspaceMutationPayload,
+  workspaceMutationRebaseDecision,
 } from './workspace-sync.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const makeMutationId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
-const SAFE_REBASE = new Set([
-  'plan.remove', 'pantry.remove', 'cart.setTargetServings', 'cart.removeSelection',
-  'shopping.removeIngredient', 'shopping.removeManual', 'shopping.clear',
-]);
 
 export async function createWorkspaceOutbox({
   repo,
@@ -232,7 +229,8 @@ export async function createWorkspaceOutbox({
           publish({ queued: true });
           return false;
         }
-        if (SAFE_REBASE.has(row.op)) {
+        const rebaseDecision = workspaceMutationRebaseDecision(row, confirmed);
+        if (rebaseDecision.safe) {
           publish({ rebased: true, queued: true });
           sendingMutationId = row.mutationId;
           try { response = await sendOnce(row); } catch { response = { ok: false, status: 0 }; }
@@ -257,16 +255,17 @@ export async function createWorkspaceOutbox({
         }
         const deliveryState = ['accepted', 'uncertain'].includes(row.deliveryState)
           ? row.deliveryState : 'rejected';
-        const failed = { ...row, status: 'failed', lastError: 'revision_conflict', deliveryState };
+        const conflictCode = rebaseDecision.code || 'revision_conflict';
+        const failed = { ...row, status: 'failed', lastError: conflictCode, deliveryState };
         try { row = await setRow(row, failed); }
         catch { rows = rows.map((item) => item.sequence === row.sequence ? failed : item); row = failed; }
         blockedSequence = row.sequence;
         discardable = deliveryState === 'rejected' && !restored.has(row.mutationId);
         status('failed', {
-          sequence: row.sequence, code: 'revision_conflict',
+          sequence: row.sequence, code: conflictCode,
           ...(discardable ? {} : { discardable: false }),
         });
-        publish({ rebased: true, queued: true });
+        publish({ rebased: rebaseDecision.safe, queued: true });
         return false;
       }
       const responseStatus = Number(response?.status || 0);
@@ -346,7 +345,18 @@ export async function createWorkspaceOutbox({
       persisting.add(provisional.mutationId);
       neverAttempted.add(provisional.mutationId);
       rows.push(provisional);
-      publish({ queued: true, optimistic: true });
+      try {
+        publish({ queued: true, optimistic: true });
+      } catch (error) {
+        rows = rows.filter((item) => item !== provisional);
+        persisting.delete(provisional.mutationId);
+        neverAttempted.delete(provisional.mutationId);
+        localGenerations.delete(provisional.mutationId);
+        const code = ['pantry_record_conflict', 'pantry_restore_conflict'].includes(error?.message)
+          ? error.message : 'invalid_mutation';
+        status('failed', { code });
+        return false;
+      }
       let row;
       try {
         const persisted = persistence.then(() => repo.enqueue(provisional));

@@ -11,8 +11,10 @@ import {
   normalizePantryEntry,
   formatPantryAmount,
   pantryEditorState,
+  pantryRecordFingerprint,
   pantryRecordFromEditor,
   pantryUnitsForFamily,
+  restorePantryRecord,
   updatePantryRecord,
 } from '../lib/pantry.js';
 import { save as persist } from '../lib/store.js';
@@ -192,7 +194,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     const unit = typeof item === 'object' ? item?.unit : undefined;
     const countLabel = typeof item === 'object' ? item?.countLabel : undefined;
     if (mutate) void mutate('pantry.remove', {
-      ...(id ? { id } : {}),
+      ...(id ? { id, expectedFingerprint: pantryRecordFingerprint(item) } : {}),
       ...(!id ? {
         name,
         ...(unit ? { unit } : {}),
@@ -226,16 +228,27 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     lastEditorUnit = select.value;
   }
 
-  function fillEditor(values) {
+  function fillEditor(values, record = null) {
     const name = get('pantry-item-name');
     const quantity = get('pantry-item-quantity');
     const family = get('pantry-item-family');
     const raw = get('pantry-item-raw');
+    const evidenceList = get('pantry-item-raw-evidence');
     if (name) name.value = values.name || '';
     if (quantity) quantity.value = values.quantity === '' ? '' : String(values.quantity);
     if (family) family.value = EDITOR_FAMILIES.has(values.family) ? values.family : 'unknown';
     renderEditorUnits(family?.value || 'unknown', values.unit);
     if (raw) raw.textContent = values.raw || 'No original text — this item is new.';
+    if (evidenceList) {
+      const earlier = [...new Set(Array.isArray(record?.rawEvidence) ? record.rawEvidence : [])]
+        .filter((value) => value && value !== values.raw);
+      evidenceList.replaceChildren(...earlier.map((value) => {
+        const item = document.createElement('li');
+        item.textContent = value;
+        return item;
+      }));
+      evidenceList.hidden = earlier.length === 0;
+    }
   }
 
   function openEditor(recordId = null, raw = '') {
@@ -266,7 +279,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     setStatus('');
     fillEditor(record ? pantryEditorState(record) : {
       name: '', quantity: '', family: 'unknown', unit: '', raw: raw.trim(),
-    });
+    }, record);
     modal.hidden = false;
     modal.classList?.add('open');
     if (overlay) {
@@ -277,7 +290,8 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     return true;
   }
 
-  function closeEditor() {
+  function closeEditor({ force = false } = {}) {
+    if (editorPending && !force) return false;
     const modal = get('pantry-item-modal');
     const overlay = get('pantry-item-overlay');
     if (modal) { modal.hidden = true; modal.classList?.remove('open'); }
@@ -293,6 +307,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     editorReturnId = null;
     editorPending = false;
     focusTarget?.focus?.();
+    return true;
   }
 
   function editorValues() {
@@ -380,7 +395,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       const sourceInput = get('pantry-input');
       if (sourceInput) sourceInput.value = '';
     }
-    closeEditor();
+    closeEditor({ force: true });
     toast(wasEdit ? `Updated "${item.displayName}"` : `Added "${item.displayName}"`);
     return true;
   }
@@ -424,12 +439,13 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     }
     const before = state.pantry;
     const next = removeFromPantry(before, { id: removed.id });
+    const expectedFingerprint = pantryRecordFingerprint(removed);
     setEditorPending(true, 'Removing on this device…');
     state.pantry = next;
     publish();
     let accepted = true;
     try {
-      if (mutate) accepted = await mutate('pantry.remove', { id: removed.id });
+      if (mutate) accepted = await mutate('pantry.remove', { id: removed.id, expectedFingerprint });
     } catch {
       accepted = false;
     }
@@ -437,31 +453,37 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       if (state.pantry === next) state.pantry = before;
       publish();
       setEditorPending(false);
-      setError('This item could not be removed. It has been restored; try again when sync recovers.');
+      setError('This item could not be removed because it changed or sync failed. It has been restored; review it and try again.');
       return false;
     }
-    closeEditor();
+    closeEditor({ force: true });
     toast(`Removed "${removed.displayName}".`, {
       actionLabel: 'Undo',
       onAction: async () => {
         const undoBefore = state.pantry;
-        const restored = addToPantry(undoBefore, removed, { updatedAt: Date.now() });
-        if (!restored.added || !restored.item) {
-          toast(`"${removed.displayName}" is already in the Pantry.`);
+        let restored;
+        try {
+          restored = restorePantryRecord(undoBefore, removed);
+        } catch {
+          toast(`Cannot restore "${removed.displayName}" because the shared Pantry changed. Review the current item first.`);
+          return;
+        }
+        if (restored.alreadyPresent) {
+          toast(`"${removed.displayName}" is already restored in the Pantry.`);
           return;
         }
         state.pantry = restored.pantry;
         publish();
         let undoAccepted = true;
         try {
-          if (mutate) undoAccepted = await mutate('pantry.add', { item: removed });
+          if (mutate) undoAccepted = await mutate('pantry.restore', { item: removed, expectedAbsent: true });
         } catch {
           undoAccepted = false;
         }
         if (undoAccepted === false) {
           if (state.pantry === restored.pantry) state.pantry = undoBefore;
           publish();
-          toast(`Could not restore "${removed.displayName}". Check sync status and try again.`);
+          toast(`Could not restore "${removed.displayName}" because the shared Pantry changed. Review the current item and try again.`);
           return;
         }
         toast(`Restored "${removed.displayName}".`);
@@ -474,11 +496,9 @@ export function initPantry({ state, document = globalThis.document, onChange = n
   function trapEditorFocus(event) {
     if (!modalOpen()) return;
     if (event.key === 'Escape') {
-      if (!editorPending) {
-        event.preventDefault();
-        event.stopImmediatePropagation?.();
-        closeEditor();
-      }
+      event.preventDefault();
+      event.stopImmediatePropagation?.();
+      closeEditor();
       return;
     }
     if (event.key !== 'Tab') return;

@@ -50,7 +50,8 @@ test('Pantry editor save preserves identity and evidence metadata while applying
   assert.equal(corrected.unit, 'ounce');
   assert.equal(corrected.raw, '16 ounces Avocado Oil');
   assert.deepEqual(corrected.rawEvidence, original.rawEvidence, 'the reducer owns lossless evidence merging');
-  assert.equal(corrected.confidence, original.confidence);
+  assert.equal(corrected.confidence, 1, 'a human-entered amount is trusted over extraction confidence');
+  assert.equal(corrected.amountSource, 'manual');
   assert.equal(corrected.normalizationVersion, original.normalizationVersion);
   assert.equal(corrected.updatedAt, 200);
 });
@@ -63,15 +64,50 @@ test('Not sure clears trusted quantity without dropping correction metadata', ()
   assert.equal(corrected.amountState, 'unknown');
   assert.equal(corrected.quantity, null);
   assert.equal(corrected.unit, 'qualitative');
+  assert.equal(corrected.raw, '2 cups Olive Oil', 'Not sure keeps the useful original line primary');
+  assert.deepEqual(corrected.rawEvidence, ['olive oil', '2 cups Olive Oil']);
   assert.equal(corrected.confidence, original.confidence);
   assert.equal(corrected.normalizationVersion, original.normalizationVersion);
   assert.equal(corrected.updatedAt, 200);
+});
+
+test('manual Count, Solid, and Fluid corrections override low extraction confidence durably', () => {
+  const unknownEggs = normalizePantry([{
+    id: 'pantry-eggs', raw: 'eggs', name: 'egg', displayName: 'Eggs', quantity: null,
+    unit: 'qualitative', amountState: 'unknown', confidence: 0.4,
+  }])[0];
+  const cases = [
+    [{ name: 'Eggs', quantity: 12, family: 'count', unit: 'item' }, 12, 'count'],
+    [{ name: 'Flour', quantity: 2, family: 'solid', unit: 'pound' }, 32, 'ounce'],
+    [{ name: 'Olive Oil', quantity: 2, family: 'fluid', unit: 'cup' }, 16, 'ounce'],
+  ];
+  for (const [editor, quantity, unit] of cases) {
+    const corrected = pantryRecordFromEditor(editor, unknownEggs, { updatedAt: 200 });
+    const reopened = normalizePantry([corrected])[0];
+    assert.equal(reopened.amountState, 'known', editor.family);
+    assert.equal(reopened.quantity, quantity, editor.family);
+    assert.equal(reopened.unit, unit, editor.family);
+    assert.equal(reopened.confidence, 1, editor.family);
+    assert.equal(reopened.amountSource, 'manual', editor.family);
+  }
+});
+
+test('unsafe Pantry metadata is normalized to bounded defaults', () => {
+  const [record] = normalizePantry([{
+    raw: '3 eggs', name: 'egg', displayName: 'Eggs', quantity: 3, unit: 'count',
+    confidence: 1, normalizationVersion: Number.MAX_SAFE_INTEGER, updatedAt: Number.MAX_VALUE,
+  }]);
+  assert.equal(record.normalizationVersion, 1);
+  assert.equal(record.updatedAt, 0);
 });
 
 test('Pantry editor visibly rejects blank names and invalid trusted amounts', () => {
   assert.throws(() => pantryRecordFromEditor({ name: ' ', quantity: 1, family: 'count', unit: 'item' }, null), /name/i);
   assert.throws(() => pantryRecordFromEditor({ name: 'Eggs', quantity: 0, family: 'count', unit: 'item' }, null), /amount/i);
   assert.throws(() => pantryRecordFromEditor({ name: 'Eggs', quantity: 2, family: 'fluid', unit: 'bottle' }, null), /unit/i);
+  for (const quantity of [Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER]) {
+    assert.throws(() => pantryRecordFromEditor({ name: 'Eggs', quantity, family: 'count', unit: 'item' }, null), /amount/i);
+  }
 });
 
 function editorDom() {
@@ -85,6 +121,7 @@ function editorDom() {
         <input id="pantry-item-name"><input id="pantry-item-quantity" type="number">
         <select id="pantry-item-family"><option value="count">Count</option><option value="solid">Solid</option><option value="fluid">Fluid</option><option value="unknown">Not sure</option></select>
         <select id="pantry-item-unit"></select><output id="pantry-item-raw"></output>
+        <ul id="pantry-item-raw-evidence" hidden></ul>
         <p id="pantry-item-error"></p><p id="pantry-item-status"></p>
         <button id="pantry-item-save" type="submit">Save</button>
         <button id="pantry-item-remove" type="button">Remove from Pantry</button>
@@ -177,14 +214,69 @@ test('remove requires confirmation, targets the exact ID, and offers undo', asyn
   click(dom.window, dom.window.document.querySelector('[data-action="confirm-pantry-remove"]'));
   await tick();
   assert.deepEqual(state.pantry.map(({ id }) => id), [sibling.id]);
-  assert.deepEqual(mutations[0], { op: 'pantry.remove', payload: { id: target.id } });
+  assert.equal(mutations[0].op, 'pantry.remove');
+  assert.equal(mutations[0].payload.id, target.id);
+  assert.match(mutations[0].payload.expectedFingerprint, /^pantry-v1:/);
   const undo = dom.window.document.querySelector('#toast [data-toast-action]');
   assert.ok(undo, 'removal toast includes an Undo action');
   click(dom.window, undo);
   await tick();
   assert.equal(state.pantry.some((item) => item.id === target.id), true);
-  assert.equal(mutations[1].op, 'pantry.add');
+  assert.equal(mutations[1].op, 'pantry.restore');
+  assert.equal(mutations[1].payload.expectedAbsent, true);
   assert.equal(mutations[1].payload.item.id, target.id);
+});
+
+test('Undo refuses a remotely recreated same ID instead of sending stale add or duplicating it', async () => {
+  const dom = editorDom();
+  globalThis.document = dom.window.document;
+  globalThis.window = dom.window;
+  globalThis.localStorage = dom.window.localStorage;
+  const target = oliveOil();
+  const state = { pantry: [target], recipes: [] };
+  const mutations = [];
+  const controller = initPantry({
+    state, document: dom.window.document,
+    mutate: async (op, payload) => { mutations.push({ op, payload }); return true; },
+  });
+  controller.render();
+  click(dom.window, dom.window.document.querySelector(`[data-pantry-id="${target.id}"]`));
+  click(dom.window, dom.window.document.getElementById('pantry-item-remove'));
+  click(dom.window, dom.window.document.querySelector('[data-action="confirm-pantry-remove"]'));
+  await tick();
+  const remote = normalizePantry([{ ...target, raw: '3 cups Olive Oil', quantity: 24, updatedAt: 300 }])[0];
+  state.pantry = [remote];
+  controller.render();
+  click(dom.window, dom.window.document.querySelector('#toast [data-toast-action]'));
+  await tick();
+  assert.equal(mutations.length, 1, 'Undo sends no compensation after authority reused the stable ID');
+  assert.deepEqual(state.pantry.map(({ id, quantity }) => ({ id, quantity })), [{ id: target.id, quantity: 24 }]);
+  assert.match(dom.window.document.getElementById('toast').textContent, /changed.*cannot.*restore|cannot.*restore.*changed/i);
+});
+
+test('Escape is consumed while save is pending so later handlers cannot hide feedback', async () => {
+  const dom = editorDom();
+  globalThis.document = dom.window.document;
+  globalThis.window = dom.window;
+  globalThis.localStorage = dom.window.localStorage;
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const state = { pantry: [oliveOil()], recipes: [] };
+  const controller = initPantry({ state, document: dom.window.document, mutate: () => pending });
+  controller.render();
+  click(dom.window, dom.window.document.querySelector('[data-pantry-id="pantry-olive-oil"]'));
+  dom.window.document.getElementById('pantry-item-name').value = 'Draft Oil';
+  dom.window.document.getElementById('pantry-item-form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick();
+  let escapedToGlobal = false;
+  dom.window.document.addEventListener('keydown', () => { escapedToGlobal = true; });
+  dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  assert.equal(escapedToGlobal, false);
+  assert.equal(dom.window.document.getElementById('pantry-item-modal').hidden, false);
+  assert.equal(dom.window.document.getElementById('pantry-item-name').value, 'Draft Oil');
+  release(false);
+  await tick();
+  assert.match(dom.window.document.getElementById('pantry-item-error').textContent, /could not be saved/i);
 });
 
 test('save failure rolls back optimistic state but keeps modal edits and visible status', async () => {

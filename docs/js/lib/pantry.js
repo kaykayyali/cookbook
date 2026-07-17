@@ -120,6 +120,10 @@ function plainDisplayName(value, fallback) {
 
 export const PANTRY_RECORD_VERSION = 1;
 export const PANTRY_CONFIDENCE_THRESHOLD = 0.7;
+const MAX_PANTRY_NORMALIZATION_VERSION = 1_000;
+const MAX_PANTRY_TIMESTAMP = 8_640_000_000_000_000;
+const MAX_PANTRY_EDITOR_AMOUNT = 1_000_000;
+const MAX_PANTRY_CANONICAL_QUANTITY = 1_000_000_000;
 export const PANTRY_RAW_EVIDENCE_LIMITS = Object.freeze({
   maxPrimaryBytes: 512,
   maxEntryBytes: 512,
@@ -249,8 +253,11 @@ export function pantryRecordFromEditor(editor, original = null, options = {}) {
     name,
     displayName,
     category: INGREDIENT_CATEGORIES.includes(source.category) ? source.category : normalizeIngredient(displayName).category,
-    confidence: Number.isFinite(source.confidence) ? source.confidence : 0.95,
-    normalizationVersion: Number.isInteger(source.normalizationVersion) && source.normalizationVersion > 0
+    confidence: family === 'unknown'
+      ? (Number.isFinite(source.confidence) ? source.confidence : 0.95) : 1,
+    amountSource: 'manual',
+    normalizationVersion: Number.isSafeInteger(source.normalizationVersion)
+      && source.normalizationVersion > 0 && source.normalizationVersion <= MAX_PANTRY_NORMALIZATION_VERSION
       ? source.normalizationVersion : PANTRY_RECORD_VERSION,
     updatedAt,
     rawEvidence: Array.isArray(source.rawEvidence) ? [...source.rawEvidence] : legacyRawValues(source.raw),
@@ -258,7 +265,7 @@ export function pantryRecordFromEditor(editor, original = null, options = {}) {
   if (family === 'unknown') {
     return {
       ...metadata,
-      raw: displayName,
+      raw: typeof source.raw === 'string' && source.raw.trim() ? source.raw.trim() : displayName,
       amountState: 'unknown',
       quantity: null,
       measurementFamily: 'unknown',
@@ -270,7 +277,9 @@ export function pantryRecordFromEditor(editor, original = null, options = {}) {
   const descriptor = EDITOR_UNIT_BY_VALUE.get(editor?.unit || EDITOR_DEFAULT_UNIT[family]);
   if (!descriptor || descriptor.family !== family) throw new Error('Choose a valid unit for this measurement family.');
   const amount = Number(editor?.quantity);
-  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Enter an amount greater than zero.');
+  if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_PANTRY_EDITOR_AMOUNT) {
+    throw new Error(`Enter an amount greater than zero and no more than ${MAX_PANTRY_EDITOR_AMOUNT}.`);
+  }
   const canonicalQuantity = editorRound(amount * descriptor.factor);
   return {
     ...metadata,
@@ -285,8 +294,11 @@ export function pantryRecordFromEditor(editor, original = null, options = {}) {
 }
 
 const pantryKey = (item) => `${item.name}\u0000${item.unit}\u0000${item.unit === 'count' ? item.countLabel : ''}`;
-const finiteTimestamp = (value) => Number.isFinite(Number(value)) && Number(value) >= 0
-  ? Math.round(Number(value)) : null;
+const finiteTimestamp = (value) => {
+  const rounded = Math.round(Number(value));
+  return Number.isSafeInteger(rounded) && rounded >= 0 && rounded <= MAX_PANTRY_TIMESTAMP
+    ? rounded : null;
+};
 
 function safeRecordId(value) {
   const candidate = typeof value === 'string' ? value.trim() : '';
@@ -495,7 +507,8 @@ export function normalizePantryEntry(value, options = {}) {
   const parsedUnit = ['count', 'ounce', 'qualitative'].includes(source.unit) ? source.unit : fallback.unit;
   const unit = ambiguousRange ? 'qualitative' : parsedUnit;
   const quantity = unit === 'qualitative' ? null : Number(source.quantity);
-  if (unit !== 'qualitative' && (!Number.isFinite(quantity) || quantity < 0)) return null;
+  if (unit !== 'qualitative'
+      && (!Number.isFinite(quantity) || quantity < 0 || quantity > MAX_PANTRY_CANONICAL_QUANTITY)) return null;
   const name = canonicalName(source.name);
   if (!name || name === 'uncertain ingredient') return null;
   const countLabel = unit === 'count' && COUNT_LABELS.includes(source.countLabel)
@@ -529,9 +542,11 @@ export function normalizePantryEntry(value, options = {}) {
     countLabel,
     category: INGREDIENT_CATEGORIES.includes(source.category) ? source.category : fallback.category,
     confidence,
-    normalizationVersion: Number.isInteger(source.normalizationVersion) && source.normalizationVersion > 0
+    normalizationVersion: Number.isSafeInteger(source.normalizationVersion)
+      && source.normalizationVersion > 0 && source.normalizationVersion <= MAX_PANTRY_NORMALIZATION_VERSION
       ? source.normalizationVersion : PANTRY_RECORD_VERSION,
     updatedAt,
+    ...(source.amountSource === 'manual' ? { amountSource: 'manual' } : {}),
   };
   const raw = rankedPrimary(record, evidenceText(value, source, evidence), evidence);
   return {
@@ -539,6 +554,41 @@ export function normalizePantryEntry(value, options = {}) {
     raw,
     rawEvidence: boundedEvidence(evidence, raw),
   };
+}
+
+/** Stable optimistic/server precondition for one exact Pantry record version. */
+export function pantryRecordFingerprint(value) {
+  const record = normalizePantryEntry(value);
+  if (!record) return '';
+  const version = JSON.stringify([
+    record.id, record.raw, record.rawEvidence, record.name, record.displayName,
+    record.amountState, record.quantity, record.measurementFamily, record.unit,
+    record.kind, record.countLabel, record.category, record.confidence,
+    record.amountSource || '', record.normalizationVersion, record.updatedAt,
+  ]);
+  const first = stableHash(version, 2166136261).toString(16).padStart(8, '0');
+  const second = stableHash(version, 2246822519).toString(16).padStart(8, '0');
+  return `pantry-v1:${first}${second}`;
+}
+
+/** Restore only when both the stable ID and semantic identity remain absent. */
+export function restorePantryRecord(pantry, value) {
+  const current = normalizePantry(pantry);
+  const item = normalizePantryEntry(value);
+  if (!item || !safeRecordId(item.id)) throw new Error('invalid_pantry_item');
+  const sameId = current.find((entry) => entry.id === item.id);
+  if (sameId) {
+    if (pantryRecordFingerprint(sameId) === pantryRecordFingerprint(item)) {
+      return { pantry: current, restored: false, alreadyPresent: true, item: sameId };
+    }
+    throw new Error('pantry_restore_conflict');
+  }
+  if (current.some((entry) => pantryKey(entry) === pantryKey(item))) {
+    throw new Error('pantry_restore_conflict');
+  }
+  const next = [...current, item]
+    .sort((a, b) => a.name.localeCompare(b.name) || a.unit.localeCompare(b.unit));
+  return { pantry: next, restored: true, alreadyPresent: false, item };
 }
 
 function mergeRecordEvidence(existing, incoming, { primary = mergePrimary(existing, incoming) } = {}) {

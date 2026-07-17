@@ -622,7 +622,7 @@
 						</label>
 						<label class="form-group" id="pantry-item-quantity-group" for="pantry-item-quantity">
 							<span>Amount</span>
-							<input class="input" id="pantry-item-quantity" name="quantity" type="number" min="0.000001" step="any" inputmode="decimal" />
+							<input class="input" id="pantry-item-quantity" name="quantity" type="number" min="0.000001" max="1000000" step="any" inputmode="decimal" />
 						</label>
 						<label class="form-group" id="pantry-item-unit-group" for="pantry-item-unit">
 							<span>Unit</span>
@@ -632,6 +632,7 @@
 					<section class="pantry-original" aria-labelledby="pantry-original-title">
 						<strong id="pantry-original-title">Original text</strong>
 						<output id="pantry-item-raw"></output>
+						<ul class="pantry-original-evidence" id="pantry-item-raw-evidence" aria-label="Earlier original text" hidden></ul>
 						<small>Kept as correction context and never replaced silently.</small>
 					</section>
 					<p class="pantry-item-error" id="pantry-item-error" role="alert" hidden></p>

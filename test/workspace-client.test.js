@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyWorkspaceOperation, createWorkspaceSync, isWorkspace } from '../docs/js/lib/workspace-sync.js';
-import { PANTRY_RAW_EVIDENCE_LIMITS } from '../docs/js/lib/pantry.js';
+import { PANTRY_RAW_EVIDENCE_LIMITS, pantryRecordFingerprint } from '../docs/js/lib/pantry.js';
 
 const workspace = (overrides = {}) => ({
   householdId: 'our-home', revision: 0, plan: [], cart: [], pantry: [],
@@ -98,24 +98,49 @@ test('mutation applies optimistically and confirms the authoritative response', 
   assert.equal(changes.at(-1).meta.optimistic, false);
 });
 
-test('revision conflict rebases the absolute operation and retries once', async () => {
+test('revision conflict rebases a guarded Pantry remove only when the target is unchanged', async () => {
   const sent = [];
+  const initial = workspace({ pantry: ['flour'] });
+  const target = applyWorkspaceOperation(initial, { op: 'unknown.noop', payload: {} }).pantry[0];
   const sync = createWorkspaceSync({
-    initial: workspace({ pantry: ['flour'] }), makeId: () => 'm1',
+    initial, makeId: () => 'm1',
     send: async (request) => {
       sent.push(request);
       if (sent.length === 1) return {
-        ok: false, status: 409, workspace: workspace({ revision: 4, pantry: ['flour', 'salt'] }),
+        ok: false, status: 409, workspace: workspace({ revision: 4, pantry: [target, 'salt'] }),
       };
       return { ok: true, workspace: workspace({ revision: 5, pantry: ['salt'] }) };
     },
   });
-  assert.equal(await sync.mutate('pantry.remove', { name: 'flour' }), true);
+  assert.equal(await sync.mutate('pantry.remove', {
+    id: target.id, expectedFingerprint: pantryRecordFingerprint(target),
+  }), true);
   assert.equal(sent.length, 2);
   assert.equal(sent[0].baseRevision, 0);
   assert.equal(sent[1].baseRevision, 4);
   assert.equal(sent[1].mutationId, 'm1');
   assert.deepEqual(sync.current().pantry.map((item) => item.name), ['salt']);
+});
+
+test('stale Pantry remove never rebases over a remote update to the same stable record', async () => {
+  const initial = workspace({ pantry: [{
+    id: 'oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1, updatedAt: 10,
+  }] });
+  const target = applyWorkspaceOperation(initial, { op: 'unknown.noop', payload: {} }).pantry[0];
+  const remote = workspace({ revision: 1, pantry: [{ ...target, raw: '3 cups Olive Oil', quantity: 24, updatedAt: 20 }] });
+  const sent = [];
+  const errors = [];
+  const sync = createWorkspaceSync({
+    initial, makeId: () => 'remove-stale', onError: (error) => errors.push(error),
+    send: async (request) => { sent.push(request); return { ok: false, status: 409, workspace: remote }; },
+  });
+  assert.equal(await sync.mutate('pantry.remove', {
+    id: target.id, expectedFingerprint: pantryRecordFingerprint(target),
+  }), false);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sync.current().pantry.map(({ id, quantity }) => ({ id, quantity })), [{ id: 'oil', quantity: 24 }]);
+  assert.equal(errors[0].code, 'pantry_record_conflict');
 });
 
 test('older response cannot overwrite a newer confirmed revision', async () => {

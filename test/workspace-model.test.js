@@ -146,6 +146,34 @@ test('authoritative Pantry removal distinguishes incompatible count package labe
   ]);
 });
 
+test('pantry.restore conditionally restores the exact stable record without aggregation', () => {
+  const item = {
+    id: 'stable-oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1, amountSource: 'manual',
+  };
+  const restored = applyWorkspaceMutation(emptyWorkspace('our-home'), mutation('restore-oil', 'pantry.restore', {
+    item, expectedAbsent: true,
+  })).workspace;
+  assert.deepEqual(restored.pantry.map(({ id, quantity }) => ({ id, quantity })), [{ id: 'stable-oil', quantity: 16 }]);
+});
+
+test('pantry.restore rejects stable-ID and semantic collisions instead of repairing or aggregating', () => {
+  const removed = {
+    id: 'stable-oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1,
+  };
+  for (const authority of [
+    [removed],
+    [{ ...removed, raw: '3 cups Olive Oil', quantity: 24 }],
+    [{ ...removed, id: 'remote-oil', raw: '3 cups Olive Oil', quantity: 24 }],
+  ]) {
+    assert.throws(() => applyWorkspaceMutation(
+      { ...emptyWorkspace('our-home'), pantry: authority },
+      mutation('restore-conflict', 'pantry.restore', { item: removed, expectedAbsent: true }),
+    ), /pantry_restore_conflict/);
+  }
+});
+
 test('invalid authoritative transfer payload fails without poisoning its source marker', () => {
   const workspace = emptyWorkspace('our-home');
   assert.throws(() => applyWorkspaceMutation(workspace, mutation('bad-buy', 'pantry.add', {

@@ -4,7 +4,7 @@ import { indexedDB } from 'fake-indexeddb';
 import { createWorkspaceOutbox } from '../docs/js/lib/workspace-outbox.js';
 import { applyWorkspaceOperation } from '../docs/js/lib/workspace-sync.js';
 import { openOfflineDb } from '../docs/js/lib/offline-db.js';
-import { PANTRY_RAW_EVIDENCE_LIMITS } from '../docs/js/lib/pantry.js';
+import { PANTRY_RAW_EVIDENCE_LIMITS, pantryRecordFingerprint } from '../docs/js/lib/pantry.js';
 
 const base = (overrides = {}) => ({
   householdId: 'our-home', revision: 0, plan: [], cart: [], pantry: [], shoppingChecked: {},
@@ -714,4 +714,70 @@ test('remote Pantry removal blocks an offline update without crashing replay', a
   assert.equal(manager.pending(), 1);
   assert.deepEqual(manager.current().pantry, [], 'remote deletion remains visible while the failed edit awaits discard');
   assert.equal(statuses.at(-1).code, 'revision_conflict');
+});
+
+test('durable Pantry restore survives offline reload with the same stable ID', async () => {
+  const repo = memoryRepo();
+  let manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => false,
+    makeId: () => 'restore-offline',
+  });
+  const removed = {
+    id: 'oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1,
+  };
+  assert.equal(await manager.mutate('pantry.restore', { item: removed, expectedAbsent: true }), true);
+  manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => false,
+  });
+  assert.deepEqual(manager.current().pantry.map(({ id, quantity }) => ({ id, quantity })), [{ id: 'oil', quantity: 16 }]);
+});
+
+test('durable Pantry restore fails closed before persistence when expected-absent is already false', async () => {
+  const initial = base({ pantry: [{
+    id: 'oil', raw: '3 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 24, unit: 'ounce', kind: 'divisible', confidence: 1,
+  }] });
+  const repo = memoryRepo(initial);
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => false,
+    makeId: () => 'restore-conflict-local',
+  });
+  const stale = { ...initial.pantry[0], raw: '2 cups Olive Oil', quantity: 16 };
+  assert.equal(await manager.mutate('pantry.restore', { item: stale, expectedAbsent: true }), false);
+  assert.equal(manager.pending(), 0);
+  assert.deepEqual(manager.current().pantry.map(({ quantity }) => quantity), [24]);
+  assert.deepEqual(await repo.listOutbox(), []);
+});
+
+test('durable Pantry remove blocks a same-record remote update instead of auto-rebasing', async () => {
+  const initial = base({ revision: 1, pantry: [{
+    id: 'oil', raw: '2 cups Olive Oil', name: 'olive oil', displayName: 'Olive Oil',
+    quantity: 16, unit: 'ounce', kind: 'divisible', confidence: 1, updatedAt: 10,
+  }] });
+  const target = applyWorkspaceOperation(initial, { op: 'unknown.noop', payload: {} }).pantry[0];
+  const repo = memoryRepo(initial);
+  let online = false;
+  let sends = 0;
+  const statuses = [];
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => online,
+    makeId: () => 'conditional-remove', onStatus: (status) => statuses.push(status),
+    send: async () => {
+      sends += 1;
+      return { ok: false, status: 409, workspace: base({
+        revision: 2,
+        pantry: [{ ...target, raw: '3 cups Olive Oil', quantity: 24, updatedAt: 20 }],
+      }) };
+    },
+  });
+  await manager.mutate('pantry.remove', {
+    id: target.id, expectedFingerprint: pantryRecordFingerprint(target),
+  });
+  online = true;
+  assert.equal(await manager.drain(), false);
+  assert.equal(sends, 1);
+  assert.equal(manager.pending(), 1);
+  assert.deepEqual(manager.current().pantry.map(({ id, quantity }) => ({ id, quantity })), [{ id: 'oil', quantity: 24 }]);
+  assert.equal(statuses.at(-1).code, 'pantry_record_conflict');
 });
