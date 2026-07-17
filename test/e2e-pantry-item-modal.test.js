@@ -130,8 +130,10 @@ async function createPantryPage(viewport = { width: 1440, height: 900 }) {
     if (response.status() >= 400) browserErrors.push(`${response.status()} ${response.url()}`);
   });
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
+  await page.waitForFunction(() => document.body.dataset.panel === 'week', null, { timeout: 60_000 });
   await page.locator('button[data-panel="pantry"]').click();
-  await page.locator('[data-pantry-id="pantry-olive-oil"]').waitFor();
+  await page.waitForFunction(() => document.body.dataset.panel === 'pantry', null, { timeout: 60_000 });
+  await page.locator('[data-pantry-id="pantry-olive-oil"]').waitFor({ state: 'visible', timeout: 60_000 });
   return { context, page, browserErrors, mutations, workspace: () => workspace };
 }
 

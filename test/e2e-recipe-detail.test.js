@@ -155,9 +155,11 @@ async function createRecipePage(viewport) {
     if (response.status() >= 400) browserErrors.push(`${response.status()} ${response.url()}`);
   });
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
+  await page.waitForFunction(() => document.body.dataset.panel === 'week', null, { timeout: 60_000 });
   await page.locator('button[data-panel="recipes"]').click();
+  await page.waitForFunction(() => document.body.dataset.panel === 'recipes', null, { timeout: 60_000 });
   const card = page.locator(`.recipe-card[data-id="${RECIPE_ID}"]`);
-  await card.locator('.badge').first().waitFor();
+  await card.locator('.badge').first().waitFor({ state: 'visible', timeout: 60_000 });
   assert.deepEqual(await card.locator('.badge').allTextContents(), [
     'Dinner · Weeknight',
     'Italian · American',
