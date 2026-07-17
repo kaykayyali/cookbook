@@ -1,6 +1,7 @@
 import { fetchWorkspace, mutateWorkspace } from './api.js';
 import { createWorkspaceSync } from './workspace-sync.js';
 import { createWorkspaceOutbox } from './workspace-outbox.js';
+import { createSyncStatusPresenter } from './sync-status.js';
 
 function snapshot(state) {
   return {
@@ -84,17 +85,16 @@ async function initDurableRuntime({
 }) {
   const banner = document?.getElementById('sync-status');
   let failedSequence = null;
+  const statusPresenter = createSyncStatusPresenter({
+    banner,
+    messageSelector: '[data-sync-message]',
+    retrySelector: '[data-action="retry-sync"]',
+    discardSelector: '[data-action="discard-sync"]',
+    noun: 'change',
+  });
   const renderStatus = ({ state: status, pending, sequence }) => {
     failedSequence = sequence || null;
-    if (!banner) return;
-    banner.hidden = status === 'synced' && !pending;
-    const message = banner.querySelector('[data-sync-message]');
-    if (message) message.textContent = status === 'failed'
-      ? `A saved change needs attention (${pending} pending).`
-      : status === 'offline' ? `Offline — ${pending || 0} saved change${pending === 1 ? '' : 's'} waiting.`
-        : `Syncing ${pending || 0} saved change${pending === 1 ? '' : 's'}…`;
-    banner.querySelector('[data-action="retry-sync"]')?.toggleAttribute('hidden', status !== 'failed');
-    banner.querySelector('[data-action="discard-sync"]')?.toggleAttribute('hidden', status !== 'failed');
+    statusPresenter.update({ status, pending });
   };
   const manager = await createWorkspaceOutbox({
     repo,

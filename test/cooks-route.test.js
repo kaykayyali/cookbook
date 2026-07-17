@@ -42,14 +42,18 @@ test('mark cooked is idempotent and shared history returns the event', async () 
   assert.equal(history.events[0].createdBySub, 'kay');
 });
 
-test('reaction route ignores spoofed member identity and updates only the caller', async () => {
+test('star-review route ignores spoofed member identity and updates only the caller', async () => {
   const store = memoryStore();
   await onRequestPost(context(store, 'POST', { eventId: 'event-1', recipeId: 'r1', cookedAt: 1000, participants: ['kay'], servings: 2 }));
   const response = await onRequestPatch(context(store, 'PATCH', {
-    eventId: 'event-1', reaction: { memberSub: 'gloria', reaction: 'loved', note: 'Again please' },
+    eventId: 'event-1', reaction: { memberSub: 'gloria', taste: 5, complexity: 2, review: 'Again please' },
   }));
   assert.equal(response.status, 200);
-  assert.equal([...store.reactions.values()][0].memberSub, 'kay');
+  const saved = [...store.reactions.values()][0];
+  assert.equal(saved.memberSub, 'kay');
+  assert.equal(saved.taste, 5);
+  assert.equal(saved.complexity, 2);
+  assert.equal(saved.review, 'Again please');
 });
 
 test('either household member can correct history with revision CAS', async () => {
@@ -57,10 +61,12 @@ test('either household member can correct history with revision CAS', async () =
   await onRequestPost(context(store, 'POST', { eventId: 'event-1', recipeId: 'r1', cookedAt: 1000, participants: ['kay'], servings: 2 }));
   const response = await onRequestPatch(context(store, 'PATCH', {
     action: 'correct', eventId: 'event-1', eventRevision: 1, cookedAt: 1200,
-    participants: ['kay', 'gloria'], cookSub: 'gloria', servings: 4, notes: 'Corrected',
+    participants: ['kay', 'gloria'], cookSub: 'gloria', servings: 4, occasion: 'Anniversary dinner',
   }, { auth: { sub: 'gloria' } }));
   assert.equal(response.status, 200);
-  assert.equal((await response.json()).event.revision, 2);
+  const corrected = (await response.json()).event;
+  assert.equal(corrected.revision, 2);
+  assert.equal(corrected.occasion, 'Anniversary dinner');
   const stale = await onRequestPatch(context(store, 'PATCH', {
     action: 'correct', eventId: 'event-1', eventRevision: 1, cookedAt: 1200,
     participants: ['kay'], servings: 2,

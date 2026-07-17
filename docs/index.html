@@ -481,6 +481,12 @@
 					<label class="ready-toggle"><input id="post-cook-reminder" type="checkbox" class="checkbox" /> Remind me to rate a meal after cooking</label>
 				</div>
 
+				<div class="settings-section">
+					<p class="settings-section-label">Interface sounds</p>
+					<p class="settings-hint">A quiet click makes controls feel responsive. This preference stays on this device.</p>
+					<label class="ready-toggle"><input id="interface-sound-toggle" type="checkbox" class="checkbox" /> Button click sounds</label>
+				</div>
+
 				<div class="settings-section" data-tour-section="guide">
 					<p class="settings-section-label">Guide</p>
 					<p class="settings-hint">Walk through planning, recipes, pantry hints, and the shared shopping list.</p>
@@ -1260,6 +1266,13 @@
 			<span class="sync-status-actions">
 				<button class="btn btn-primary btn-sm" data-action="retry-recipe-sync" type="button" hidden>Retry</button>
 				<button class="btn btn-ghost btn-sm" data-action="discard-recipe-sync" type="button" hidden>Discard</button>
+			</span>
+		</div>
+		<div id="cook-sync-status" class="pwa-banner" role="status" aria-live="polite" hidden>
+			<span data-cook-sync-message>Syncing saved cooking changes…</span>
+			<span class="sync-status-actions">
+				<button class="btn btn-primary btn-sm" data-action="retry-cook-sync" type="button" hidden>Retry</button>
+				<button class="btn btn-ghost btn-sm" data-action="discard-cook-sync" type="button" hidden>Discard</button>
 			</span>
 		</div>
 		<div

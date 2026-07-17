@@ -53,3 +53,8 @@ test('app.js stays under 130 lines (auth-gate + login screen allowance)', () => 
   const lines = appSource.split('\n').length;
   assert.ok(lines <= 130, `app.js should be ≤ 130 lines (currently ${lines})`);
 });
+
+test('recipe refresh restores runtime authority when cache persistence rejects', () => {
+  assert.match(appSource, /setAuthority\([^;]+\)\.catch\(\(\) => false\)/);
+  assert.match(appSource, /state\.recipes = recipeRuntime\.current\(\)/);
+});

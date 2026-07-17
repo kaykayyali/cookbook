@@ -25,24 +25,51 @@ import {
 } from '../components/recipeDetail.js';
 
 const reactionLabel = { loved: 'Loved it', good: 'Good', not_for_us: 'Not for us' };
+const starsText = (value) => Number.isInteger(value)
+  ? `${'★'.repeat(value)}${'☆'.repeat(5 - value)}` : 'Not rated';
+const starRatingHTML = (label, name, value) => `<div class="cook-star-field">
+  <span>${label}</span>
+  <div class="cook-star-rating" role="radiogroup" aria-label="${label}" data-rating="${name}" data-selected="${value || ''}">
+    ${[1, 2, 3, 4, 5].map((score) => `<button type="button" data-rating="${name}" data-value="${score}" role="radio" tabindex="${score === (value || 1) ? 0 : -1}" aria-checked="${score === value}" aria-label="${label}: ${score} out of 5">★</button>`).join('')}
+  </div>
+</div>`;
+
+function selectStar(star, focus = false) {
+  const group = star.closest('[role="radiogroup"]');
+  group.dataset.selected = star.dataset.value;
+  group.querySelectorAll('[data-value]').forEach((button) => {
+    const selected = Number(button.dataset.value) === Number(star.dataset.value);
+    button.setAttribute('aria-checked', String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  });
+  if (focus) star.focus();
+}
 
 export function historyHTML(events = [], reactions = [], actorSub = '') {
   if (!events.length) return '<p class="empty-state">Not cooked yet — your first memory will appear here.</p>';
   return events.map((event) => {
     const eventReactions = reactions.filter((reaction) => reaction.cookEventId === event.id);
     const own = eventReactions.find((reaction) => reaction.memberSub === actorSub);
-    const memories = eventReactions.map((reaction) => `<p class="cook-memory"><strong>${reaction.memberSub === actorSub ? 'You' : 'Partner'} · ${reactionLabel[reaction.reaction] || 'Memory'}</strong>${reaction.note ? ` — ${esc(reaction.note)}` : ''}</p>`).join('');
+    const memories = eventReactions.map((reaction) => {
+      const ratingParts = [
+        reaction.taste ? `Taste ${starsText(reaction.taste)}` : '',
+        reaction.complexity ? `Complexity ${starsText(reaction.complexity)}` : '',
+      ].filter(Boolean);
+      const ratings = `<span>${ratingParts.join(' · ') || reactionLabel[reaction.reaction] || 'Unrated'}</span>`;
+      return `<div class="cook-member-review"><strong>${reaction.memberSub === actorSub ? 'You' : 'Partner'}</strong>${ratings}${reaction.review || reaction.note ? `<p>${esc(reaction.review || reaction.note)}</p>` : ''}</div>`;
+    }).join('');
     return `<article class="cook-history-card" data-event-id="${esc(event.id)}">
-      <p><strong>${new Date(event.cookedAt).toLocaleDateString()}</strong>${event.notes ? ` — ${esc(event.notes)}` : ''}</p>
+      <p><strong>${new Date(event.cookedAt).toLocaleDateString()}</strong></p>
+      <label class="cook-memory-field"><span>Occasion</span><textarea class="input" data-occasion maxlength="2000" placeholder="Weeknight dinner, birthday, friends over…">${esc(event.occasion || event.notes || '')}</textarea></label>
+      <button class="btn btn-ghost btn-sm" data-action="save-occasion">Save occasion</button>
       ${memories}
-      <div class="cook-reaction-actions" role="group" aria-label="Your reaction">
-        <button class="btn btn-ghost btn-sm" data-reaction="loved">Loved it</button>
-        <button class="btn btn-ghost btn-sm" data-reaction="good">Good</button>
-        <button class="btn btn-ghost btn-sm" data-reaction="not_for_us">Not for us</button>
+      <div class="cook-ratings">
+        ${starRatingHTML('Taste', 'taste', own?.taste)}
+        ${starRatingHTML('Complexity', 'complexity', own?.complexity)}
       </div>
-      <label>Shared memory <textarea class="input" data-memory maxlength="1000">${esc(own?.note || '')}</textarea></label>
+      <label class="cook-memory-field"><span>Review</span><textarea class="input" data-review maxlength="1000" placeholder="What worked? What would you change?">${esc(own?.review || own?.note || '')}</textarea></label>
       <div class="cook-history-actions">
-        <button class="btn btn-primary btn-sm" data-action="save-reaction">Save my memory</button>
+        <button class="btn btn-primary btn-sm" data-action="save-review">Save my review</button>
         <button class="btn btn-ghost btn-sm" data-action="edit-history">Edit history</button>
         <button class="btn btn-ghost btn-sm" data-action="delete-history">Delete</button>
       </div>
@@ -334,23 +361,37 @@ export function initDetail({
       const card = event.target.closest('[data-event-id]');
       if (!card) return;
       const eventId = card.dataset.eventId;
-      const reaction = event.target.closest('[data-reaction]')?.dataset.reaction;
-      if (reaction) {
-        card.dataset.selectedReaction = reaction;
-        card.querySelectorAll('[data-reaction]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.reaction === reaction)));
+      const star = event.target.closest('[data-rating][data-value]');
+      if (star) {
+        selectStar(star);
         return;
       }
       const action = event.target.closest('[data-action]')?.dataset.action;
-      if (action === 'save-reaction') {
-        const selected = card.dataset.selectedReaction || getReactions().find((item) => item.cookEventId === eventId && item.memberSub === state.auth?.sub)?.reaction;
-        if (selected && await onReact(eventId, selected, { note: card.querySelector('[data-memory]')?.value || '', wouldMakeAgain: selected !== 'not_for_us' })) renderHistory();
+      if (action === 'save-review') {
+        const taste = Number(card.querySelector('[data-rating="taste"]')?.dataset.selected) || null;
+        const complexity = Number(card.querySelector('[data-rating="complexity"]')?.dataset.selected) || null;
+        const review = card.querySelector('[data-review]')?.value || '';
+        if (!taste && !complexity && !review.trim()) { notify('Add a rating or review'); return; }
+        if (await onReact(eventId, { taste, complexity, review })) renderHistory();
+      } else if (action === 'save-occasion') {
+        if (await onCorrectHistory(eventId, { occasion: card.querySelector('[data-occasion]')?.value || '' })) renderHistory();
       } else if (action === 'edit-history') {
         const existing = getHistory(String(current?.r?._id || current?.r?.id || '')).find((item) => item.id === eventId);
-        const notes = prompt?.('Edit this cooking memory', existing?.notes || '');
-        if (notes != null && await onCorrectHistory(eventId, { notes })) renderHistory();
+        const occasion = prompt?.('Edit this occasion', existing?.occasion || existing?.notes || '');
+        if (occasion != null && await onCorrectHistory(eventId, { occasion })) renderHistory();
       } else if (action === 'delete-history' && confirm?.('Delete this cooking history entry?')) {
         if (await onDeleteHistory(eventId)) renderHistory();
       }
+    });
+    document.getElementById('dm-history')?.addEventListener('keydown', (event) => {
+      const star = event.target.closest('[data-rating][data-value]');
+      if (!star || !['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      const stars = [...star.closest('[role="radiogroup"]').querySelectorAll('[data-value]')];
+      const currentIndex = stars.indexOf(star);
+      const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? stars.length - 1
+        : (currentIndex + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + stars.length) % stars.length;
+      event.preventDefault();
+      selectStar(stars[nextIndex], true);
     });
     // Pantry note "Add to cart" button (shown only when missing > 0) —
     // replaces the old section-label "Add missing to cart" button.

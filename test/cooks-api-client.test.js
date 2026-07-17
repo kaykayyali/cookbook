@@ -26,6 +26,19 @@ test('mark-cooked and reaction clients send bounded authenticated JSON', async (
   assert.equal(JSON.parse(calls[1].options.body).eventId, 'e1');
 });
 
+test('cook mutation clients preserve HTTP failure status for outbox recovery', async () => {
+  const request = async (_url, options) => response(
+    options.method === 'POST' ? 409 : 400,
+    { error: options.method === 'POST' ? 'workspace_revision_conflict' : 'invalid_reaction' },
+  );
+  assert.deepEqual(await markCooked({ eventId: 'e1' }, { request }), {
+    ok: false, status: 409, error: 'workspace_revision_conflict',
+  });
+  assert.deepEqual(await saveCookReaction('e1', { tasteRating: 6 }, { request }), {
+    ok: false, status: 400, error: 'invalid_reaction',
+  });
+});
+
 test('recipe mutation transport preserves the durable mutation envelope', async () => {
   let captured;
   const result = await sendRecipeMutation({ mutationId: 'stable', op: 'recipe.delete', payload: { id: 'r1' } }, {

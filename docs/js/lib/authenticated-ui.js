@@ -19,8 +19,10 @@ import { patchImportDraft } from './api.js';
 import { createCookbookTour } from './cookbook-tour.js';
 import { createThemeRecommendation } from './theme-recommendation.js';
 import { showRecipeSchema, wireSchemaModal, exportRecipesToFile } from './schema-modal.js';
+import { clickSound } from './click-sound.js';
 
-export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, onSignedIn, onSignedOut }) {
+export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cookRuntime = null, onSignedIn, onSignedOut }) {
+  clickSound.init();
   const panels = initPanels({ state });
   const summerTheme = createThemeRecommendation({ subject: state.auth?.sub });
   const tour = initTour({
@@ -32,7 +34,7 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, onSi
   const reminders = initReminders();
   const engagement = initEngagement({
     state, refreshWorkspace: runtime.refresh, onOpenRecipe: (id) => detail?.open(id),
-    onCooked: reminders.notifyPostCook,
+    onCooked: reminders.notifyPostCook, cookRuntime,
   });
   const week = initWeek({ state, mutate: runtime.mutate, onMarkCooked: engagement.markPlan });
   const cookingMode = initCookingMode({ state });

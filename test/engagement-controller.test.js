@@ -32,6 +32,20 @@ test('mark cooked preserves plan linkage then refreshes authoritative workspace'
   assert.equal(refreshed, 1);
 });
 
+test('optimistic planned cook preserves the exact prior Week status for offline deletion', async () => {
+  let recorded;
+  const state = {
+    recipes: [recipe], cookEvents: [], cookReactions: [], auth: { sub: 'kay' },
+    plan: [{ id: 'plan-1', recipeId: 'r1', targetServings: 2, status: 'skipped' }],
+  };
+  const controller = initEngagement({
+    state, document: { getElementById: () => null }, notify: () => {},
+    cookRuntime: { mutate: async (_op, payload) => { recorded = payload; return true; } },
+  });
+  assert.equal(await controller.markPlan(state.plan[0]), true);
+  assert.equal(recorded.event.priorPlanStatus, 'skipped');
+});
+
 test('each member reaction replaces only that member reaction locally', async () => {
   const state = {
     recipes: [recipe], cookEvents: [{ id: 'e1', recipeId: 'r1' }],

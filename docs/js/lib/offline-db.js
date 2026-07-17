@@ -7,6 +7,7 @@ export const cacheKeys = {
   membership: (authSub) => `membership:${authSub}`,
   recipes: (authSub, householdId) => `recipes:${authSub}:${householdId}`,
   workspace: (authSub, householdId) => `workspace:${authSub}:${householdId}`,
+  cooks: (authSub, householdId) => `cooks:${authSub}:${householdId}`,
 };
 
 const requestResult = (request) => new Promise((resolve, reject) => {
@@ -20,6 +21,7 @@ const transactionDone = (transaction) => new Promise((resolve, reject) => {
 });
 const validMembership = (value) => typeof value?.household?.id === 'string' && value.household.id
   && typeof value?.member?.id === 'string' && value.member.id;
+const validCookHistory = (value) => Array.isArray(value?.events) && Array.isArray(value?.reactions);
 
 function cacheRecord(kind, authSub, householdId, value) {
   const key = kind === 'membership' ? cacheKeys.membership(authSub) : cacheKeys[kind](authSub, householdId);
@@ -96,6 +98,11 @@ export async function openOfflineDb({ indexedDB = globalThis.indexedDB, name = D
       return rawPut('cache', cacheRecord('workspace', authSub, householdId, workspace));
     },
     getWorkspace: (authSub, householdId) => getValue('cache', cacheKeys.workspace(authSub, householdId), isWorkspace),
+    async putCookHistory(authSub, householdId, history) {
+      if (!validCookHistory(history)) throw new Error('invalid_cached_cook_history');
+      return rawPut('cache', cacheRecord('cooks', authSub, householdId, history));
+    },
+    getCookHistory: (authSub, householdId) => getValue('cache', cacheKeys.cooks(authSub, householdId), validCookHistory),
     async enqueue(mutation) {
       if (!mutation?.mutationId || !mutation?.authSub || !mutation?.householdId || !mutation?.op) {
         throw new Error('invalid_outbox_mutation');
@@ -143,6 +150,20 @@ export async function openOfflineDb({ indexedDB = globalThis.indexedDB, name = D
         throw new Error('outbox_mutation_scope_mismatch');
       }
       tx.objectStore('cache').put(cacheRecord('recipes', authSub, householdId, recipes));
+      if (row) outbox.delete(row.sequence);
+      await transactionDone(tx);
+      return Boolean(row);
+    },
+    async acknowledgeCooks(authSub, householdId, mutationId, history) {
+      if (!validCookHistory(history)) throw new Error('invalid_cached_cook_history');
+      const tx = db.transaction(['cache', 'outbox'], 'readwrite');
+      const outbox = tx.objectStore('outbox');
+      const row = await requestResult(outbox.index('mutationId').get(mutationId));
+      if (row && (row.authSub !== authSub || row.householdId !== householdId || row.scope !== 'cook')) {
+        tx.abort();
+        throw new Error('outbox_mutation_scope_mismatch');
+      }
+      tx.objectStore('cache').put(cacheRecord('cooks', authSub, householdId, history));
       if (row) outbox.delete(row.sequence);
       await transactionDone(tx);
       return Boolean(row);

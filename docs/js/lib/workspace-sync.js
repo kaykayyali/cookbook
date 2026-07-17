@@ -14,6 +14,8 @@ const SAFE_REBASE = new Set([
   'shopping.removeIngredient', 'shopping.removeManual', 'shopping.clear',
 ]);
 const TRANSFER_PREFIX = 'pantry-transfer:';
+const PLAN_SLOTS = new Set(['breakfast', 'lunch', 'dinner']);
+const slotOrder = { breakfast: 0, lunch: 1, dinner: 2 };
 
 function pruneTransferMarkers(workspace) {
   const valid = new Set([
@@ -29,6 +31,12 @@ function pruneTransferMarkers(workspace) {
 
 export function normalizeWorkspace(value) {
   const workspace = clone(value);
+  workspace.plan = workspace.plan.map((entry) => ({
+    ...entry,
+    slot: PLAN_SLOTS.has(entry?.slot) ? entry.slot : 'dinner',
+  })).sort((a, b) => a.date.localeCompare(b.date)
+    || slotOrder[a.slot] - slotOrder[b.slot]
+    || a.id.localeCompare(b.id));
   workspace.pantry = normalizePantry(workspace.pantry);
   workspace.manualItems = workspace.manualItems.flatMap((item) => {
     const normalized = normalizePantryEntry(item);
@@ -53,10 +61,13 @@ export function applyWorkspaceOperation(source, request) {
   switch (request.op) {
     case 'plan.upsert': {
       const entry = clone(payload);
+      entry.slot = PLAN_SLOTS.has(entry.slot) ? entry.slot : 'dinner';
       const index = workspace.plan.findIndex((item) => item.id === entry.id);
       if (index >= 0) workspace.plan[index] = entry;
       else workspace.plan.push(entry);
-      workspace.plan.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+      workspace.plan.sort((a, b) => a.date.localeCompare(b.date)
+        || slotOrder[a.slot] - slotOrder[b.slot]
+        || a.id.localeCompare(b.id));
       break;
     }
     case 'plan.remove':

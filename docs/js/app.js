@@ -2,18 +2,17 @@
 import { $ } from './lib/dom.js';
 import { state, init, loadHousehold, loadRecipes, loadWorkspace } from './lib/store.js';
 import { loadAuth, getToken, initGoogleSignIn, clearAuth } from './lib/auth.js';
-
 import { initWorkspaceRuntime } from './lib/workspace-runtime.js'; import { initRecipeRuntime } from './lib/recipe-runtime.js';
 import { initPwa } from './lib/pwa.js';
 import { openOfflineDb } from './lib/offline-db.js';
 import { hydrateOfflineState } from './lib/offline-bootstrap.js';
 import { wireAuthenticatedUi } from './lib/authenticated-ui.js';
+import { initCookRuntime } from './lib/cook-runtime.js';
 import { requiresSessionReload } from './lib/session-boundary.js';
 const readSub = (t) => { try { return JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).sub || null; } catch { return null; } };
 const MAIN = $('main-content');
 const LOGIN_GATE = $('login-gate');
 let bootPromise = null, appBooted = false, bootedSub = null;
-
 function showLoginGate() {
   $('toast')?.classList.remove('show');
   if (MAIN) MAIN.style.display = 'none';
@@ -33,7 +32,6 @@ function showLoginGate() {
     }
   }
 }
-
 async function bootAfterAuth() {
   if (LOGIN_GATE) LOGIN_GATE.style.display = 'none';
   if (MAIN) MAIN.style.display = '';
@@ -44,17 +42,17 @@ async function bootAfterAuth() {
   let repo = null;
   try { repo = await openOfflineDb(); } catch { /* online-only fallback */ }
   const cached = await hydrateOfflineState({ repo, authSub: state.auth.sub, state });
-  let runtime, recipeRuntime, ui;
+  let runtime, recipeRuntime, cookRuntime, ui;
   const wire = async () => {
     runtime = await initWorkspaceRuntime({
       state, repo, authSub: state.auth.sub, onUnauthorized,
       onChange: () => ui?.renderShared(),
     });
     recipeRuntime = await initRecipeRuntime({ state, repo, authSub: state.auth.sub, onChange: () => ui?.renderActive() });
+    cookRuntime = await initCookRuntime({ state, repo, authSub: state.auth.sub,
+      onChange: () => ui?.renderShared(), refreshWorkspace: () => runtime.refresh() });
     ui = wireAuthenticatedUi({
-      state,
-      runtime,
-      recipeRuntime,
+      state, runtime, recipeRuntime, cookRuntime,
       onSignedIn: (email) => { state.auth = { sub: readSub(getToken()), email }; },
       onSignedOut: async () => { await clearAuth(); showLoginGate(); },
     });
@@ -71,12 +69,14 @@ async function bootAfterAuth() {
     return false;
   }
   await repo?.putMembership(state.auth.sub, state.household);
+  const recipeMutationVersion = recipeRuntime?.version();
   const recipesOk = await loadRecipes({ onUnauthorized });
   if (!recipesOk && !cached.cached) {
     showLoginGate();
     return false;
   }
-  if (recipesOk) { recipeRuntime?.setAuthority(state.recipes); await repo?.putRecipes(state.auth.sub, state.household.household.id, state.recipes); }
+  if (recipesOk && recipeRuntime && !await recipeRuntime.setAuthority(state.recipes, { mutationVersion: recipeMutationVersion }).catch(() => false)) state.recipes = recipeRuntime.current();
+  if (recipesOk && !recipeRuntime) await repo?.putRecipes(state.auth.sub, state.household.household.id, state.recipes);
   if (runtime) {
     await runtime.refresh();
   } else {

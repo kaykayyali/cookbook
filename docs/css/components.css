@@ -753,6 +753,25 @@
 		.cart-row.is-completing .cart-check { animation: none; }
 	}
 
+	.cook-history-card { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg-elevated); }
+	.cook-memory-field { display: grid; gap: var(--space-1); color: var(--color-fg-muted); font-size: var(--text-sm); font-weight: 600; }
+	.cook-memory-field textarea { min-height: 4.5rem; resize: vertical; font-weight: 400; }
+	.cook-member-review { display: grid; gap: var(--space-1); padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-bg-sunken); }
+	.cook-member-review span, .cook-member-review p { color: var(--color-fg-muted); font-size: var(--text-sm); }
+	.cook-ratings { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: var(--space-3); }
+	.cook-star-field { display: grid; gap: var(--space-1); }
+	.cook-star-field > span { color: var(--color-fg-muted); font-size: var(--text-sm); font-weight: 600; }
+	.cook-star-rating { display: flex; flex-wrap: nowrap; }
+	.cook-star-rating > button { width: 44px; min-width: 36px; height: 44px; padding: 0; border: 0; background: transparent; color: var(--color-border-strong); font-size: 1.65rem; cursor: pointer; }
+	.cook-star-rating > button[aria-checked="true"],
+	.cook-star-rating > button:has(~ button[aria-checked="true"]) { color: var(--color-accent); }
+	.cook-star-rating > button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+	.cook-history-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+	@media (max-width: 36rem) {
+		.cook-ratings { grid-template-columns: minmax(0, 1fr); }
+		.cook-star-rating > button { flex: 1; }
+	}
+
 	.week-grid {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);
@@ -769,13 +788,22 @@
 	.week-day > header > div { display: flex; justify-content: space-between; gap: var(--space-2); color: var(--color-fg-muted); }
 	.week-day.is-tonight > header span { color: var(--color-accent); font-weight: 700; }
 	.week-meals { display: grid; gap: var(--space-2); }
-	.week-meal { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); min-width: 0; padding: var(--space-2); border-radius: var(--radius-md); background: var(--color-bg-sunken); }
+	.week-meal { position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); min-width: 0; padding: var(--space-3) 3.25rem var(--space-3) var(--space-3); border-radius: var(--radius-md); background: var(--color-bg-sunken); }
 	.week-meal.is-skipped { opacity: .6; }
 	.week-meal-copy { flex: 1 1 12rem; min-width: 0; }
 	.week-meal-copy small { display: block; color: var(--color-fg-muted); }
+	.week-meal-slot { display: block; margin-bottom: .15rem; color: var(--color-accent); font-size: var(--text-xs); font-weight: 700; letter-spacing: var(--tracking-wide); text-transform: uppercase; }
 	.week-meal-title { display: block; overflow-wrap: anywhere; line-height: var(--leading-tight); }
+	.week-meal-remove { position: absolute; top: .25rem; right: .25rem; width: 44px; height: 44px; min-width: 44px; min-height: 44px; font-size: 1.4rem; }
 	.week-meal-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
 	.week-add { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.5fr) auto; gap: var(--space-2); margin-top: var(--space-2); }
+	.week-add-split { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+	.week-add-primary { border-start-end-radius: 0; border-end-end-radius: 0; }
+	.week-add-menu-toggle { min-width: 44px; padding-inline: var(--space-2); border-inline-start: 1px solid color-mix(in oklab, white 35%, transparent); border-start-start-radius: 0; border-end-start-radius: 0; }
+	.week-add-menu { position: absolute; z-index: 5; top: calc(100% + .25rem); right: 0; min-width: 9rem; padding: var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-elevated); box-shadow: var(--shadow-md); }
+	.week-add-menu[hidden] { display: none; }
+	.week-add-menu button { display: block; width: 100%; min-height: 44px; padding: var(--space-2) var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-fg); text-align: left; cursor: pointer; }
+	.week-add-menu button:hover, .week-add-menu button:focus-visible { background: var(--color-bg-sunken); }
 	.shopping-tools { display: grid; gap: var(--space-3); max-width: 760px; margin: 0 auto var(--space-3); }
 	.shopping-manual-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); }
 	.plan-shop-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: end; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg-elevated); }
@@ -784,6 +812,7 @@
 	.plan-shop-tools label { color: var(--color-fg-muted); font-size: var(--text-xs); }
 	@media (max-width: 36rem) {
 		.week-add { grid-template-columns: minmax(0, 1fr); }
+		.week-add-split { width: 100%; }
 		.week-meal-controls { width: 100%; }
 		.shopping-manual-add, .plan-shop-tools { grid-template-columns: minmax(0, 1fr); }
 		#cart-clear-btn { min-height: 44px; }

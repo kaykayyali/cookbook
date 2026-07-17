@@ -32,8 +32,13 @@ function memoryRepo(authority = base()) {
 
 const dbName = () => `cookbook-workspace-outbox-${Date.now()}-${Math.random()}`;
 const availableLocks = { request: (_name, _options, callback) => Promise.resolve(callback({})) };
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+};
 
-test('mutation persists before optimistic publication and survives a reload', async () => {
+test('mutation publishes before persistence and survives a reload once locally durable', async () => {
   const repo = memoryRepo();
   const order = repo.calls;
   const first = await createWorkspaceOutbox({
@@ -41,10 +46,28 @@ test('mutation persists before optimistic publication and survives a reload', as
     makeId: () => 'offline-1', onChange: () => order.push('publish'),
   });
   assert.equal(await first.mutate('pantry.add', { name: 'flour' }), true);
-  assert.deepEqual(order.slice(-2), ['persist:offline-1', 'publish']);
+  assert.deepEqual(order, ['publish', 'persist:offline-1']);
   assert.deepEqual(first.current().pantry.map((item) => item.name), ['flour']);
   const reloaded = await createWorkspaceOutbox({ repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => false });
   assert.deepEqual(reloaded.current().pantry.map((item) => item.name), ['flour']);
+});
+
+test('online mutation returns after durable optimistic publication without waiting for D1', async () => {
+  const repo = memoryRepo();
+  const response = deferred();
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(),
+    makeId: () => 'nonblocking-1', send: async () => response.promise,
+  });
+  const mutation = manager.mutate('pantry.add', { name: 'flour' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(manager.current().pantry.map((item) => item.name), ['flour']);
+  assert.equal(await Promise.race([
+    mutation.then(() => 'resolved'),
+    new Promise((resolve) => setTimeout(() => resolve('blocked-on-d1'), 20)),
+  ]), 'resolved');
+  response.resolve({ ok: true, workspace: base({ revision: 1, pantry: ['flour'] }) });
+  assert.equal(await manager.drain(), true);
 });
 
 test('pending mutations replay in sequence and acknowledge one-by-one', async () => {
@@ -83,7 +106,8 @@ test('network failure retains stable mutation intent and retry sends the same ID
       return { ok: true, workspace: base({ revision: 1, pantry: ['flour'] }) };
     },
   });
-  assert.equal(await manager.mutate('pantry.add', { name: 'flour' }), false);
+  assert.equal(await manager.mutate('pantry.add', { name: 'flour' }), true);
+  assert.equal(await manager.drain(), false);
   assert.equal((await repo.listOutbox())[0].mutationId, 'stable-id');
   assert.equal(await manager.retry((await repo.listOutbox())[0].sequence), true);
   assert.deepEqual(manager.current().pantry.map((item) => item.name), ['flour']);
@@ -99,13 +123,38 @@ test('remote destructive conflict blocks constructive replay until retry or disc
     isOnline: () => true, makeId: () => 'stale-add', onStatus: (status) => statuses.push(status),
     send: async () => { sends += 1; return { ok: false, status: 409, workspace: base({ revision: 1, cart: [] }) }; },
   });
-  assert.equal(await manager.mutate('cart.upsertSelection', { selection }), false);
+  assert.equal(await manager.mutate('cart.upsertSelection', { selection }), true);
+  assert.equal(await manager.drain(), false);
   assert.equal(sends, 1);
   assert.deepEqual(manager.current().cart, [selection]);
   assert.equal(statuses.at(-1).state, 'failed');
   const [row] = await repo.listOutbox();
   await manager.discard(row.sequence);
   assert.deepEqual(manager.current().cart, []);
+});
+
+test('discarding a failed mutation immediately drains later workspace work', async () => {
+  const repo = memoryRepo();
+  let online = false;
+  const sent = [];
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => online,
+    makeId: (() => { let i = 0; return () => `discard-${++i}`; })(),
+    send: async (request) => {
+      sent.push(request.mutationId);
+      return request.mutationId === 'discard-1'
+        ? { ok: false, status: 400 }
+        : { ok: true, workspace: base({ revision: 1, pantry: ['salt'] }) };
+    },
+  });
+  await manager.mutate('pantry.add', { name: 'flour' });
+  await manager.mutate('pantry.add', { name: 'salt' });
+  online = true;
+  assert.equal(await manager.drain(), false);
+  const [failed] = await repo.listOutbox();
+  assert.equal(await manager.discard(failed.sequence), true);
+  assert.deepEqual(sent, ['discard-1', 'discard-2']);
+  assert.equal(manager.pending(), 0);
 });
 
 test('offline launch reports durable queue status immediately', async () => {
@@ -118,6 +167,68 @@ test('offline launch reports durable queue status immediately', async () => {
   });
   assert.equal(statuses[0].state, 'offline');
   assert.equal(statuses[0].pending, 0);
+});
+
+test('refresh preserves a mutation persisted after its outbox snapshot', async () => {
+  const repo = memoryRepo();
+  const listed = deferred();
+  const release = deferred();
+  const originalList = repo.listOutbox;
+  let listCalls = 0;
+  repo.listOutbox = async (...args) => {
+    listCalls += 1;
+    if (listCalls !== 2) return originalList(...args);
+    const snapshot = await originalList(...args);
+    listed.resolve();
+    await release.promise;
+    return snapshot;
+  };
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => false,
+    makeId: () => 'during-refresh',
+  });
+  const refresh = manager.refresh(base({ revision: 1 }));
+  await listed.promise;
+  await manager.mutate('pantry.add', { name: 'flour' });
+  release.resolve();
+  await refresh;
+  assert.deepEqual(manager.current().pantry.map((item) => item.name), ['flour']);
+  assert.equal(manager.pending(), 1);
+  assert.equal((await originalList()).length, 1);
+});
+
+test('refresh cannot resurrect a mutation acknowledged after its outbox snapshot', async () => {
+  const repo = memoryRepo();
+  let online = false;
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => online,
+    makeId: () => 'ack-during-refresh',
+    send: async () => ({ ok: true, workspace: base({ revision: 2, pantry: ['flour'] }) }),
+  });
+  await manager.mutate('pantry.add', { name: 'flour' });
+  const listed = deferred();
+  const release = deferred();
+  const originalList = repo.listOutbox;
+  let pauseNextList = true;
+  repo.listOutbox = async (...args) => {
+    const snapshot = await originalList(...args);
+    if (!pauseNextList) return snapshot;
+    pauseNextList = false;
+    listed.resolve();
+    await release.promise;
+    return snapshot;
+  };
+
+  const refresh = manager.refresh(base({ revision: 1 }));
+  await listed.promise;
+  online = true;
+  assert.equal(await manager.drain(), true);
+  release.resolve();
+  await refresh;
+
+  assert.equal(manager.pending(), 0);
+  assert.deepEqual(await originalList(), []);
+  assert.deepEqual(manager.current().pantry.map((item) => item.name), ['flour']);
 });
 
 test('real IndexedDB repository exposes a newly persisted workspace mutation to the same drain', async () => {
@@ -133,6 +244,7 @@ test('real IndexedDB repository exposes a newly persisted workspace mutation to 
   });
 
   assert.equal(await manager.mutate('pantry.add', { name: 'flour' }), true);
+  assert.equal(await manager.drain(), true);
   assert.deepEqual(sent.map(({ mutationId, op, baseRevision }) => ({ mutationId, op, baseRevision })), [
     { mutationId: 'persisted-v2', op: 'pantry.add', baseRevision: 0 },
   ]);

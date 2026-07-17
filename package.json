@@ -8,7 +8,7 @@
     "build": "node scripts/build.js",
     "build:watch": "node scripts/build.js --watch",
     "dev": "npm run build && wrangler pages dev docs",
-    "test:e2e": "node --test test/e2e-smoke.test.js"
+    "test:e2e": "node --test test/e2e-smoke.test.js test/e2e-week-cooking.test.js"
   },
   "keywords": [
     "recipe",
@@ -25,6 +25,7 @@
     "esbuild": "^0.28.1",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^29.1.1",
+    "playwright": "^1.61.1",
     "wrangler": "^3.90.0"
   },
   "engines": {

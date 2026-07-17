@@ -72,6 +72,15 @@ test('absolute plan operations support add, move, skip, repeat, and serving chan
   ]);
 });
 
+test('authoritative plan entries default omitted servings to two', () => {
+  const result = applyWorkspaceMutation(emptyWorkspace('our-home'), mutation('default-servings', 'plan.upsert', {
+    id: 'meal-1', date: '2026-07-14', type: 'recipe', recipeId: 'r1',
+    plannedBySub: 'cook-1', status: 'active',
+  }));
+  assert.equal(result.workspace.plan[0].slot, 'dinner');
+  assert.equal(result.workspace.plan[0].targetServings, 2);
+});
+
 test('duplicate mutation IDs are successful no-ops without another revision', () => {
   const first = applyWorkspaceMutation(
     emptyWorkspace('our-home'),

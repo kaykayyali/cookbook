@@ -9,6 +9,7 @@ import { toSchema, parseImport } from '../lib/schema.js';
 import { save as persist } from '../lib/store.js';
 import { theme as defaultTheme } from '../lib/theme.js';
 import { importRecipes as importToServer } from '../lib/api.js';
+import { clickSound as defaultClickSound } from '../lib/click-sound.js';
 
 const THEME_PALETTES = {
   light:  { bg: '#fbf7f1', accent: '#b34a1c', border: '#d2c4ac' },
@@ -50,6 +51,7 @@ export function initSettings({
   onChange = null,
   getStoredTheme = defaultTheme.getStored,
   theme: themeDep = defaultTheme,
+  interfaceSounds = defaultClickSound,
   onSignedIn = null,
   onSignedOut = null,
 } = {}) {
@@ -172,6 +174,11 @@ export function initSettings({
     }
     const authZone = document.getElementById('settings-auth-zone');
     if (authZone) authZone.addEventListener('click', handleAuthClick);
+    const soundToggle = document.getElementById('interface-sound-toggle');
+    if (soundToggle) {
+      soundToggle.checked = interfaceSounds.enabled();
+      soundToggle.addEventListener('change', () => interfaceSounds.setEnabled(soundToggle.checked));
+    }
     renderThemePicker();
     settingsRendered = true;
   }

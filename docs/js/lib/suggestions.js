@@ -16,7 +16,9 @@ function eligibleRecipes(recipes, reactions, preferences) {
   const excludedIds = new Set((preferences.excludedRecipeIds || []).map(String));
   const disliked = (preferences.dislikedIngredients || []).map(lower).filter(Boolean);
   const diet = (preferences.excludedDietTags || []).map(lower).filter(Boolean);
-  const rejected = new Set(reactions.filter((item) => item.reaction === 'not_for_us').map((item) => String(item.recipeId)));
+  const rejected = new Set(reactions
+    .filter((item) => item.reaction === 'not_for_us' || Number(item.taste) === 1)
+    .map((item) => String(item.recipeId)));
   return recipes.filter((recipe) => {
     const id = idOf(recipe);
     if (!id || !String(recipe?.name || '').trim() || excludedIds.has(id) || rejected.has(id)) return false;
@@ -54,7 +56,8 @@ export function pickForUs({ recipes = [], events = [], reactions = [], preferenc
   };
   const reliable = take('reliable', (recipe) => {
     const memory = reactionsById.get(idOf(recipe)) || [];
-    return memory.reduce((sum, item) => sum + (item.reaction === 'loved' ? 4 : item.reaction === 'good' ? 2 : 0)
+    return memory.reduce((sum, item) => sum + (Number.isInteger(item.taste) ? item.taste - 1
+      : item.reaction === 'loved' ? 4 : item.reaction === 'good' ? 2 : 0)
       + (item.wouldMakeAgain === true ? 1 : 0), 0);
   }, (recipe) => {
     const memory = reactionsById.get(idOf(recipe)) || [];

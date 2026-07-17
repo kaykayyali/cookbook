@@ -117,7 +117,9 @@ export async function markCooked(event, { onUnauthorized, request = authFetch } 
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(event),
     }, { onUnauthorized });
     const data = await response.json().catch(() => null);
-    return response.ok && data?.event ? { ok: true, event: data.event } : { ok: false, error: data?.error || 'cook_history_unavailable' };
+    return response.ok && data?.event
+      ? { ok: true, event: data.event }
+      : { ok: false, status: response.status, error: data?.error || 'cook_history_unavailable' };
   } catch { return { ok: false, error: 'cook_history_unavailable' }; }
 }
 
@@ -128,7 +130,9 @@ export async function saveCookReaction(eventId, reaction, { onUnauthorized, requ
       body: JSON.stringify({ eventId, reaction }),
     }, { onUnauthorized });
     const data = await response.json().catch(() => null);
-    return response.ok && data?.reaction ? { ok: true, reaction: data.reaction } : { ok: false, error: data?.error || 'reaction_unavailable' };
+    return response.ok && data?.reaction
+      ? { ok: true, reaction: data.reaction }
+      : { ok: false, status: response.status, error: data?.error || 'reaction_unavailable' };
   } catch { return { ok: false, error: 'reaction_unavailable' }; }
 }
 

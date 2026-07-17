@@ -41,3 +41,9 @@ test('an explicit not-for-us reaction excludes a recipe and sparse history stays
   assert.ok(picks.every((pick) => pick.recipe._id === 'new'));
   assert.ok(picks.every((pick) => /try|untested|quick|different/i.test(pick.reason)));
 });
+
+test('a one-star Taste review replaces not-for-us as a negative recommendation signal', () => {
+  const recipes = [recipe('no', 'No'), recipe('new', 'Untested Soup')];
+  const picks = pickForUs({ recipes, reactions: [{ recipeId: 'no', memberSub: 'kay', taste: 1, complexity: 2 }] });
+  assert.ok(picks.every((pick) => pick.recipe._id === 'new'));
+});

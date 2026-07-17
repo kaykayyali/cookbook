@@ -27,6 +27,10 @@ export async function createWorkspaceOutbox({
   let rows = await repo.listOutbox(authSub, householdId);
   let optimistic = clone(confirmed);
   let draining = null;
+  let persistence = Promise.resolve();
+  let mutationGeneration = 0;
+  const localGenerations = new Map();
+  const persisting = new Set();
 
   const rebuild = () => {
     optimistic = rows.reduce((state, row) => applyWorkspaceOperation(state, row), clone(confirmed));
@@ -36,6 +40,22 @@ export async function createWorkspaceOutbox({
     onChange(clone(optimistic), { pending: rows.length, ...meta });
   };
   const status = (state, extra = {}) => onStatus({ state, pending: rows.length, ...extra });
+  const reloadRows = async () => {
+    const startedAt = mutationGeneration;
+    const preserve = new Set(persisting);
+    const presentAtStart = new Set(rows.map((row) => row.mutationId));
+    const listed = await repo.listOutbox(authSub, householdId);
+    const stillPresent = new Set(rows.map((row) => row.mutationId));
+    const merged = new Map(listed
+      .filter((row) => !presentAtStart.has(row.mutationId) || stillPresent.has(row.mutationId))
+      .map((row) => [row.mutationId, row]));
+    for (const row of rows) {
+      if (preserve.has(row.mutationId) || (localGenerations.get(row.mutationId) || 0) > startedAt) {
+        merged.set(row.mutationId, row);
+      }
+    }
+    rows = [...merged.values()].sort((a, b) => (a.sequence ?? Number.MAX_SAFE_INTEGER) - (b.sequence ?? Number.MAX_SAFE_INTEGER));
+  };
   rebuild();
   status(isOnline() ? (rows.length ? 'pending' : 'synced') : 'offline');
 
@@ -52,7 +72,7 @@ export async function createWorkspaceOutbox({
 
   async function processRows() {
     if (!isOnline()) { status('offline'); return false; }
-    rows = await repo.listOutbox(authSub, householdId);
+    await reloadRows();
     publish({ queued: rows.length > 0 });
     for (let row of rows) {
       if (row.status === 'failed') { status('failed', { sequence: row.sequence, code: row.lastError }); return false; }
@@ -120,7 +140,7 @@ export async function createWorkspaceOutbox({
   }
 
   function drain() {
-    if (!draining) draining = runDrain().finally(() => { draining = null; });
+    if (!draining) draining = persistence.then(runDrain).finally(() => { draining = null; });
     return draining;
   }
 
@@ -128,21 +148,40 @@ export async function createWorkspaceOutbox({
     current: () => clone(optimistic),
     pending: () => rows.length,
     async mutate(op, payload) {
-      const row = await repo.enqueue({
+      const provisional = {
         mutationId: makeId(), authSub, householdId, scope: 'workspace',
         op, payload: clone(payload || {}), createdAt: Date.now(), status: 'pending',
         attempts: 0, nextAttemptAt: 0, lastError: null,
-      });
-      rows.push(row);
+      };
+      mutationGeneration += 1;
+      localGenerations.set(provisional.mutationId, mutationGeneration);
+      persisting.add(provisional.mutationId);
+      rows.push(provisional);
       publish({ queued: true, optimistic: true });
+      let row;
+      try {
+        const persisted = persistence.then(() => repo.enqueue(provisional));
+        persistence = persisted.catch(() => undefined);
+        row = await persisted;
+        rows = rows.map((item) => item.mutationId === row.mutationId ? row : item);
+      } catch {
+        rows = rows.filter((item) => item.mutationId !== provisional.mutationId);
+        publish({ rolledBack: true });
+        status('failed', { code: 'local_storage_unavailable' });
+        return false;
+      } finally {
+        persisting.delete(provisional.mutationId);
+      }
       if (!isOnline()) { status('offline'); return true; }
-      return drain();
+      void drain();
+      return true;
     },
     drain,
     async retry(sequence) {
       const row = rows.find((item) => item.sequence === sequence);
       if (!row) return false;
       await setRow(row, { status: 'pending', lastError: null, nextAttemptAt: 0 });
+      if (draining) await draining;
       return drain();
     },
     async discard(sequence) {
@@ -150,13 +189,17 @@ export async function createWorkspaceOutbox({
       rows = rows.filter((row) => row.sequence !== sequence);
       publish({ discarded: true });
       status(rows.length ? 'pending' : 'synced');
+      if (rows.length && isOnline()) {
+        if (draining) await draining;
+        return drain();
+      }
       return true;
     },
     async refresh(workspace) {
       if (!isWorkspace(workspace) || workspace.revision < confirmed.revision) return false;
       confirmed = normalizeWorkspace(workspace);
       await repo.putWorkspace(authSub, householdId, confirmed);
-      rows = await repo.listOutbox(authSub, householdId);
+      await reloadRows();
       publish({ refreshed: true, queued: rows.length > 0 });
       return true;
     },

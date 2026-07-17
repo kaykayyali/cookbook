@@ -10,6 +10,7 @@ import { addToPantry, normalizePantry, normalizePantryEntry, removeFromPantry } 
 
 const PLAN_TYPES = new Set(['recipe', 'leftovers', 'dining-out', 'open']);
 const PLAN_STATUSES = new Set(['active', 'skipped', 'cooked']);
+const PLAN_SLOTS = new Set(['breakfast', 'lunch', 'dinner']);
 const MAX_RECENT_MUTATIONS = 64;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TRANSFER_PREFIX = 'pantry-transfer:';
@@ -56,18 +57,20 @@ function normalizedPlanEntry(payload) {
   const date = text(payload?.date, 10);
   const type = text(payload?.type, 20);
   const status = text(payload?.status, 20);
+  const slot = text(payload?.slot, 20) || 'dinner';
   const recipeId = payload?.recipeId == null ? null : text(payload.recipeId, 100);
-  if (!id || !DATE_RE.test(date) || !PLAN_TYPES.has(type) || !PLAN_STATUSES.has(status)) {
+  if (!id || !DATE_RE.test(date) || !PLAN_TYPES.has(type) || !PLAN_STATUSES.has(status) || !PLAN_SLOTS.has(slot)) {
     throw new Error('invalid_plan_entry');
   }
   if (type === 'recipe' && !recipeId) throw new Error('recipe_required');
   return {
     id,
     date,
-    slot: text(payload.slot, 30) || 'dinner',
+    slot,
     type,
     recipeId: type === 'recipe' ? recipeId : null,
-    targetServings: Math.min(50, Math.max(1, Math.round(Number(payload.targetServings) || 1))),
+    targetServings: payload.targetServings == null
+      ? 2 : Math.min(50, Math.max(1, Math.round(Number(payload.targetServings) || 1))),
     plannedBySub: text(payload.plannedBySub, 200),
     cookSub: payload.cookSub == null ? null : text(payload.cookSub, 200),
     note: text(payload.note, 500),

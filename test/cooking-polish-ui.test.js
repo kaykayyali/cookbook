@@ -32,3 +32,8 @@ test('reminders are opt-in and configurable', () => {
   assert.match(html, /reminder/i);
   assert.match(html, /opt.?in|optional|toggle|setting/i);
 });
+
+test('Settings exposes a device-local interface sound toggle', () => {
+  assert.match(html, /id="interface-sound-toggle"/);
+  assert.match(html, /button click sounds/i);
+});
