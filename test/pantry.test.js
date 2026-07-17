@@ -341,6 +341,8 @@ test('ambiguous quantity ranges stay unknown for Pantry across dash variants', (
     const record = normalizePantryEntry(raw);
     assert.equal(parsed.quantityState, 'range', raw);
     assert.equal(record.amountState, 'unknown', raw);
+    assert.equal(record.quantity, null, `${raw} must not collapse to either range endpoint`);
+    assert.equal(record.unit, 'qualitative', raw);
     assert.equal(formatPantryAmount(record), 'Not sure', raw);
     assert.notEqual(formatPantryAmount(record), '4', raw);
   }
@@ -359,6 +361,8 @@ test('explicit normalized range evidence cannot be promoted to a known endpoint'
     quantity: 4, unit: 'count', kind: 'indivisible', confidence: 0.99,
   });
   assert.equal(record.amountState, 'unknown');
+  assert.equal(record.quantity, null);
+  assert.equal(record.unit, 'qualitative');
   assert.equal(formatPantryAmount(record), 'Not sure');
 });
 

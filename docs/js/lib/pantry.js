@@ -257,19 +257,22 @@ export function normalizePantryEntry(value, options = {}) {
   const source = legacyIngredient(value);
   if (!source || !String(source.name || '').trim()) return null;
   const fallback = normalizeIngredient(String(source.name));
-  const unit = ['count', 'ounce', 'qualitative'].includes(source.unit) ? source.unit : fallback.unit;
+  const primaryNormalization = typeof source.raw === 'string' ? normalizeIngredient(source.raw) : null;
+  const ambiguousRange = source.quantityState === 'range'
+    || primaryNormalization?.quantityState === 'range';
+  const parsedUnit = ['count', 'ounce', 'qualitative'].includes(source.unit) ? source.unit : fallback.unit;
+  const unit = ambiguousRange ? 'qualitative' : parsedUnit;
   const quantity = unit === 'qualitative' ? null : Number(source.quantity);
   if (unit !== 'qualitative' && (!Number.isFinite(quantity) || quantity < 0)) return null;
   const name = canonicalName(source.name);
   if (!name || name === 'uncertain ingredient') return null;
-  const countLabel = COUNT_LABELS.includes(source.countLabel) ? source.countLabel : fallback.countLabel;
+  const countLabel = unit === 'count' && COUNT_LABELS.includes(source.countLabel)
+    ? source.countLabel : unit === 'count' ? fallback.countLabel : '';
   const confidence = Number.isFinite(source.confidence) && source.confidence >= 0 && source.confidence <= 1
     ? source.confidence : unit === 'qualitative' ? 0.4 : 0.85;
-  const primaryNormalization = typeof source.raw === 'string' ? normalizeIngredient(source.raw) : null;
   const amountState = unit === 'qualitative'
     || source.amountState === 'unknown'
-    || source.quantityState === 'range'
-    || primaryNormalization?.quantityState === 'range'
+    || ambiguousRange
     || confidence < PANTRY_CONFIDENCE_THRESHOLD ? 'unknown' : 'known';
   const candidate = {
     name,
