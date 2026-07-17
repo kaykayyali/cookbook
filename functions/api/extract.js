@@ -4,6 +4,7 @@
 // ════════════════════════════════════════════════════════
 import { json, misconfigured } from "../_lib/http.js";
 import { handleExtract } from "../_lib/extract.js";
+import { createDraft, ensureImportDraftsSchema } from "../_lib/import-drafts.js";
 
 const AI_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 
@@ -179,8 +180,45 @@ export async function onRequestPost(context) {
 		`[Route Extract] Initializing pipeline for user: ${email} targeting URL: ${targetUrl}`,
 	);
 
-	// 5. Execute Extraction Core
+	// 5. Verify persistence prerequisites before fetching the page or invoking AI.
+	if (!env.DB?.prepare) return misconfigured("db_binding");
+	const householdId = data?.household?.household?.id;
+	const actorSub = data?.auth?.sub;
+	if (!householdId) return json(403, { error: "household_required" });
+
+	// 6. Execute Extraction Core
 	const { status, body: out } = await handleExtract(body, env, realDeps(env));
+	let responseBody = out;
+	if (out.recipe || out.partial) {
+		try {
+			await ensureImportDraftsSchema(env.DB);
+			const draft = await createDraft(env.DB, {
+				householdId,
+				actorSub,
+				input: {
+					sourceType: "url",
+					sourceUrls: [body.url],
+					extracted: { recipe: out.recipe || out.partial },
+				},
+				serverProvenance: {
+					extractorMethod: out.extractorMethod,
+					extractorVersion: out.extractorVersion,
+					evidence: out.evidence,
+				},
+				now: Date.now(),
+			});
+			if (draft.status !== 201) return json(draft.status, draft.body);
+			responseBody = {
+				recipe: out.recipe,
+				error: out.error,
+				partial: out.partial,
+				importDraftId: draft.body.id,
+			};
+		} catch (error) {
+			console.error("[Route Extract] Failed to persist import draft:", error);
+			return json(500, { error: "import_provenance_unavailable" });
+		}
+	}
 
 	if (status >= 400) {
 		console.warn(
@@ -193,5 +231,5 @@ export async function onRequestPost(context) {
 		);
 	}
 
-	return json(status, out);
+	return json(status, responseBody);
 }

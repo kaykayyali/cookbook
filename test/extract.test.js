@@ -283,6 +283,36 @@ test('extractRecipe returns a partial when JSON-LD has a name but missing instru
   assert.equal(res.status, 422);
   assert.ok(res.partial, 'partial must be present');
   assert.equal(res.partial.name, 'HalfBaked');
+  assert.equal(res.extractorMethod, 'json-ld-partial');
+  assert.equal(res.extractorVersion, 'url-extractor-v1');
+  assert.equal(res.evidence.jsonLd.name, 'HalfBaked');
+  assert.deepEqual(res.evidence.jsonLd.recipeIngredient, ['flour', 'water']);
+  assert.equal(JSON.stringify(res.evidence).includes('<script'), false, 'partial evidence must not retain raw HTML');
+  assert.ok(new TextEncoder().encode(JSON.stringify(res.evidence)).byteLength <= 16_384);
+});
+
+test('every recoverable JSON-LD partial failure preserves truthful bounded metadata', async () => {
+  const jsonLd = { '@type': 'Recipe', name: 'Partial', description: '🍲'.repeat(20_000), recipeIngredient: ['water'] };
+  const script = `<script type="application/ld+json">${JSON.stringify(jsonLd)}</script>`;
+  const cases = [
+    { name: 'empty visible text', html: script, runLLM: async () => assert.fail('LLM must not run') },
+    { name: 'LLM exception', html: `${script}<p>visible recipe text</p>`, runLLM: async () => { throw new Error('AI down'); } },
+    { name: 'invalid initial and repair output', html: `${script}<p>visible recipe text</p>`, runLLM: async () => 'not JSON' },
+  ];
+  for (const scenario of cases) {
+    const result = await extractRecipe('https://example.com/partial', {
+      fetchPage: async () => ({ ok: true, status: 200, html: scenario.html }),
+      runLLM: scenario.runLLM,
+    });
+    assert.ok(result.partial, scenario.name);
+    assert.equal(result.extractorMethod, 'json-ld-partial', scenario.name);
+    assert.equal(result.extractorVersion, 'url-extractor-v1', scenario.name);
+    const serialized = JSON.stringify(result.evidence);
+    assert.doesNotThrow(() => JSON.parse(serialized), scenario.name);
+    assert.ok(new TextEncoder().encode(serialized).byteLength <= 16_384, scenario.name);
+    assert.match(serialized, /Partial/, scenario.name);
+    assert.equal(serialized.includes('<script'), false, scenario.name);
+  }
 });
 
 test('extractRecipe omits partial when there is no JSON-LD name', async () => {

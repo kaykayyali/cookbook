@@ -97,7 +97,7 @@ export function initExtract({
           if (recipe) {
             state.pendingOpenAfterSave = true;
             close();
-            if (openPrefilled) openPrefilled(recipe);
+            if (openPrefilled) openPrefilled(recipe, { importDraftId: data.importDraftId });
           }
         }
         return;
@@ -106,7 +106,7 @@ export function initExtract({
       if (!recipe) { if (status) status.textContent = 'no recipe found'; return; }
       state.pendingOpenAfterSave = true;
       close();
-      if (openPrefilled) openPrefilled(recipe);
+      if (openPrefilled) openPrefilled(recipe, { importDraftId: data.importDraftId });
       toastDep('Recipe extracted — review and save');
     } catch (e) {
       if (status) status.textContent = e?.message || 'network';

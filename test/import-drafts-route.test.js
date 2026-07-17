@@ -5,12 +5,13 @@ import { onRequestGet, onRequestPost, onRequestPatch } from '../functions/api/im
 function memoryDb() {
   const drafts = new Map();
   const recipes = new Map();
+  const provenance = new Map();
   function prepare(sql) {
     return {
       bind(...values) { this.values = values; return this; },
       async all() {
         const m = sql.match(/FROM recipe_import_drafts/);
-        if (m) return { results: [...drafts.values()].map(rowFromObj) };
+        if (m) return { results: [...drafts.values()].map((row) => rowFromObj(row, provenance.get(row.id))) };
         const r = sql.match(/FROM household_recipes/);
         if (r) return { results: [...recipes.values()].map((r) => ({ id: r.id, recipe_json: r.recipe_json })) };
         return { results: [] };
@@ -18,7 +19,7 @@ function memoryDb() {
       async first() {
         if (sql.includes('WHERE id = ? AND household_id = ?')) {
           const id = this.values[0];
-          return drafts.get(id) ? rowFromObj(drafts.get(id)) : null;
+          return drafts.get(id) ? rowFromObj(drafts.get(id), provenance.get(id)) : null;
         }
         return null;
       },
@@ -26,6 +27,10 @@ function memoryDb() {
         if (sql.includes('INSERT INTO recipe_import_drafts')) {
           const [id, householdId, createdBySub, sourceType, sourceUrlsJson, imageRefsJson, extractedJson, confidenceJson, notes, createdAt, updatedAt] = this.values;
           drafts.set(id, { id, household_id: householdId, created_by_sub: createdBySub, status: 'pending', source_type: sourceType, source_urls_json: sourceUrlsJson, image_refs_json: imageRefsJson, extracted_json: extractedJson, confidence_json: confidenceJson, duplicate_ids_json: '[]', recipe_json: null, notes, created_at: createdAt, updated_at: updatedAt, confirmed_at: null });
+        }
+        if (sql.includes('INSERT INTO recipe_import_draft_provenance')) {
+          const [draftId, extractorMethod, extractorVersion, evidenceJson, createdAt] = this.values;
+          provenance.set(draftId, { extractorMethod, extractorVersion, evidenceJson, createdAt });
         }
         if (sql.includes('UPDATE recipe_import_drafts')) {
           const id = this.values[this.values.length - 2];
@@ -50,8 +55,15 @@ function memoryDb() {
   return { prepare, batch: async (stmts) => Promise.all(stmts.map((s) => s.run())) };
 }
 
-function rowFromObj(obj) {
-  return obj;
+function rowFromObj(obj, provenance) {
+  if (!provenance) return obj;
+  return {
+    ...obj,
+    draft_extractor_method: provenance.extractorMethod,
+    draft_extractor_version: provenance.extractorVersion,
+    draft_evidence_json: provenance.evidenceJson,
+    draft_provenance_created_at: provenance.createdAt,
+  };
 }
 
 const context = (db, method, body, data = {}) => ({
@@ -94,6 +106,10 @@ test('image draft runs server-side vision while retaining explicit confirmation'
   assert.equal(res.status, 201);
   assert.equal(body.status, 'extracted');
   assert.equal(body.extracted.recipe.name, 'Soup');
+  assert.equal(body.serverProvenance.extractorMethod, 'workers-ai-vision');
+  assert.equal(body.serverProvenance.extractorVersion, 'image-extractor-v1');
+  assert.match(body.serverProvenance.evidence.pageText, /Soup ingredients: water/);
+  assert.equal(JSON.stringify(body.serverProvenance.evidence).includes('data:image'), false);
   assert.equal(body.confirmedAt, null);
 });
 
@@ -119,6 +135,62 @@ test('confirm draft publishes recipe and returns recipeId', async () => {
   assert.ok(body.recipeId);
 });
 
+test('API confirmation stores authenticated subject, display name, and picture', async (t) => {
+  let DatabaseSync;
+  try { ({ DatabaseSync } = await import('node:sqlite')); }
+  catch { t.skip('node:sqlite is unavailable on this supported Node version'); return; }
+  const sqlite = new DatabaseSync(':memory:');
+  sqlite.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE households (id TEXT PRIMARY KEY);
+    CREATE TABLE household_recipes (
+      id TEXT PRIMARY KEY, household_id TEXT NOT NULL, added_by_sub TEXT NOT NULL,
+      added_by_name TEXT NOT NULL, added_by_picture TEXT, recipe_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    INSERT INTO households VALUES ('our-home');
+  `);
+  const db = {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...bound) { values = bound; return this; },
+        async first() { return sqlite.prepare(sql).get(...values) || null; },
+        async all() { return { results: sqlite.prepare(sql).all(...values) }; },
+        async run() { const result = sqlite.prepare(sql).run(...values); return { meta: { changes: Number(result.changes) } }; },
+      };
+    },
+    async batch(statements) {
+      sqlite.exec('BEGIN IMMEDIATE');
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        sqlite.exec('COMMIT');
+        return results;
+      } catch (error) {
+        sqlite.exec('ROLLBACK');
+        throw error;
+      }
+    },
+  };
+  const auth = { sub: 'auth-sub', email: 'kay@example.com', name: 'Kaysser', picture: 'https://images.example/kay.png' };
+  const created = await onRequestPost(context(db, 'POST', { imageRefs: ['p1.png'], sourceType: 'image' }, { auth }));
+  const draft = await created.json();
+  const response = await onRequestPatch(context(db, 'PATCH', {
+    action: 'confirm', id: draft.id,
+    recipe: { name: 'Stored Soup', recipeIngredient: ['water'], recipeInstructions: ['Boil'] },
+  }, { auth }));
+
+  assert.equal(response.status, 200);
+  const { recipeId } = await response.json();
+  const stored = sqlite.prepare('SELECT added_by_sub, added_by_name, added_by_picture FROM household_recipes WHERE id = ?').get(recipeId);
+  assert.deepEqual({ ...stored }, {
+    added_by_sub: 'auth-sub',
+    added_by_name: 'Kaysser',
+    added_by_picture: 'https://images.example/kay.png',
+  });
+});
+
 test('reject draft returns rejected status without publishing', async () => {
   const db = memoryDb();
   const created = await onRequestPost(context(db, 'POST', { imageRefs: ['p1.png'], sourceType: 'image' }));
@@ -136,4 +208,88 @@ test('no recipe enters household library without explicit confirmation', async (
   const drafts = await listRes.json();
   assert.equal(drafts.drafts[0].status, 'pending');
   assert.equal(drafts.drafts[0].recipe, null);
+});
+
+test('API and SQLite keep server provenance immutable through adversarial PATCH and honest AI-unavailable recovery', async (t) => {
+  let DatabaseSync;
+  try { ({ DatabaseSync } = await import('node:sqlite')); }
+  catch { t.skip('node:sqlite is unavailable on this supported Node version'); return; }
+  const sqlite = new DatabaseSync(':memory:');
+  sqlite.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE households (id TEXT PRIMARY KEY);
+    CREATE TABLE household_recipes (
+      id TEXT PRIMARY KEY, household_id TEXT NOT NULL, added_by_sub TEXT NOT NULL,
+      added_by_name TEXT NOT NULL, added_by_picture TEXT, recipe_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    INSERT INTO households VALUES ('our-home');
+  `);
+  const db = {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...bound) { values = bound; return this; },
+        async first() { return sqlite.prepare(sql).get(...values) || null; },
+        async all() { return { results: sqlite.prepare(sql).all(...values) }; },
+        async run() { const result = sqlite.prepare(sql).run(...values); return { meta: { changes: Number(result.changes) } }; },
+      };
+    },
+    async batch(statements) {
+      sqlite.exec('BEGIN IMMEDIATE');
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        sqlite.exec('COMMIT');
+        return results;
+      } catch (error) {
+        sqlite.exec('ROLLBACK');
+        throw error;
+      }
+    },
+  };
+  const auth = { sub: 'auth-sub', email: 'kay@example.com', name: 'Kaysser' };
+  const createdResponse = await onRequestPost(context(db, 'POST', {
+    imageRefs: ['data:image/png;base64,b25l'], sourceType: 'image',
+    extracted: { extractorMethod: 'caller-forgery', evidence: { raw: 'data:image/png;base64,evil' } },
+  }, { auth }));
+  assert.equal(createdResponse.status, 201);
+  const draft = await createdResponse.json();
+  assert.equal(draft.serverProvenance.extractorMethod, 'manual-image-recovery');
+  assert.equal(draft.serverProvenance.extractorVersion, 'manual-image-recovery-v1');
+  assert.equal(draft.serverProvenance.evidence.outcome, 'ai_binding_unavailable');
+  assert.equal(JSON.stringify(draft.serverProvenance.evidence).includes('data:image'), false);
+  assert.equal('pageText' in draft.serverProvenance.evidence, false, 'no OCR text may be claimed when OCR never ran');
+
+  const tamperedResponse = await onRequestPatch(context(db, 'PATCH', {
+    action: 'update-extraction', id: draft.id,
+    extracted: {
+      recipe: { name: 'Reviewed Soup', recipeIngredient: ['water'], recipeInstructions: ['Boil'] },
+      extractorMethod: 'caller-forgery', extractorVersion: 'legacy',
+      evidence: { raw: `data:image/png;base64,${'A'.repeat(100_000)}` },
+    },
+    confidence: { uncertainFields: [] }, duplicateIds: ['r1'],
+  }, { auth }));
+  assert.equal(tamperedResponse.status, 200);
+
+  const confirmedResponse = await onRequestPatch(context(db, 'PATCH', {
+    action: 'confirm', id: draft.id,
+    recipe: { name: 'Reviewed Soup', recipeIngredient: ['water'], recipeInstructions: ['Boil'] },
+    allowDuplicate: true,
+  }, { auth }));
+  assert.equal(confirmedResponse.status, 200);
+  const { recipeId } = await confirmedResponse.json();
+
+  const mutable = JSON.parse(sqlite.prepare('SELECT extracted_json FROM recipe_import_drafts WHERE id = ?').get(draft.id).extracted_json);
+  assert.deepEqual(mutable, { recipe: { name: 'Reviewed Soup', recipeIngredient: ['water'], recipeInstructions: ['Boil'] } });
+  const snapshot = sqlite.prepare('SELECT * FROM recipe_import_draft_provenance WHERE import_draft_id = ?').get(draft.id);
+  const durable = sqlite.prepare('SELECT * FROM recipe_import_provenance WHERE recipe_id = ?').get(recipeId);
+  assert.equal(snapshot.extractor_method, 'manual-image-recovery');
+  assert.equal(durable.extractor_method, 'manual-image-recovery');
+  assert.equal(durable.extractor_version, 'manual-image-recovery-v1');
+  assert.equal(durable.extractor_method === 'unknown' || durable.extractor_version === 'legacy', false);
+  assert.equal(durable.evidence_json.includes('ai_binding_unavailable'), true, 'original recovery marker survives arbitrary PATCH');
+  assert.equal(/data:image|;base64,/i.test(durable.evidence_json), false);
+  assert.ok(new TextEncoder().encode(durable.evidence_json).byteLength <= 32_768);
+  sqlite.close();
 });

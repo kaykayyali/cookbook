@@ -164,24 +164,26 @@ test('submit() calls authFetch(/extract) with the URL', async () => {
   assert.equal(captured.body.url, 'https://example.com/recipe');
 });
 
-test('submit() on success sets pendingOpenAfterSave, closes modal, calls openPrefilled', async () => {
+test('submit() on success forwards the durable import draft to the review drawer', async () => {
   if (!mod.initExtract) return;
   const { document, elements } = makeDom();
   elements['url-input'].value = 'https://example.com/r';
   let openedWith = null;
+  let openedOptions = null;
   const state = { pendingOpenAfterSave: false };
   const ctrl = mod.initExtract({
     state, document,
     authFetch: () => Promise.resolve({
       ok: true,
-      json: () => Promise.resolve({ recipe: { name: 'Pasta', recipeIngredient: [] } }),
+      json: () => Promise.resolve({ recipe: { name: 'Pasta', recipeIngredient: [] }, importDraftId: 'draft-url-1' }),
     }),
-    openPrefilled: (r) => { openedWith = r; },
+    openPrefilled: (recipe, options) => { openedWith = recipe; openedOptions = options; },
   });
   await ctrl.submit();
   assert.equal(state.pendingOpenAfterSave, true);
   assert.equal(elements['url-overlay'].classList.contains('open'), false);
   assert.equal(openedWith?.name, 'Pasta');
+  assert.deepEqual(openedOptions, { importDraftId: 'draft-url-1' });
 });
 
 test('submit() on error surfaces the error in url-status', async () => {

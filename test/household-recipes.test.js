@@ -85,7 +85,7 @@ test('list and get queries are scoped to the resolved household', async () => {
   const found = await getCommunity(foundDb.db, { id: 'r1', householdId: 'our-home' });
   assert.equal(found.status, 200);
   const getQuery = foundDb.calls.find((call) => call.op === 'first');
-  assert.match(getQuery.sql, /WHERE id = \? AND household_id = \?/);
+  assert.match(getQuery.sql, /WHERE (?:r\.)?id = \? AND (?:r\.)?household_id = \?/);
   assert.deepEqual(getQuery.values, ['r1', 'our-home']);
 });
 
@@ -114,7 +114,7 @@ test('edit and delete enforce household scope before author ownership', async ()
     author: { sub: 'cook-1', name: 'Kaysser', picture: null },
   });
   assert.equal(edited.status, 200);
-  assert.match(editDb.calls[0].sql, /WHERE id = \? AND household_id = \?/);
+  assert.match(editDb.calls[0].sql, /WHERE (?:r\.)?id = \? AND (?:r\.)?household_id = \?/);
   assert.deepEqual(editDb.calls[0].values, ['r1', 'our-home']);
   const update = editDb.calls.find((call) => call.op === 'run');
   assert.match(update.sql, /WHERE id = \? AND household_id = \? AND added_by_sub = \?/);

@@ -17,7 +17,7 @@ function schemaStubDb() {
   return {
     db: {
       prepare: (sql) => { calls.prepared.push(sql); return stmt(sql); },
-      batch: async (arr) => { calls.batch += 1; calls.batchCount = arr.length; return arr.map(() => ({ meta: {} })); },
+      batch: async (arr) => { calls.batch += 1; calls.batchCount = (calls.batchCount || 0) + arr.length; return arr.map(() => ({ meta: {} })); },
     },
     calls,
   };
@@ -26,9 +26,10 @@ function schemaStubDb() {
 test('ensureSchema creates household recipe DDL and runs the idempotent legacy copy', async () => {
   const { db, calls } = schemaStubDb();
   await ensureSchema(db, HOUSEHOLD_ID);
-  assert.equal(calls.batch, 1);
-  assert.equal(calls.batchCount, 4);
+  assert.equal(calls.batch, 2);
+  assert.equal(calls.batchCount, 7);
   assert.ok(calls.prepared.some((s) => s.includes('CREATE TABLE') && s.includes('household_recipes')));
+  assert.ok(calls.prepared.some((s) => s.includes('CREATE TABLE') && s.includes('recipe_import_provenance')));
   assert.ok(calls.runs.some((call) => call.sql.includes('INSERT OR IGNORE INTO household_recipes')));
 });
 

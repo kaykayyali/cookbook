@@ -2,6 +2,13 @@
 // community.js — shared-recipe store: schema + pure handlers (D1 injected)
 // ════════════════════════════════════════════════════════
 
+import {
+  ensureImportProvenanceSchema,
+  PROVENANCE_SELECT,
+  PROVENANCE_SUMMARY_SELECT,
+  provenanceFromRow,
+} from './import-provenance.js';
+
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 
@@ -78,6 +85,7 @@ export async function ensureSchema(db, householdId = 'our-home') {
       recipe_json, created_at, updated_at
     FROM community_recipes
   `).bind(householdId).run();
+  await ensureImportProvenanceSchema(db);
 }
 
 const schemaPromises = new WeakMap();
@@ -146,11 +154,17 @@ export function validateRecipe(recipe) {
   return null;
 }
 
-const COLS = 'id, household_id, added_by_sub, added_by_name, added_by_picture, recipe_json, created_at, updated_at';
+const RECIPE_COLS = `r.id, r.household_id, r.added_by_sub, r.added_by_name, r.added_by_picture,
+  r.recipe_json, r.created_at, r.updated_at`;
+const LIST_COLS = `${RECIPE_COLS}, ${PROVENANCE_SUMMARY_SELECT}`;
+const DETAIL_COLS = `${RECIPE_COLS}, ${PROVENANCE_SELECT}`;
+const RECIPE_FROM = `household_recipes AS r
+  LEFT JOIN recipe_import_provenance AS p
+    ON p.recipe_id = r.id AND p.household_id = r.household_id`;
 const householdRequired = () => ({ status: 403, body: { error: 'household_required' } });
 
 /** Map a D1 row to a recipe item while preserving household attribution. */
-function rowToRecipe(row) {
+function rowToRecipe(row, { includeEvidence = false } = {}) {
   let recipe;
   try { recipe = JSON.parse(row.recipe_json); } catch { recipe = {}; }
   return {
@@ -164,6 +178,7 @@ function rowToRecipe(row) {
     },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    provenance: provenanceFromRow(row, { includeEvidence }),
   };
 }
 
@@ -174,32 +189,33 @@ function rowToRecipe(row) {
  * @param {{cursor?:string, limit?:number}} opts
  * @returns {Promise<{status:number, body:object}>}
  */
-export async function listCommunity(db, { householdId, cursor, limit } = {}) {
+export async function listCommunity(db, { householdId, cursor, limit, sourceUrl } = {}) {
   if (!householdId) return householdRequired();
   const lim = Math.min(Math.max(Number(limit) || DEFAULT_LIMIT, 1), MAX_LIMIT);
   const cur = decodeCursor(cursor);
-  let results;
-  if (cur) {
-    results = await db.prepare(
-      `SELECT ${COLS} FROM household_recipes
-       WHERE household_id = ? AND (created_at < ? OR (created_at = ? AND id < ?))
-       ORDER BY created_at DESC, id DESC
-       LIMIT ?`,
-    ).bind(householdId, cur.c, cur.c, cur.i, lim + 1).all();
-  } else {
-    results = await db.prepare(
-      `SELECT ${COLS} FROM household_recipes
-       WHERE household_id = ?
-       ORDER BY created_at DESC, id DESC
-       LIMIT ?`,
-    ).bind(householdId, lim + 1).all();
+  const conditions = ['r.household_id = ?'];
+  const values = [householdId];
+  if (typeof sourceUrl === 'string' && sourceUrl) {
+    conditions.push('p.source_url = ?');
+    values.push(sourceUrl);
   }
+  if (cur) {
+    conditions.push('(r.created_at < ? OR (r.created_at = ? AND r.id < ?))');
+    values.push(cur.c, cur.c, cur.i);
+  }
+  values.push(lim + 1);
+  const results = await db.prepare(
+    `SELECT ${LIST_COLS} FROM ${RECIPE_FROM}
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY r.created_at DESC, r.id DESC
+     LIMIT ?`,
+  ).bind(...values).all();
   const rows = (results && results.results) || [];
   const hasMore = rows.length > lim;
   const page = hasMore ? rows.slice(0, lim) : rows;
   const last = page[page.length - 1];
   const nextCursor = hasMore && last ? encodeCursor({ createdAt: last.created_at, id: last.id }) : null;
-  return { status: 200, body: { recipes: page.map(rowToRecipe), nextCursor } };
+  return { status: 200, body: { recipes: page.map((row) => rowToRecipe(row)), nextCursor } };
 }
 
 /**
@@ -211,10 +227,10 @@ export async function listCommunity(db, { householdId, cursor, limit } = {}) {
 export async function getCommunity(db, { id, householdId } = {}) {
   if (!householdId) return householdRequired();
   const row = await db.prepare(
-    `SELECT ${COLS} FROM household_recipes WHERE id = ? AND household_id = ?`,
+    `SELECT ${DETAIL_COLS} FROM ${RECIPE_FROM} WHERE r.id = ? AND r.household_id = ?`,
   ).bind(id, householdId).first();
   if (!row) return { status: 404, body: { error: 'not_found' } };
-  return { status: 200, body: rowToRecipe(row) };
+  return { status: 200, body: rowToRecipe(row, { includeEvidence: true }) };
 }
 
 /**
@@ -269,7 +285,8 @@ export async function editRecipe(db, { id, recipe, author, householdId } = {}) {
   const err = validateRecipe(recipe);
   if (err) return { status: 400, body: { error: err } };
   const row = await db.prepare(
-    `SELECT added_by_sub, created_at FROM household_recipes WHERE id = ? AND household_id = ?`,
+    `SELECT r.added_by_sub, r.created_at, ${PROVENANCE_SELECT}
+     FROM ${RECIPE_FROM} WHERE r.id = ? AND r.household_id = ?`,
   ).bind(id, householdId).first();
   if (!row) return { status: 404, body: { error: 'not_found' } };
   if (row.added_by_sub !== author.sub) return { status: 403, body: { error: 'not_author' } };
@@ -296,6 +313,7 @@ export async function editRecipe(db, { id, recipe, author, householdId } = {}) {
       author: { sub: author.sub, name: author.name, picture: author.picture || null },
       createdAt: row.created_at,
       updatedAt: now,
+      provenance: provenanceFromRow(row),
     },
   };
 }
