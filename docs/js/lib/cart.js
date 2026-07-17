@@ -55,8 +55,13 @@ function numericExpression(value) {
 
 function readLeadingQuantity(text) {
   const quantityPattern = '(\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|\\d+(?:\\.\\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])';
-  const range = text.match(new RegExp(`^${quantityPattern}\\s*-\\s*${quantityPattern}\\s*`));
-  if (range) return { quantity: Math.max(numericExpression(range[1]), numericExpression(range[2])), rest: text.slice(range[0].length), confidence: .8 };
+  const range = text.match(new RegExp(`^${quantityPattern}\\s*(?:-|to\\b)\\s*${quantityPattern}\\s*`));
+  if (range) return {
+    quantity: Math.max(numericExpression(range[1]), numericExpression(range[2])),
+    rest: text.slice(range[0].length),
+    confidence: .8,
+    quantityState: 'range',
+  };
   const one = text.match(new RegExp(`^${quantityPattern}\\s*`));
   if (!one) return null;
   return { quantity: numericExpression(one[1]), rest: text.slice(one[0].length) };
@@ -151,8 +156,9 @@ export function normalizeIngredient(rawValue) {
   const unit = unitNames.find((candidate) => rest === candidate || rest.startsWith(candidate + ' ')) || '';
   if (unit) rest = rest.slice(unit.length).trim();
   if (unit === 'dozen') quantity *= 12;
-  if (OUNCE_FACTORS[unit] != null) return { raw, ...metadata(rest), quantity: round(quantity * OUNCE_FACTORS[unit]), unit: 'ounce', kind: 'divisible', confidence: leading.confidence || .9 };
-  return { raw, ...metadata(rest, COUNT_UNIT_LABELS.get(unit) || ''), quantity: round(quantity), unit: 'count', kind: 'indivisible', confidence: leading.confidence || .85 };
+  const quantityState = leading.quantityState ? { quantityState: leading.quantityState } : {};
+  if (OUNCE_FACTORS[unit] != null) return { raw, ...metadata(rest), quantity: round(quantity * OUNCE_FACTORS[unit]), unit: 'ounce', kind: 'divisible', confidence: leading.confidence || .9, ...quantityState };
+  return { raw, ...metadata(rest, COUNT_UNIT_LABELS.get(unit) || ''), quantity: round(quantity), unit: 'count', kind: 'indivisible', confidence: leading.confidence || .85, ...quantityState };
 }
 
 export function normalizeIngredientsLocal(lines) { return (Array.isArray(lines) ? lines : []).map(normalizeIngredient); }

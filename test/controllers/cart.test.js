@@ -11,7 +11,7 @@ function makeDom() {
   return { grid, document: { getElementById: (id) => id === 'cart-grid' ? grid : id === 'cart-clear-btn' ? clear : null } };
 }
 
-const selection = { recipeId: 'r1', recipeName: 'Soup', sourceServings: 4, targetServings: 4, ingredients: [{ raw: '4 eggs', name: 'egg', quantity: 4, unit: 'count', kind: 'indivisible' }] };
+const selection = { recipeId: 'r1', recipeName: 'Soup', sourceServings: 4, targetServings: 4, ingredients: [{ raw: '4 eggs', name: 'egg', quantity: 4, unit: 'count', kind: 'indivisible', confidence: 0.85 }] };
 
 test('initCart exposes normalized selection controls', () => {
   const { document } = makeDom();
@@ -51,16 +51,23 @@ test('shopping controls emit absolute shared-workspace operations', () => {
   controller.removeItem('egg');
   state.cart = [structuredClone(selection)];
   controller.clear();
-  assert.deepEqual(calls, [
-    { op: 'cart.setTargetServings', payload: { recipeId: 'r1', targetServings: 5 } },
-    { op: 'shopping.setChecked', payload: { key: 'egg', checked: true } },
-    { op: 'pantry.add', payload: { item: {
-      name: 'egg', displayName: 'Egg', quantity: 6, unit: 'count', kind: 'indivisible',
-      countLabel: '', category: 'dairy-eggs',
-    }, sourceKey: 'egg' } },
-    { op: 'shopping.removeIngredient', payload: { name: 'egg' } },
-    { op: 'shopping.clear', payload: {} },
+  assert.deepEqual(calls.map(({ op }) => op), [
+    'cart.setTargetServings',
+    'shopping.setChecked',
+    'pantry.add',
+    'shopping.removeIngredient',
+    'shopping.clear',
   ]);
+  assert.deepEqual(calls[0].payload, { recipeId: 'r1', targetServings: 5 });
+  assert.deepEqual(calls[1].payload, { key: 'egg', checked: true });
+  assert.deepEqual(
+    (({ name, quantity, unit, amountState, raw }) => ({ name, quantity, unit, amountState, raw }))(calls[2].payload.item),
+    { name: 'egg', quantity: 6, unit: 'count', amountState: 'known', raw: '4 eggs' },
+  );
+  assert.match(calls[2].payload.item.id, /^pantry-/);
+  assert.equal(calls[2].payload.sourceKey, 'egg');
+  assert.deepEqual(calls[3].payload, { name: 'egg' });
+  assert.deepEqual(calls[4].payload, {});
 });
 
 test('manual additions and plan generation are household workspace mutations', () => {

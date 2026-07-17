@@ -92,9 +92,9 @@ async function initDurableRuntime({
     discardSelector: '[data-action="discard-sync"]',
     noun: 'change',
   });
-  const renderStatus = ({ state: status, pending, sequence }) => {
+  const renderStatus = ({ state: status, pending, sequence, discardable }) => {
     failedSequence = sequence || null;
-    statusPresenter.update({ status, pending });
+    statusPresenter.update({ status, pending, sequence, discardable });
   };
   const manager = await createWorkspaceOutbox({
     repo,
@@ -132,5 +132,6 @@ async function initDurableRuntime({
   poller?.unref?.();
   document?.addEventListener?.('visibilitychange', () => { if (!document.hidden) void refresh(); });
   window?.addEventListener?.('online', () => { void manager.drain(); });
+  if (window?.navigator?.onLine !== false) void manager.drain();
   return { mutate: manager.mutate, current: manager.current, refresh, drain: manager.drain };
 }

@@ -99,6 +99,39 @@ test('recipe-detail Pantry toggle preserves the ingredient quantity in its works
   assert.deepEqual(mutations, [{ op: 'pantry.add', payload: { item: state.pantry[0] } }]);
 });
 
+test('recipe-detail Pantry removal syncs the matched stored stable ID', async () => {
+  const { JSDOM } = await import('jsdom');
+  const dom = new JSDOM(`<!doctype html><body>
+    <div id="detail-modal"></div><div id="detail-overlay"></div><button id="detail-close-btn"></button>
+    <div id="dm-eyebrow"></div><div id="dm-title"></div><div id="dm-meta"></div><div id="dm-author-badge"></div>
+    <button id="dm-edit-btn"></button><button id="dm-schema-btn"></button><div id="dm-ingredients"></div>
+    <div id="dm-pantry-note"></div><div id="dm-steps"></div><div id="dm-nutrition"><div id="dm-nutrition-grid"></div></div>
+    <button id="dm-add-all-btn">Add recipe to cart</button>
+  </body>`);
+  const recipe = { _id: 'r1', name: 'Water', recipeYield: '1', recipeIngredient: ['1 bottle water'], recipeInstructions: [] };
+  const state = {
+    recipes: [recipe], cart: [], normalizations: {},
+    pantry: [
+      {
+        id: 'cart-water-bottles', name: 'water', displayName: 'Water', raw: '2 bottles water',
+        quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle', category: 'pantry',
+      },
+      {
+        id: 'manual-water-cans', name: 'water', displayName: 'Water', raw: '3 cans water',
+        quantity: 3, unit: 'count', kind: 'indivisible', countLabel: 'can', category: 'pantry',
+      },
+    ],
+  };
+  const mutations = [];
+  const ctrl = initDetail({ state, document: dom.window.document, notify() {}, mutate: (op, payload) => mutations.push({ op, payload }) });
+  ctrl.open('r1');
+
+  dom.window.document.querySelector('.detail-ing-item').click();
+
+  assert.deepEqual(state.pantry.map((item) => item.id), ['manual-water-cans']);
+  assert.deepEqual(mutations, [{ op: 'pantry.remove', payload: { id: 'cart-water-bottles' } }]);
+});
+
 test('background audit failure keeps the immediate deterministic selection', async () => {
   const recipe = { _id: 'r1', name: 'Milk', recipeYield: '2', recipeIngredient: ['1 cup milk'], recipeInstructions: [] };
   const state = { recipes: [recipe], cart: [], pantry: ['milk'] };

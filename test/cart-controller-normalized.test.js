@@ -57,15 +57,19 @@ test('cart controller removes a selected recipe rather than ingredient contribut
 
 test('delegated check-off saves the normalized purchase quantity to Pantry', () => {
   const { document, listeners } = dom();
-  const state = { cart: [{ ...selection, ingredients: [{ raw: '2 eggs', name: 'egg', quantity: 2, unit: 'count', kind: 'indivisible' }] }], pantry: [], shoppingChecked: {} };
+  const state = { cart: [{ ...selection, ingredients: [{ raw: '2 eggs', name: 'egg', quantity: 2, unit: 'count', kind: 'indivisible', confidence: 0.85 }] }], pantry: [], shoppingChecked: {} };
   initCart({ state, document });
   const click = () => listeners.click({ target: { closest: () => ({ dataset: { action: 'toggle-item', name: 'egg' } }) } });
   click();
   assert.equal(state.shoppingChecked.egg, true);
-  assert.deepEqual(state.pantry, [{
+  assert.deepEqual(state.pantry.map(({
+    name, displayName, quantity, unit, kind, countLabel, category, amountState,
+  }) => ({ name, displayName, quantity, unit, kind, countLabel, category, amountState })), [{
     name: 'egg', displayName: 'Egg', quantity: 3, unit: 'count', kind: 'indivisible',
-    countLabel: '', category: 'dairy-eggs',
+    countLabel: '', category: 'dairy-eggs', amountState: 'known',
   }], 'checking a cart item transfers its buffered purchase quantity');
+  assert.match(state.pantry[0].id, /^pantry-/);
+  assert.equal(state.pantry[0].raw, '2 eggs');
   click();
   assert.equal(state.shoppingChecked.egg, undefined);
   assert.equal(state.pantry[0].quantity, 3, 'unchecking keeps the pantry quantity (non-subtractive)');
@@ -94,7 +98,7 @@ test('manual Shopping items use the same quantity contract and transfer it to Pa
 
 test('delegated check-off plays a short exit animation before moving the row to Completed', () => {
   const { document, listeners } = dom();
-  const state = { cart: [{ ...selection, ingredients: [{ raw: '2 eggs', name: 'egg', quantity: 2, unit: 'count', kind: 'indivisible' }] }], pantry: [], shoppingChecked: {} };
+  const state = { cart: [{ ...selection, ingredients: [{ raw: '2 eggs', name: 'egg', quantity: 2, unit: 'count', kind: 'indivisible', confidence: 0.85 }] }], pantry: [], shoppingChecked: {} };
   let scheduled;
   const classes = new Set();
   const check = { textContent: '', setAttribute(name, value) { this[name] = value; } };

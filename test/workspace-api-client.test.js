@@ -23,6 +23,14 @@ test('fetchWorkspace accepts only a complete authoritative workspace', async () 
   assert.deepEqual(malformed, { ok: false, error: 'invalid_workspace' });
 });
 
+test('mutateWorkspace marks thrown transport as status-zero unknown delivery', async () => {
+  const result = await api.mutateWorkspace({
+    mutationId: 'unknown-m1', baseRevision: 1, op: 'pantry.add', payload: { name: 'flour' },
+  }, { request: async () => { throw new Error('connection reset after upload'); } });
+
+  assert.deepEqual(result, { ok: false, status: 0, error: 'workspace_unavailable' });
+});
+
 test('mutateWorkspace returns conflict authority for one client rebase', async () => {
   const conflict = await api.mutateWorkspace({
     mutationId: 'm1', baseRevision: 1, op: 'pantry.add', payload: { name: 'flour' },

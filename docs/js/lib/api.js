@@ -191,7 +191,7 @@ export async function mutateWorkspace(mutation, { onUnauthorized, request = auth
     }
     return { ok: false, status: response.status, error: body?.error || 'workspace_unavailable' };
   } catch {
-    return { ok: false, error: 'workspace_unavailable' };
+    return { ok: false, status: 0, error: 'workspace_unavailable' };
   }
 }
 

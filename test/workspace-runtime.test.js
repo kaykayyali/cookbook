@@ -17,6 +17,56 @@ function stateFrom(value) {
   };
 }
 
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+};
+
+function seededRepo(row) {
+  let rows = [structuredClone(row)];
+  let cached = workspace(0);
+  return {
+    getWorkspace: async () => structuredClone(cached),
+    putWorkspace: async (_sub, _home, value) => { cached = structuredClone(value); },
+    listOutbox: async () => structuredClone(rows),
+    updateOutbox: async (value) => { rows = rows.map((item) => item.sequence === value.sequence ? structuredClone(value) : item); },
+    deleteOutbox: async (sequence) => { rows = rows.filter((item) => item.sequence !== sequence); },
+    acknowledge: async (_sub, _home, mutationId, value) => {
+      cached = structuredClone(value);
+      rows = rows.filter((item) => item.mutationId !== mutationId);
+    },
+  };
+}
+
+test('online durable runtime immediately replays a pre-existing workspace row', async () => {
+  const state = stateFrom(workspace(0));
+  const row = {
+    sequence: 1, mutationId: 'startup-replay', authSub: 'cook-1', householdId: 'our-home',
+    scope: 'workspace', op: 'pantry.add', payload: { name: 'flour' }, status: 'pending',
+    attempts: 0, nextAttemptAt: 0, lastError: null,
+  };
+  const repo = seededRepo(row);
+  const sendObserved = deferred();
+  const runtime = await initWorkspaceRuntime({
+    state, repo, authSub: 'cook-1', document: { getElementById: () => null, addEventListener() {} },
+    window: { navigator: { onLine: true }, addEventListener() {} }, schedule: () => 1,
+    send: async (request) => {
+      sendObserved.resolve(request.mutationId);
+      return { ok: true, workspace: workspace(1, ['flour']) };
+    },
+  });
+
+  assert.equal(await Promise.race([
+    sendObserved.promise,
+    new Promise((resolve) => setImmediate(() => resolve('startup-drain-not-started'))),
+  ]), 'startup-replay');
+  assert.equal(await runtime.drain(), true);
+  assert.deepEqual(await repo.listOutbox(), []);
+  assert.equal(state.workspaceRevision, 1);
+  assert.deepEqual(state.pantry.map((item) => item.name), ['flour']);
+});
+
 test('workspace runtime refreshes newer D1 authority for the other signed-in household member', async () => {
   const state = stateFrom(workspace(1, ['salt']));
   let interval;
