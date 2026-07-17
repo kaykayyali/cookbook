@@ -5,7 +5,13 @@ import {
   removeShoppingItem,
   setTargetServings,
 } from './cart.js';
-import { addToPantry, normalizePantry, normalizePantryEntry, removeFromPantry } from './pantry.js';
+import {
+  addToPantry,
+  normalizePantry,
+  normalizePantryEntry,
+  removeFromPantry,
+  updatePantryRecord,
+} from './pantry.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const id = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
@@ -37,11 +43,11 @@ export function normalizeWorkspace(value) {
   })).sort((a, b) => a.date.localeCompare(b.date)
     || slotOrder[a.slot] - slotOrder[b.slot]
     || a.id.localeCompare(b.id));
-  workspace.pantry = normalizePantry(workspace.pantry);
+  workspace.pantry = normalizePantry(workspace.pantry, { updatedAt: Number(workspace.updatedAt) || 0 });
   workspace.manualItems = workspace.manualItems.flatMap((item) => {
     const normalized = normalizePantryEntry(item);
     return item?.id && normalized
-      ? [{ id: String(item.id), ...normalized, checked: item.checked === true }]
+      ? [{ ...normalized, id: String(item.id), checked: item.checked === true }]
       : [];
   });
   return workspace;
@@ -76,13 +82,30 @@ export function applyWorkspaceOperation(source, request) {
     case 'pantry.add': {
       const marker = payload.sourceKey ? `${TRANSFER_PREFIX}${payload.sourceKey}` : '';
       if (marker && workspace.shoppingChecked[marker] === true) break;
-      const result = addToPantry(workspace.pantry, payload.item || payload.name);
+      const result = addToPantry(workspace.pantry, payload.item || payload.name, {
+        updatedAt: request.createdAt,
+        overrideUpdatedAt: true,
+      });
       if (!result.item) throw new Error('invalid_pantry_item');
       workspace.pantry = result.pantry;
       if (marker) workspace.shoppingChecked[marker] = true;
       break;
     }
+    case 'pantry.update': {
+      if (!payload.id) throw new Error('invalid_pantry_record_id');
+      workspace.pantry = updatePantryRecord(
+        workspace.pantry,
+        payload.id,
+        payload.item,
+        { updatedAt: request.createdAt },
+      );
+      break;
+    }
     case 'pantry.remove': {
+      if (payload.id) {
+        workspace.pantry = removeFromPantry(workspace.pantry, { id: payload.id });
+        break;
+      }
       const name = canonicalName(payload.name);
       const identity = payload.unit ? { name, unit: payload.unit } : name;
       if (payload.unit && Object.prototype.hasOwnProperty.call(payload, 'countLabel')) {
@@ -118,7 +141,7 @@ export function applyWorkspaceOperation(source, request) {
     case 'shopping.addManual': {
       const normalized = normalizePantryEntry(payload);
       if (!payload.id || !normalized) break;
-      const item = { id: payload.id, ...normalized, checked: payload.checked === true };
+      const item = { ...normalized, id: payload.id, checked: payload.checked === true };
       const index = workspace.manualItems.findIndex((current) => current.id === item.id);
       if (index >= 0) workspace.manualItems[index] = item;
       else workspace.manualItems.push(item);
@@ -160,9 +183,11 @@ export function createWorkspaceSync({ initial, send, onChange = () => {}, onErro
     let response = await send({ ...request, baseRevision: confirmed.revision });
     if (!response.ok && response.status === 409 && isWorkspace(response.workspace)) {
       confirmed = normalizeWorkspace(response.workspace);
-      rebuild();
-      publish({ optimistic: true, rebased: true });
-      if (SAFE_REBASE.has(request.op)) response = await send({ ...request, baseRevision: confirmed.revision });
+      if (SAFE_REBASE.has(request.op)) {
+        rebuild();
+        publish({ optimistic: true, rebased: true });
+        response = await send({ ...request, baseRevision: confirmed.revision });
+      }
     }
     const index = pending.indexOf(request);
     if (response.ok && isWorkspace(response.workspace)) {
@@ -215,7 +240,7 @@ export function createWorkspaceSync({ initial, send, onChange = () => {}, onErro
       return true;
     },
     mutate(op, payload) {
-      return enqueue({ mutationId: makeId(), op, payload: clone(payload || {}) });
+      return enqueue({ mutationId: makeId(), op, payload: clone(payload || {}), createdAt: Date.now() });
     },
   };
 }

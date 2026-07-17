@@ -4,7 +4,7 @@
 
 import { toast } from '../lib/dom.js';
 import { save as persist } from '../lib/store.js';
-import { togglePantry } from '../lib/pantry.js';
+import { normalizePantryEntry, togglePantry } from '../lib/pantry.js';
 import {
   addRecipeSelection,
   isNormalizedIngredient,
@@ -404,15 +404,12 @@ export function initDetail({
       ings.addEventListener('click', (e) => {
         const item = e.target.closest('.detail-ing-item');
         if (!item || !item.dataset.ing) return;
-        const { pantry, added, name, item: pantryItem } = togglePantry(state.pantry, item.dataset.ing.toLowerCase());
+        const input = normalizePantryEntry(item.dataset.ing.toLowerCase(), { updatedAt: Date.now() });
+        const { pantry, added, name, item: pantryItem } = togglePantry(state.pantry, input);
         state.pantry = pantry;
         if (mutate) void mutate(added ? 'pantry.add' : 'pantry.remove', added
           ? { item: pantryItem }
-          : {
-            name,
-            unit: pantryItem?.unit,
-            ...(pantryItem?.unit === 'count' ? { countLabel: pantryItem.countLabel || '' } : {}),
-          });
+          : { id: pantryItem?.id });
         persist();
         renderIngredients();
         if (onChange) onChange();

@@ -26,7 +26,8 @@ const json = (route, body, status = 200) => route.fulfill({
 function createServerState() {
   return {
     workspace: {
-      householdId: 'household-home', revision: 0, plan: [], cart: [], pantry: [],
+      householdId: 'household-home', revision: 0, plan: [], cart: [],
+      pantry: ['2 cups olive oil', 'to 4 basil leaves'],
       shoppingChecked: {}, manualItems: [], recentMutations: [],
     },
     events: [],
@@ -197,6 +198,17 @@ test('a household plans every meal period and remembers cooking without waiting 
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
   const tonight = page.locator('.week-day.is-tonight');
   await tonight.waitFor();
+
+  await page.locator('[data-panel="pantry"]').click();
+  const pantry = page.locator('#pantry-grid');
+  await pantry.getByText('Olive Oil', { exact: true }).waitFor();
+  assert.equal(await pantry.getByText('2 cups', { exact: true }).count(), 1);
+  assert.equal(await pantry.getByText('Not sure', { exact: true }).count(), 1);
+  assert.equal(await pantry.getByText(/As needed/i).count(), 0);
+  const pantryIds = await pantry.locator('[data-pantry-id]').evaluateAll((nodes) => nodes.map((node) => node.dataset.pantryId));
+  assert.equal(pantryIds.length, 2);
+  assert.ok(pantryIds.every(Boolean));
+  await page.locator('[data-panel="week"]').click();
 
   async function addMeal(slot) {
     if (slot !== 'dinner') {

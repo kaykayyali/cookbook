@@ -144,3 +144,39 @@ test('terminal failure rolls back and exposes a retry action', async () => {
   assert.equal(await errors[0].retry(), true);
   assert.deepEqual(sync.current().pantry.map((item) => item.name), ['flour', 'salt']);
 });
+
+test('optimistic pantry.update targets one stable record ID', () => {
+  const initial = workspace({ pantry: ['to 4 basil leaves', 'salt'] });
+  const normalized = applyWorkspaceOperation(initial, { op: 'unknown.noop', payload: {} });
+  const target = normalized.pantry.find((item) => item.raw === 'to 4 basil leaves');
+  const next = applyWorkspaceOperation(normalized, {
+    op: 'pantry.update', createdAt: 300, payload: {
+      id: target.id,
+      item: {
+        raw: '4 basil leaves', name: 'basil leaf', displayName: 'Basil Leaves',
+        quantity: 4, unit: 'count', kind: 'indivisible', confidence: 0.95,
+      },
+    },
+  });
+  assert.equal(next.pantry.find((item) => item.id === target.id).amountState, 'known');
+  assert.equal(next.pantry.find((item) => item.id === target.id).updatedAt, 300);
+  assert.ok(next.pantry.some((item) => item.name === 'salt'));
+});
+
+test('non-rebasable pantry.update rolls back cleanly when another member removed the record', async () => {
+  const initial = workspace({ revision: 1, pantry: ['to 4 basil leaves'] });
+  const target = applyWorkspaceOperation(initial, { op: 'unknown.noop', payload: {} }).pantry[0];
+  const errors = [];
+  const sync = createWorkspaceSync({
+    initial,
+    makeId: () => 'edit-removed-record',
+    send: async () => ({ ok: false, status: 409, workspace: workspace({ revision: 2, pantry: [] }) }),
+    onError: (error) => errors.push(error),
+  });
+  assert.equal(await sync.mutate('pantry.update', {
+    id: target.id,
+    item: { ...target, raw: '4 basil leaves', quantity: 4, unit: 'count', confidence: 0.95 },
+  }), false);
+  assert.deepEqual(sync.current().pantry, []);
+  assert.equal(errors[0].code, 'revision_conflict');
+});

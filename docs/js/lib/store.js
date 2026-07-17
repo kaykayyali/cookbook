@@ -90,11 +90,11 @@ export function applyWorkspace(workspace, target = state) {
   target.workspaceRevision = workspace.revision;
   target.plan = workspace.plan;
   target.cart = workspace.cart;
-  target.pantry = normalizePantry(workspace.pantry);
+  target.pantry = normalizePantry(workspace.pantry, { updatedAt: Number(workspace.updatedAt) || 0 });
   target.shoppingChecked = workspace.shoppingChecked;
   target.manualItems = (Array.isArray(workspace.manualItems) ? workspace.manualItems : []).flatMap((item) => {
     const normalized = normalizePantryEntry(item);
-    return item?.id && normalized ? [{ id: String(item.id), ...normalized, checked: item.checked === true }] : [];
+    return item?.id && normalized ? [{ ...normalized, id: String(item.id), checked: item.checked === true }] : [];
   });
   target.workspaceLoaded = true;
   return true;

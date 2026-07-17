@@ -104,10 +104,14 @@ test('authoritative pantry mutations accumulate compatible purchased quantities'
     name: 'eggs', displayName: 'Eggs', quantity: 3, unit: 'count', kind: 'indivisible',
     countLabel: '', category: 'dairy-eggs',
   } })).workspace;
-  assert.deepEqual(workspace.pantry, [{
+  assert.deepEqual(workspace.pantry.map(({
+    name, displayName, quantity, unit, kind, countLabel, category, amountState,
+  }) => ({ name, displayName, quantity, unit, kind, countLabel, category, amountState })), [{
     name: 'egg', displayName: 'Eggs', quantity: 12, unit: 'count', kind: 'indivisible',
-    countLabel: '', category: 'dairy-eggs',
+    countLabel: '', category: 'dairy-eggs', amountState: 'known',
   }]);
+  assert.match(workspace.pantry[0].id, /^pantry-/);
+  assert.equal(workspace.pantry[0].raw, '9 count Eggs; 3 count Eggs');
 });
 
 test('authoritative Shopping transfer source is idempotent across distinct mutations', () => {
@@ -236,4 +240,23 @@ test('removing generated and manual rows prunes their authoritative checked stat
   workspace = applyWorkspaceMutation(workspace, mutation('remove-egg', 'shopping.removeIngredient', { name: 'egg' })).workspace;
   workspace = applyWorkspaceMutation(workspace, mutation('remove-manual', 'shopping.removeManual', { id: 'm1' })).workspace;
   assert.deepEqual(workspace.shoppingChecked, {});
+});
+
+test('authoritative Pantry update preserves record identity and server timestamp', () => {
+  let workspace = applyWorkspaceMutation(
+    emptyWorkspace('our-home'),
+    mutation('legacy-add', 'pantry.add', { name: 'to 4 basil leaves' }),
+    { now: 100 },
+  ).workspace;
+  const original = workspace.pantry[0];
+  workspace = applyWorkspaceMutation(workspace, mutation('correct', 'pantry.update', {
+    id: original.id,
+    item: {
+      raw: '4 basil leaves', name: 'basil leaf', displayName: 'Basil Leaves',
+      quantity: 4, unit: 'count', kind: 'indivisible', confidence: 0.95,
+    },
+  }), { now: 200 }).workspace;
+  assert.equal(workspace.pantry[0].id, original.id);
+  assert.equal(workspace.pantry[0].amountState, 'known');
+  assert.equal(workspace.pantry[0].updatedAt, 200);
 });

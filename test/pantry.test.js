@@ -14,6 +14,7 @@ import {
   normalizePantry,
   normalizePantryEntry,
   formatPantryAmount,
+  updatePantryRecord,
 } from '../docs/js/lib/pantry.js';
 
 test('haveIngredient matches by substring', () => {
@@ -108,10 +109,17 @@ test('addToPantry adds a new lowercase item immutably', () => {
   });
   assert.equal(added, true);
   assert.equal(name, 'olive oil');
-  assert.deepEqual(item, {
-    name: 'olive oil', displayName: 'Olive Oil', quantity: 8,
-    unit: 'ounce', kind: 'divisible', countLabel: '', category: 'pantry',
-  });
+  assert.deepEqual(
+    (({ name, displayName, quantity, unit, kind, countLabel, category, amountState }) => (
+      { name, displayName, quantity, unit, kind, countLabel, category, amountState }
+    ))(item),
+    {
+      name: 'olive oil', displayName: 'Olive Oil', quantity: 8,
+      unit: 'ounce', kind: 'divisible', countLabel: '', category: 'pantry', amountState: 'known',
+    },
+  );
+  assert.match(item.id, /^pantry-/);
+  assert.equal(item.raw, '8 ounce Olive Oil');
   assert.equal(pantry.length, 2);
   assert.deepEqual(before, [normalizePantryEntry('eggs')], 'original array unchanged');
 });
@@ -216,13 +224,21 @@ test('normalizePantry migrates strings and legacy quantity objects to normalized
 });
 
 test('normalizePantryEntry preserves the shared Shopping quantity contract', () => {
-  assert.deepEqual(normalizePantryEntry({
+  const record = normalizePantryEntry({
     name: 'Milk', displayName: 'Whole Milk', quantity: 17.6,
     unit: 'ounce', kind: 'divisible', countLabel: '', category: 'dairy-eggs',
-  }), {
-    name: 'milk', displayName: 'Whole Milk', quantity: 17.6,
-    unit: 'ounce', kind: 'divisible', countLabel: '', category: 'dairy-eggs',
   });
+  assert.deepEqual(
+    (({ name, displayName, quantity, unit, kind, countLabel, category, amountState, measurementFamily }) => ({
+      name, displayName, quantity, unit, kind, countLabel, category, amountState, measurementFamily,
+    }))(record),
+    {
+      name: 'milk', displayName: 'Whole Milk', quantity: 17.6,
+      unit: 'ounce', kind: 'divisible', countLabel: '', category: 'dairy-eggs',
+      amountState: 'known', measurementFamily: 'water-equivalent',
+    },
+  );
+  assert.match(record.id, /^pantry-/);
 });
 
 test('black pepper normalizes as a Pantry spice and displays in practical teaspoons', () => {
@@ -234,4 +250,71 @@ test('black pepper normalizes as a Pantry spice and displays in practical teaspo
 test('normalizePantry tolerates non-arrays', () => {
   assert.deepEqual(normalizePantry(null), []);
   assert.deepEqual(normalizePantry(undefined), []);
+});
+
+test('legacy Pantry migration creates deterministic editable records without losing raw evidence', () => {
+  const legacy = [
+    '2 cups olive oil',
+    'to 4 basil leaves',
+    { name: 'Milk', displayName: 'Whole Milk', quantity: 12, unit: 'ounce', kind: 'divisible' },
+  ];
+  const first = normalizePantry(legacy);
+  const second = normalizePantry(legacy);
+  assert.deepEqual(second, first, 'read-time migration is deterministic and idempotent');
+  assert.equal(new Set(first.map((item) => item.id)).size, 3);
+  for (const item of first) {
+    assert.match(item.id, /^pantry-[a-z0-9-]+$/);
+    assert.ok(['known', 'unknown'].includes(item.amountState));
+    assert.ok(['count', 'water-equivalent', 'unknown'].includes(item.measurementFamily));
+    assert.equal(typeof item.raw, 'string');
+    assert.equal(typeof item.confidence, 'number');
+    assert.equal(item.normalizationVersion, 1);
+    assert.equal(typeof item.updatedAt, 'number');
+  }
+  const malformed = first.find((item) => item.raw === 'to 4 basil leaves');
+  assert.ok(malformed, 'malformed original input remains available for later correction');
+  assert.equal(malformed.amountState, 'unknown');
+  assert.equal(formatPantryAmount(malformed), 'Not sure');
+});
+
+test('Pantry amount state hides missing and low-confidence guesses but keeps known canonical conversions', () => {
+  const known = normalizePantryEntry('2 cups olive oil');
+  const lowConfidence = normalizePantryEntry({
+    raw: 'maybe 4 basil leaves', name: 'basil leaf', displayName: 'Basil Leaves',
+    quantity: 4, unit: 'count', kind: 'indivisible', confidence: 0.45,
+  });
+  assert.equal(known.amountState, 'known');
+  assert.equal(known.measurementFamily, 'water-equivalent');
+  assert.equal(known.quantity, 16, 'water-equivalent canonical conversion is unchanged');
+  assert.equal(formatPantryAmount(known), '2 cups');
+  assert.equal(lowConfidence.amountState, 'unknown');
+  assert.equal(formatPantryAmount(lowConfidence), 'Not sure');
+  assert.doesNotMatch(formatPantryAmount(lowConfidence), /as needed/i);
+});
+
+test('updatePantryRecord edits by stable ID and advances only that record timestamp', () => {
+  const current = normalizePantry(['to 4 basil leaves', 'salt']);
+  const original = current.find((item) => item.raw === 'to 4 basil leaves');
+  const salt = current.find((item) => item.name === 'salt');
+  const updated = updatePantryRecord(current, original.id, {
+    raw: '4 basil leaves', name: 'basil leaf', displayName: 'Basil Leaves',
+    quantity: 4, unit: 'count', kind: 'indivisible', confidence: 0.95,
+  }, { updatedAt: 200 });
+  assert.equal(updated.length, 2);
+  assert.equal(updated.find((item) => item.id === original.id).id, original.id, 'identity survives correction');
+  assert.equal(updated.find((item) => item.id === original.id).amountState, 'known');
+  assert.equal(updated.find((item) => item.id === original.id).updatedAt, 200);
+  assert.deepEqual(updated.find((item) => item.id === salt.id), salt, 'unrelated Pantry records are untouched');
+  assert.throws(() => updatePantryRecord(updated, 'missing-id', 'basil'), /pantry_record_not_found/);
+});
+
+test('migration deterministically repairs duplicate historical record IDs', () => {
+  const records = normalizePantry([
+    { id: 'duplicate-id', name: 'salt', quantity: null, unit: 'qualitative' },
+    { id: 'duplicate-id', name: 'pepper', quantity: null, unit: 'qualitative' },
+  ]);
+  assert.equal(new Set(records.map((record) => record.id)).size, 2);
+  assert.equal(records.find((record) => record.name === 'salt').id, 'duplicate-id');
+  assert.match(records.find((record) => record.name === 'pepper').id, /^pantry-/);
+  assert.deepEqual(normalizePantry(records), records, 'repaired IDs remain stable on later reads');
 });

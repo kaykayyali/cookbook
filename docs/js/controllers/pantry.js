@@ -9,6 +9,7 @@ import {
   normalizePantry,
   normalizePantryEntry,
   formatPantryAmount,
+  updatePantryRecord,
 } from '../lib/pantry.js';
 import { save as persist } from '../lib/store.js';
 import { toast } from '../lib/dom.js';
@@ -127,8 +128,9 @@ export function initPantry({ state, document = globalThis.document, onChange = n
   }
 
   function add(raw) {
-    const delta = normalizePantryEntry(raw);
-    const { pantry, added, name, item } = addToPantry(state.pantry, raw);
+    const updatedAt = Date.now();
+    const delta = normalizePantryEntry(raw, { updatedAt });
+    const { pantry, added, name, item } = addToPantry(state.pantry, delta);
     if (!name) return null;
     if (!added) return null;
     state.pantry = pantry;
@@ -148,15 +150,30 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     inp.focus();
   }
 
+  function update(recordId, value) {
+    const updatedAt = Date.now();
+    state.pantry = updatePantryRecord(state.pantry, recordId, value, { updatedAt });
+    const item = state.pantry.find((entry) => entry.id === recordId);
+    if (mutate) void mutate('pantry.update', { id: recordId, item });
+    persist();
+    render();
+    if (onChange) onChange();
+    return item;
+  }
+
   function remove(item) {
     state.pantry = removeFromPantry(state.pantry, item);
+    const id = typeof item === 'object' ? item?.id : undefined;
     const name = typeof item === 'string' ? item : item?.name;
     const unit = typeof item === 'object' ? item?.unit : undefined;
     const countLabel = typeof item === 'object' ? item?.countLabel : undefined;
     if (mutate) void mutate('pantry.remove', {
-      name,
-      ...(unit ? { unit } : {}),
-      ...(unit === 'count' ? { countLabel: countLabel || '' } : {}),
+      ...(id ? { id } : {}),
+      ...(!id ? {
+        name,
+        ...(unit ? { unit } : {}),
+        ...(unit === 'count' ? { countLabel: countLabel || '' } : {}),
+      } : {}),
     });
     persist();
     render();
@@ -171,7 +188,12 @@ export function initPantry({ state, document = globalThis.document, onChange = n
         if (e.target.closest('[data-action="clear-pantry-filters"]')) { clearFilters(); return; }
         const btn = e.target.closest('.pantry-remove');
         if (!btn) return;
-        remove({ name: btn.dataset.item, unit: btn.dataset.unit, countLabel: btn.dataset.countLabel });
+        remove({
+          id: btn.dataset.pantryRecordId,
+          name: btn.dataset.item,
+          unit: btn.dataset.unit,
+          countLabel: btn.dataset.countLabel,
+        });
       });
     }
     const addBtn = document.getElementById('pantry-add-btn');
@@ -192,13 +214,13 @@ export function initPantry({ state, document = globalThis.document, onChange = n
   }
 
   wireGrid();
-  return { render, add, addFromInput, remove, setQuery, setCategory };
+  return { render, add, addFromInput, update, remove, setQuery, setCategory };
 }
 
 function pantryTagHTML(item, category = pantryCategory(item)) {
   const name = item.displayName || item.name;
   const amount = formatPantryAmount(item);
-  return `<span class="pantry-tag" data-category="${category}"><span class="pantry-category-dot" aria-hidden="true"></span><span class="pantry-tag-copy"><span>${esc(name)}</span><small>${esc(amount)}</small></span>
-       <button class="pantry-remove" data-item="${esc(item.name)}" data-unit="${esc(item.unit)}" data-count-label="${esc(item.countLabel)}" aria-label="Remove ${esc(name)}, ${esc(amount)}">${'<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>'}</button>
+  return `<span class="pantry-tag" data-pantry-id="${esc(item.id)}" data-category="${category}"><span class="pantry-category-dot" aria-hidden="true"></span><span class="pantry-tag-copy"><span>${esc(name)}</span><small>${esc(amount)}</small></span>
+       <button class="pantry-remove" data-pantry-record-id="${esc(item.id)}" data-item="${esc(item.name)}" data-unit="${esc(item.unit)}" data-count-label="${esc(item.countLabel)}" aria-label="Remove ${esc(name)}, ${esc(amount)}">${'<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>'}</button>
      </span>`;
 }

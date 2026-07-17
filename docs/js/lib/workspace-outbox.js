@@ -33,7 +33,15 @@ export async function createWorkspaceOutbox({
   const persisting = new Set();
 
   const rebuild = () => {
-    optimistic = rows.reduce((state, row) => applyWorkspaceOperation(state, row), clone(confirmed));
+    let next = clone(confirmed);
+    for (const row of rows) {
+      try {
+        next = applyWorkspaceOperation(next, row);
+      } catch (error) {
+        if (row.status !== 'failed') throw error;
+      }
+    }
+    optimistic = next;
   };
   const publish = (meta = {}) => {
     rebuild();
@@ -103,8 +111,8 @@ export async function createWorkspaceOutbox({
       if (response?.status === 409 && isWorkspace(response.workspace)) {
         confirmed = normalizeWorkspace(response.workspace);
         await repo.putWorkspace(authSub, householdId, confirmed);
-        publish({ rebased: true, queued: true });
         if (SAFE_REBASE.has(row.op)) {
+          publish({ rebased: true, queued: true });
           try { response = await sendOnce(row); } catch { response = { ok: false, status: 0 }; }
           if (response?.ok && isWorkspace(response.workspace) && response.workspace.revision >= confirmed.revision) {
             confirmed = normalizeWorkspace(response.workspace);
@@ -116,7 +124,7 @@ export async function createWorkspaceOutbox({
         }
         await setRow(row, { status: 'failed', lastError: 'revision_conflict' });
         status('failed', { sequence: row.sequence, code: 'revision_conflict' });
-        publish({ queued: true });
+        publish({ rebased: true, queued: true });
         return false;
       }
       const permanent = [400, 403, 404].includes(response?.status);

@@ -2,6 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { normalizePantry } from '../../docs/js/lib/pantry.js';
 
 if (typeof globalThis.localStorage === 'undefined') {
   globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
@@ -83,9 +84,17 @@ test('add parses free-form quantity text into the shared normalized contract', (
   const state = { pantry: [], recipes: [] };
   const ctrl = mod.initPantry({ state, document });
   const result = ctrl.add('2 cups olive oil');
-  assert.deepEqual(result, pantryItem('olive oil', {
-    displayName: 'Olive Oil', quantity: 16, unit: 'ounce', kind: 'divisible', category: 'pantry',
-  }));
+  assert.deepEqual(
+    (({ name, displayName, quantity, unit, kind, countLabel, category, amountState }) => (
+      { name, displayName, quantity, unit, kind, countLabel, category, amountState }
+    ))(result),
+    {
+      name: 'olive oil', displayName: 'Olive Oil', quantity: 16, unit: 'ounce',
+      kind: 'divisible', countLabel: '', category: 'pantry', amountState: 'known',
+    },
+  );
+  assert.match(result.id, /^pantry-/);
+  assert.equal(result.raw, '2 cups olive oil');
   assert.deepEqual(state.pantry, [result]);
 });
 
@@ -105,7 +114,12 @@ test('add without a stated quantity remains a compatible qualitative entry', () 
   const state = { pantry: [], recipes: [] };
   const ctrl = initPantryFn(mod, state, document);
   ctrl.add('  Olive Oil  ');
-  assert.deepEqual(state.pantry, [pantryItem('olive oil', { displayName: 'Olive Oil', category: 'pantry' })]);
+  assert.deepEqual(state.pantry.map(({ name, displayName, quantity, unit, category, amountState, raw }) => ({
+    name, displayName, quantity, unit, category, amountState, raw,
+  })), [{
+    name: 'olive oil', displayName: 'Olive Oil', quantity: null, unit: 'qualitative',
+    category: 'pantry', amountState: 'unknown', raw: 'Olive Oil',
+  }]);
 });
 
 function initPantryFn(m, state, document) {
@@ -138,12 +152,13 @@ test('shared pantry add and remove emit absolute workspace operations', () => {
   const ctrl = mod.initPantry({ state, document, mutate: (op, payload) => calls.push({ op, payload }) });
   ctrl.add('2 cups Olive Oil');
   ctrl.remove('olive oil');
-  assert.deepEqual(calls, [
-    { op: 'pantry.add', payload: { item: pantryItem('olive oil', {
-      displayName: 'Olive Oil', quantity: 16, unit: 'ounce', kind: 'divisible', category: 'pantry',
-    }) } },
-    { op: 'pantry.remove', payload: { name: 'olive oil' } },
-  ]);
+  assert.equal(calls[0].op, 'pantry.add');
+  assert.deepEqual(
+    (({ name, quantity, unit, amountState, raw }) => ({ name, quantity, unit, amountState, raw }))(calls[0].payload.item),
+    { name: 'olive oil', quantity: 16, unit: 'ounce', amountState: 'known', raw: '2 cups Olive Oil' },
+  );
+  assert.match(calls[0].payload.item.id, /^pantry-/);
+  assert.deepEqual(calls[1], { op: 'pantry.remove', payload: { name: 'olive oil' } });
 });
 
 test('adding to an existing Pantry quantity sends only the new amount as the workspace delta', () => {
@@ -228,4 +243,36 @@ test('render with empty pantry shows the empty hint', () => {
   const ctrl = mod.initPantry({ state, document });
   ctrl.render();
   assert.match(grid.innerHTML, /empty|pantry/i, 'empty state should render');
+});
+
+test('render identifies records stably and displays unknown quantities exactly as Not sure', () => {
+  const { document, grid } = makeDom();
+  const state = { pantry: [{
+    id: 'pantry-basil', raw: 'to 4 basil leaves', name: 'basil leaf', displayName: 'Basil Leaves',
+    quantity: 4, unit: 'count', kind: 'indivisible', countLabel: '', category: 'produce',
+    confidence: 0.4, amountState: 'unknown', measurementFamily: 'count',
+    normalizationVersion: 1, updatedAt: 10,
+  }], recipes: [] };
+  mod.initPantry({ state, document }).render();
+  assert.match(grid.innerHTML, /data-pantry-id="pantry-basil"/);
+  assert.match(grid.innerHTML, />Not sure</);
+  assert.doesNotMatch(grid.innerHTML, /As needed/i);
+});
+
+test('controller exposes update-by-ID semantics for a later editor without building the editor UI', () => {
+  const { document } = makeDom();
+  const [record] = normalizePantry(['to 4 basil leaves']);
+  const state = { pantry: [record], recipes: [] };
+  const calls = [];
+  const ctrl = mod.initPantry({ state, document, mutate: (op, payload) => calls.push({ op, payload }) });
+  assert.equal(typeof ctrl.update, 'function');
+  const updated = ctrl.update(record.id, {
+    raw: '4 basil leaves', name: 'basil leaf', displayName: 'Basil Leaves',
+    quantity: 4, unit: 'count', kind: 'indivisible', confidence: 0.95,
+  });
+  assert.equal(updated.id, record.id);
+  assert.equal(state.pantry[0].amountState, 'known');
+  assert.equal(calls[0].op, 'pantry.update');
+  assert.equal(calls[0].payload.id, record.id);
+  assert.equal(calls[0].payload.item.id, record.id);
 });

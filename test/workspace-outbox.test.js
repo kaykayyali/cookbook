@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { indexedDB } from 'fake-indexeddb';
 import { createWorkspaceOutbox } from '../docs/js/lib/workspace-outbox.js';
+import { applyWorkspaceOperation } from '../docs/js/lib/workspace-sync.js';
 import { openOfflineDb } from '../docs/js/lib/offline-db.js';
 
 const base = (overrides = {}) => ({
@@ -274,4 +275,96 @@ test('real IndexedDB repository replays a workspace mutation stranded with schem
   assert.deepEqual(manager.current().pantry.map((item) => item.name), ['salt']);
   assert.deepEqual(await repo.listOutbox('cook-1', 'our-home'), []);
   repo.close();
+});
+
+test('offline pantry.update replays by stable ID and converges after reload', async () => {
+  const initial = base({ pantry: ['to 4 basil leaves'] });
+  const repo = memoryRepo(initial);
+  let online = false;
+  const sent = [];
+  let manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => online,
+    makeId: () => 'edit-basil', send: async (request) => {
+      sent.push(request);
+      const workspace = applyWorkspaceOperation(base({ revision: 1, pantry: ['to 4 basil leaves'] }), request);
+      return { ok: true, workspace: { ...workspace, revision: 2 } };
+    },
+  });
+  const target = manager.current().pantry[0];
+  await manager.mutate('pantry.update', { id: target.id, item: {
+    raw: '4 basil leaves', name: 'basil leaf', displayName: 'Basil Leaves',
+    quantity: 4, unit: 'count', kind: 'indivisible', confidence: 0.95,
+  } });
+  manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => online,
+    send: async (request) => {
+      sent.push(request);
+      const workspace = applyWorkspaceOperation(base({ revision: 1, pantry: ['to 4 basil leaves'] }), request);
+      return { ok: true, workspace: { ...workspace, revision: 2 } };
+    },
+  });
+  assert.equal(manager.current().pantry[0].id, target.id);
+  assert.equal(manager.current().pantry[0].amountState, 'known');
+  online = true;
+  assert.equal(await manager.drain(), true);
+  assert.equal(sent[0].payload.id, target.id);
+  assert.equal(manager.current().pantry[0].id, target.id);
+  assert.equal(manager.current().pantry[0].amountState, 'known');
+});
+
+test('concurrent remote Pantry edit blocks local update replay instead of overwriting it', async () => {
+  const initial = base({ revision: 1, pantry: ['to 4 basil leaves'] });
+  const repo = memoryRepo(initial);
+  let online = false;
+  const statuses = [];
+  let sends = 0;
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => online,
+    makeId: () => 'local-edit', onStatus: (status) => statuses.push(status),
+    send: async () => {
+      sends += 1;
+      const targetId = manager.current().pantry[0].id;
+      const remote = applyWorkspaceOperation(initial, {
+        op: 'pantry.update', createdAt: 400, payload: {
+          id: targetId,
+          item: {
+            raw: '6 basil leaves', name: 'basil leaf', displayName: 'Basil Leaves',
+            quantity: 6, unit: 'count', kind: 'indivisible', confidence: 0.95,
+          },
+        },
+      });
+      return { ok: false, status: 409, workspace: { ...remote, revision: 2 } };
+    },
+  });
+  const target = manager.current().pantry[0];
+  await manager.mutate('pantry.update', { id: target.id, item: {
+    raw: '4 basil leaves', name: 'basil leaf', displayName: 'Basil Leaves',
+    quantity: 4, unit: 'count', kind: 'indivisible', confidence: 0.95,
+  } });
+  online = true;
+  assert.equal(await manager.drain(), false);
+  assert.equal(sends, 1, 'pantry.update is not blindly rebased over another member edit');
+  assert.equal(manager.pending(), 1);
+  assert.equal(statuses.at(-1).code, 'revision_conflict');
+});
+
+test('remote Pantry removal blocks an offline update without crashing replay', async () => {
+  const initial = base({ revision: 1, pantry: ['to 4 basil leaves'] });
+  const repo = memoryRepo(initial);
+  let online = false;
+  const statuses = [];
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => online,
+    makeId: () => 'edit-removed', onStatus: (status) => statuses.push(status),
+    send: async () => ({ ok: false, status: 409, workspace: base({ revision: 2, pantry: [] }) }),
+  });
+  const target = manager.current().pantry[0];
+  await manager.mutate('pantry.update', { id: target.id, item: {
+    ...target, raw: '4 basil leaves', quantity: 4, unit: 'count', confidence: 0.95,
+  } });
+  online = true;
+  assert.equal(await manager.drain(), false);
+  assert.equal(manager.pending(), 1);
+  assert.deepEqual(manager.current().pantry, [], 'remote deletion remains visible while the failed edit awaits discard');
+  assert.equal(statuses.at(-1).code, 'revision_conflict');
 });

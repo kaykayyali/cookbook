@@ -17,7 +17,7 @@ import { save as persist } from '../lib/store.js';
 import { toast } from '../lib/dom.js';
 import { cartGroupsHTML, emptyCartHTML } from '../components/cart.js';
 import { regeneratePlanRangeCart } from '../lib/plan-range.js';
-import { addToPantry } from '../lib/pantry.js';
+import { addToPantry, normalizePantryEntry } from '../lib/pantry.js';
 
 const uid = () => globalThis.crypto?.randomUUID?.() || `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const TRANSFER_PREFIX = 'pantry-transfer:';
@@ -178,7 +178,8 @@ export function initCart({
     if (mutate) void mutate('shopping.setChecked', { key: name, checked: completed });
     if (completed && state.shoppingChecked[transferMarker(name)] !== true) {
       const purchased = aggregateCart(state.cart).find((item) => item.name === name);
-      const transfer = purchased ? {
+      const transferSource = purchased ? {
+        raw: purchased.raw,
         name: purchased.name,
         displayName: purchased.displayName,
         quantity: purchased.purchaseQuantity,
@@ -186,7 +187,10 @@ export function initCart({
         kind: purchased.kind,
         countLabel: purchased.countLabel,
         category: purchased.category,
+        confidence: purchased.confidence,
+        normalizationVersion: NORMALIZATION_VERSION,
       } : normalizeIngredient(name);
+      const transfer = normalizePantryEntry(transferSource, { updatedAt: Date.now() });
       const result = addToPantry(state.pantry, transfer);
       state.pantry = result.pantry;
       state.shoppingChecked[transferMarker(name)] = true;
@@ -222,6 +226,7 @@ export function initCart({
     const normalized = normalizeIngredient(text);
     const item = {
       id: uid(),
+      raw: normalized.raw,
       name: normalized.name,
       displayName: normalized.displayName,
       quantity: normalized.quantity,
@@ -229,6 +234,8 @@ export function initCart({
       kind: normalized.kind,
       countLabel: normalized.countLabel,
       category: normalized.category,
+      confidence: normalized.confidence,
+      normalizationVersion: NORMALIZATION_VERSION,
     };
     state.manualItems ||= [];
     state.manualItems.push(item);
@@ -257,10 +264,11 @@ export function initCart({
     if (mutate) void mutate('shopping.setChecked', { key, checked });
     if (checked && state.shoppingChecked[transferMarker(key)] !== true) {
       const item = state.manualItems.find((entry) => entry.id === id);
-      const result = addToPantry(state.pantry, item);
+      const transfer = normalizePantryEntry(item, { updatedAt: Date.now() });
+      const result = addToPantry(state.pantry, transfer);
       state.pantry = result.pantry;
       state.shoppingChecked[transferMarker(key)] = true;
-      if (mutate) void mutate('pantry.add', { item, sourceKey: key });
+      if (mutate) void mutate('pantry.add', { item: transfer, sourceKey: key });
     }
     changed();
     return true;

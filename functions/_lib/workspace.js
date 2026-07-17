@@ -6,7 +6,13 @@ import {
   removeShoppingItem,
   setTargetServings,
 } from '../../docs/js/lib/cart.js';
-import { addToPantry, normalizePantry, normalizePantryEntry, removeFromPantry } from '../../docs/js/lib/pantry.js';
+import {
+  addToPantry,
+  normalizePantry,
+  normalizePantryEntry,
+  removeFromPantry,
+  updatePantryRecord,
+} from '../../docs/js/lib/pantry.js';
 
 const PLAN_TYPES = new Set(['recipe', 'leftovers', 'dining-out', 'open']);
 const PLAN_STATUSES = new Set(['active', 'skipped', 'cooked']);
@@ -22,7 +28,7 @@ function normalizeManualItems(raw) {
   return (Array.isArray(raw) ? raw : []).flatMap((item) => {
     const normalized = normalizePantryEntry(item);
     const id = text(item?.id, 100);
-    return id && normalized ? [{ id, ...normalized, checked: item.checked === true }] : [];
+    return id && normalized ? [{ ...normalized, id, checked: item.checked === true }] : [];
   });
 }
 
@@ -157,13 +163,32 @@ function applyOperation(workspace, operation, context) {
       const sourceKey = text(payload.sourceKey, 300);
       const marker = sourceKey ? `${TRANSFER_PREFIX}${sourceKey}` : '';
       if (marker && workspace.shoppingChecked[marker] === true) break;
-      const result = addToPantry(workspace.pantry, payload.item || payload.name);
+      const result = addToPantry(workspace.pantry, payload.item || payload.name, {
+        updatedAt: context.now,
+        overrideUpdatedAt: true,
+      });
       if (!result.item) throw new Error('invalid_pantry_item');
       workspace.pantry = result.pantry;
       if (marker) workspace.shoppingChecked[marker] = true;
       break;
     }
+    case 'pantry.update': {
+      const recordId = text(payload.id, 100);
+      if (!recordId) throw new Error('invalid_pantry_record_id');
+      workspace.pantry = updatePantryRecord(
+        workspace.pantry,
+        recordId,
+        payload.item,
+        { updatedAt: context.now },
+      );
+      break;
+    }
     case 'pantry.remove': {
+      const recordId = text(payload.id, 100);
+      if (recordId) {
+        workspace.pantry = removeFromPantry(workspace.pantry, { id: recordId });
+        break;
+      }
       const name = canonicalName(payload.name);
       const identity = payload.unit ? { name, unit: payload.unit } : name;
       if (payload.unit && Object.prototype.hasOwnProperty.call(payload, 'countLabel')) {
@@ -235,18 +260,19 @@ function applyOperation(workspace, operation, context) {
 export function applyWorkspaceMutation(current, operation, context = {}) {
   const mutationId = text(operation?.mutationId, 200);
   if (!mutationId || !text(operation?.op, 100)) throw new Error('invalid_workspace_mutation');
+  const now = Number(context.now) || Date.now();
   const normalized = {
     ...clone(current),
-    pantry: normalizePantry(current.pantry),
+    pantry: normalizePantry(current.pantry, { updatedAt: Number(current.updatedAt) || 0 }),
     manualItems: normalizeManualItems(current.manualItems),
   };
   if (normalized.recentMutations.includes(mutationId)) {
     return { workspace: normalized, duplicate: true };
   }
   const workspace = normalized;
-  applyOperation(workspace, operation, context);
+  applyOperation(workspace, operation, { ...context, now });
   workspace.revision += 1;
-  workspace.updatedAt = Number(context.now) || Date.now();
+  workspace.updatedAt = now;
   workspace.recentMutations = [...workspace.recentMutations, mutationId].slice(-MAX_RECENT_MUTATIONS);
   return { workspace, duplicate: false };
 }
@@ -314,7 +340,7 @@ export function workspaceFromRow(row, householdId) {
     revision: Number(row.revision) || 0,
     plan: Array.isArray(plan) ? plan : [],
     cart: Array.isArray(cart) ? cart : [],
-    pantry: normalizePantry(pantry),
+    pantry: normalizePantry(pantry, { updatedAt: Number(row.updated_at) || 0 }),
     shoppingChecked: jsonField(row.shopping_checked_json, {}),
     manualItems: normalizeManualItems(manualItems),
     recentMutations: Array.isArray(recentMutations) ? recentMutations : [],
