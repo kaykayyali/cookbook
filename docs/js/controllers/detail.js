@@ -117,7 +117,11 @@ export function initDetail({
     state.detailId = ctx.source === 'local' ? r._id : null;
 
     const eyebrow = document.getElementById('dm-eyebrow');
-    if (eyebrow) eyebrow.textContent = [r.recipeCategory, formatListValue(r.recipeCuisine)].filter(Boolean).join(' · ');
+    if (eyebrow) {
+      eyebrow.textContent = [formatListValue(r.recipeCategory), formatListValue(r.recipeCuisine)]
+        .filter(Boolean)
+        .join(' · ');
+    }
     const title = document.getElementById('dm-title');
     if (title) title.textContent = r.name;
     const meta = document.getElementById('dm-meta');

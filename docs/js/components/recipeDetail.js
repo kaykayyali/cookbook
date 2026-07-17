@@ -2,7 +2,7 @@
 // components/recipeDetail.js — recipe detail sheet (design-system v1)
 // ════════════════════════════════════════════════════════
 
-import { esc, formatDuration, formatListValue } from '../lib/format.js';
+import { esc, formatDuration, formatRecipeYield } from '../lib/format.js';
 import { Icon } from '../lib/ui.js';
 import { haveIngredient, ingredientCounts } from '../lib/pantry.js';
 
@@ -45,11 +45,12 @@ export function pantryNoteHTML(ings, pantry) {
  * @returns {string}
  */
 export function metaRowHTML(r) {
+  const recipeYield = formatRecipeYield(r.recipeYield);
   const meta = [
     r.prepTime && ['Prep', formatDuration(r.prepTime)],
     r.cookTime && ['Cook', formatDuration(r.cookTime)],
     r.totalTime && ['Total', formatDuration(r.totalTime)],
-    r.recipeYield && ['Serves', formatListValue(r.recipeYield, { numericServings: true })],
+    recipeYield && [recipeYield.label, recipeYield.value],
     r.cookingMethod && ['Method', r.cookingMethod],
   ].filter(Boolean);
   if (!meta.length) return '';

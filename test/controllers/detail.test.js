@@ -62,6 +62,17 @@ test('open(id) fills dm-title with the recipe name', () => {
   assert.equal(elements['dm-title'].textContent, 'Carbonara');
 });
 
+test('open(id) formats array-valued category and cuisine metadata for people', () => {
+  const { document, elements } = makeDom();
+  const recipe = {
+    ...SAMPLE,
+    recipeCategory: ['Dinner', 'Weeknight'],
+    recipeCuisine: ['Italian', 'American'],
+  };
+  mod.initDetail({ state: { recipes: [recipe], pantry: [] }, document }).open('r1');
+  assert.equal(elements['dm-eyebrow'].textContent, 'Dinner · Weeknight · Italian · American');
+});
+
 test('open(id) sets state.detailId', () => {
   if (!mod.initDetail) return;
   const { document } = makeDom();
