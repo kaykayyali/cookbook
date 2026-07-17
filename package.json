@@ -20,16 +20,16 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "jose": "^5.9.6"
+    "jose": "^6.2.3"
   },
   "devDependencies": {
     "esbuild": "^0.28.1",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^29.1.1",
     "playwright": "^1.61.1",
-    "wrangler": "^3.90.0"
+    "wrangler": "^4.112.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   }
 }
