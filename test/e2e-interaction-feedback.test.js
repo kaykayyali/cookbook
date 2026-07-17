@@ -374,6 +374,11 @@ test('adapter failures cannot erase primary actions or semantic outcomes', { tim
       const skip = page.locator('[data-entry-id="plan-soup"] [data-action="skip"]');
       await skip.tap();
       await page.locator('[data-entry-id="plan-soup"].is-skipped').waitFor({ timeout: 700 });
+      await page.waitForFunction(
+        () => window.__feedbackEvents.some((event) => event.type === 'success'),
+        null,
+        { timeout: 2_000 },
+      );
       const types = (await page.evaluate(() => window.__feedbackEvents)).map((event) => event.type);
       assert.ok(types.includes('toggle-on'));
       assert.ok(types.includes('success'));
