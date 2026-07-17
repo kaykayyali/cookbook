@@ -137,6 +137,24 @@ test('addToPantry accumulates compatible normalized quantities', () => {
   assert.equal(second.pantry[0].unit, 'count');
 });
 
+test('addToPantry immediately repairs a supplied ID owned by a different record', () => {
+  const salt = normalizePantryEntry({ id: 'shared-id', name: 'salt', unit: 'qualitative' });
+  const result = addToPantry([salt], {
+    id: 'shared-id', name: 'pepper', displayName: 'Pepper', unit: 'qualitative',
+  });
+
+  assert.equal(result.added, true);
+  assert.equal(result.pantry.find((item) => item.name === 'salt').id, 'shared-id', 'existing stable ID is preserved');
+  assert.notEqual(result.item.id, 'shared-id', 'new semantic record is repaired before publication');
+  assert.match(result.item.id, /^pantry-/);
+  assert.equal(new Set(result.pantry.map((item) => item.id)).size, result.pantry.length);
+  assert.equal(
+    normalizePantry(result.pantry).find((item) => item.name === 'pepper').id,
+    result.item.id,
+    'the deterministic repair is stable at later normalization',
+  );
+});
+
 test('count package labels are part of Pantry quantity compatibility and removal identity', () => {
   const bottles = normalizePantryEntry('2 bottles water');
   const cans = normalizePantryEntry('3 cans water');

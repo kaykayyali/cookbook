@@ -92,9 +92,9 @@ async function initDurableRuntime({
     discardSelector: '[data-action="discard-sync"]',
     noun: 'change',
   });
-  const renderStatus = ({ state: status, pending, sequence }) => {
+  const renderStatus = ({ state: status, pending, sequence, discardable }) => {
     failedSequence = sequence || null;
-    statusPresenter.update({ status, pending });
+    statusPresenter.update({ status, pending, sequence, discardable });
   };
   const manager = await createWorkspaceOutbox({
     repo,

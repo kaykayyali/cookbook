@@ -144,6 +144,18 @@ function deterministicRecordId(item) {
   return `pantry-${stableHash(identity, 2166136261)}-${stableHash([...identity].reverse().join(''), 2246822519)}`;
 }
 
+function withUniqueRecordId(item, records) {
+  if (!records.some((entry) => entry.id === item.id && pantryKey(entry) !== pantryKey(item))) return item;
+  const baseId = deterministicRecordId(item);
+  let id = baseId;
+  let suffix = 2;
+  while (records.some((entry) => entry.id === id)) {
+    id = `${baseId}-${suffix}`;
+    suffix += 1;
+  }
+  return { ...item, id };
+}
+
 function measurementFamily(unit) {
   if (unit === 'count') return 'count';
   if (unit === 'ounce') return 'water-equivalent';
@@ -291,7 +303,8 @@ export function addToPantry(pantry, value, options = {}) {
     const next = current.map((entry, index) => index === exact ? merged : entry);
     return { pantry: next, added: true, name: item.name, item: merged };
   }
-  return { pantry: [...current, item], added: true, name: item.name, item };
+  const uniqueItem = withUniqueRecordId(item, current);
+  return { pantry: [...current, uniqueItem], added: true, name: uniqueItem.name, item: uniqueItem };
 }
 
 /** Replace one Pantry record while preserving its stable ID. */
@@ -364,16 +377,7 @@ export function normalizePantry(raw, options = {}) {
   for (const value of raw) {
     let item = normalizePantryEntry(value, options);
     if (!item) continue;
-    if (output.some((entry) => entry.id === item.id && pantryKey(entry) !== pantryKey(item))) {
-      const baseId = deterministicRecordId(item);
-      let id = baseId;
-      let suffix = 2;
-      while (output.some((entry) => entry.id === id)) {
-        id = `${baseId}-${suffix}`;
-        suffix += 1;
-      }
-      item = { ...item, id };
-    }
+    item = withUniqueRecordId(item, output);
     const exact = output.findIndex((entry) => pantryKey(entry) === pantryKey(item));
     const qualitative = output.findIndex((entry) => entry.name === item.name && entry.unit === 'qualitative');
     if (exact >= 0 && item.unit !== 'qualitative') {

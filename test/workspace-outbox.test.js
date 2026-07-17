@@ -201,10 +201,14 @@ test('refresh preserves a mutation persisted after its outbox snapshot', async (
 test('refresh cannot resurrect a mutation acknowledged after its outbox snapshot', async () => {
   const repo = memoryRepo();
   let online = false;
+  const sendStarted = deferred();
   const manager = await createWorkspaceOutbox({
     repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => online,
     makeId: () => 'ack-during-refresh',
-    send: async () => ({ ok: true, workspace: base({ revision: 2, pantry: ['flour'] }) }),
+    send: async () => {
+      sendStarted.resolve();
+      return { ok: true, workspace: base({ revision: 2, pantry: ['flour'] }) };
+    },
   });
   await manager.mutate('pantry.add', { name: 'flour' });
   const listed = deferred();
@@ -223,13 +227,126 @@ test('refresh cannot resurrect a mutation acknowledged after its outbox snapshot
   const refresh = manager.refresh(base({ revision: 1 }));
   await listed.promise;
   online = true;
-  assert.equal(await manager.drain(), true);
+  const draining = manager.drain();
+  await sendStarted.promise;
   release.resolve();
   await refresh;
+  assert.equal(await draining, true);
 
   assert.equal(manager.pending(), 0);
   assert.deepEqual(await originalList(), []);
   assert.deepEqual(manager.current().pantry.map((item) => item.name), ['flour']);
+});
+
+test('refresh authority persistence is serialized before a newer acknowledgement', async () => {
+  const repo = memoryRepo();
+  let online = false;
+  const refreshWriteStarted = deferred();
+  const releaseRefreshWrite = deferred();
+  const originalPutWorkspace = repo.putWorkspace;
+  const originalAcknowledge = repo.acknowledge;
+  let acknowledgementStarted = false;
+  repo.putWorkspace = async (...args) => {
+    if (args[2].revision === 1) {
+      refreshWriteStarted.resolve();
+      await releaseRefreshWrite.promise;
+    }
+    return originalPutWorkspace(...args);
+  };
+  repo.acknowledge = async (...args) => {
+    acknowledgementStarted = true;
+    return originalAcknowledge(...args);
+  };
+  const sendStarted = deferred();
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => online,
+    makeId: () => 'serialized-ack',
+    send: async () => {
+      sendStarted.resolve();
+      return { ok: true, workspace: base({ revision: 2, pantry: ['flour'] }) };
+    },
+  });
+  await manager.mutate('pantry.add', { name: 'flour' });
+
+  const refresh = manager.refresh(base({ revision: 1 }));
+  await refreshWriteStarted.promise;
+  online = true;
+  const draining = manager.drain();
+  await sendStarted.promise;
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(acknowledgementStarted, false, 'acknowledgement waits for the older refresh cache write');
+  releaseRefreshWrite.resolve();
+  assert.equal(await refresh, true);
+  assert.equal(await draining, true);
+  assert.equal((await repo.getWorkspace()).revision, 2);
+  assert.equal(manager.current().revision, 2);
+});
+
+test('accepted workspace mutation survives acknowledgement persistence failure and retries safely', async () => {
+  const repo = memoryRepo();
+  let online = false;
+  let failAcknowledgement = true;
+  const statuses = [];
+  const sent = [];
+  const originalAcknowledge = repo.acknowledge;
+  repo.acknowledge = async (...args) => {
+    if (failAcknowledgement) {
+      failAcknowledgement = false;
+      throw new Error('ack_failed');
+    }
+    return originalAcknowledge(...args);
+  };
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => online,
+    makeId: () => 'accepted-on-server', onStatus: (value) => statuses.push(value),
+    send: async ({ mutationId }) => {
+      sent.push(mutationId);
+      return { ok: true, workspace: base({ revision: 1, pantry: ['flour'] }) };
+    },
+  });
+  await manager.mutate('pantry.add', { name: 'flour' });
+  const [pending] = await repo.listOutbox();
+  online = true;
+
+  assert.equal(await manager.drain(), false, 'background-safe drain contains acknowledgement failures');
+  assert.deepEqual(statuses.at(-1), {
+    state: 'failed', pending: 1, sequence: pending.sequence,
+    code: 'local_acknowledgement_failed', discardable: false,
+  });
+  const durable = (await repo.listOutbox())[0];
+  assert.equal(durable.status, 'pending', 'durable row remains actionable, not stranded sending');
+  assert.equal(durable.deliveryState, 'accepted', 'server acceptance remains durable until atomic acknowledgement succeeds');
+  assert.equal(await manager.discard(pending.sequence), false, 'an accepted server mutation cannot be rolled back locally');
+  assert.equal(await manager.retry(pending.sequence), true);
+  assert.deepEqual(sent, ['accepted-on-server', 'accepted-on-server']);
+  assert.equal((await repo.getWorkspace()).revision, 1);
+  assert.deepEqual(await repo.listOutbox(), []);
+});
+
+test('status zero keeps unknown workspace delivery retry-only and cannot discard reconciliation intent', async () => {
+  const repo = memoryRepo();
+  let online = false;
+  const statuses = [];
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => online,
+    makeId: () => 'unknown-delivery', onStatus: (value) => statuses.push(value),
+    send: async () => ({ ok: false, status: 0, error: 'workspace_unavailable' }),
+  });
+  await manager.mutate('pantry.add', { name: 'flour' });
+  const [pending] = await repo.listOutbox();
+  online = true;
+
+  assert.equal(await manager.drain(), false);
+  assert.deepEqual(statuses.at(-1), {
+    state: 'offline', pending: 1, sequence: pending.sequence,
+    code: 'workspace_unavailable', discardable: false,
+  });
+  assert.equal(await manager.discard(pending.sequence), false);
+  assert.equal(manager.pending(), 1);
+  const [durable] = await repo.listOutbox();
+  assert.equal(durable.deliveryState, 'uncertain');
 });
 
 test('real IndexedDB repository exposes a newly persisted workspace mutation to the same drain', async () => {
