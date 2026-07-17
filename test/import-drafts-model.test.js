@@ -132,6 +132,78 @@ test('confirmDraft publishes to household_recipes and marks confirmed', async ()
   assert.ok(result.body.recipeId);
   const update = calls.find((c) => c.op === 'run' && c.sql.includes('UPDATE recipe_import_drafts'));
   assert.match(update.sql, /status.*confirmed/);
+  const insert = calls.find((c) => c.op === 'run' && c.sql.includes('household_recipes'));
+  assert.equal(insert.values[3], 'member', 'legacy callers without display claims retain a safe non-empty attribution');
+  assert.equal(insert.values[4], null);
+});
+
+test('confirmDraft collision is failure-visible and atomically leaves draft and existing recipe untouched', async (t) => {
+  let DatabaseSync;
+  try { ({ DatabaseSync } = await import('node:sqlite')); }
+  catch { t.skip('node:sqlite is unavailable on this supported Node version'); return; }
+  const sqlite = new DatabaseSync(':memory:');
+  sqlite.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE households (id TEXT PRIMARY KEY);
+    CREATE TABLE household_recipes (
+      id TEXT PRIMARY KEY, household_id TEXT NOT NULL, added_by_sub TEXT NOT NULL,
+      added_by_name TEXT NOT NULL, added_by_picture TEXT, recipe_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE recipe_import_drafts (
+      id TEXT PRIMARY KEY, household_id TEXT NOT NULL, created_by_sub TEXT NOT NULL,
+      status TEXT NOT NULL, source_type TEXT NOT NULL, source_urls_json TEXT NOT NULL,
+      image_refs_json TEXT NOT NULL, extracted_json TEXT NOT NULL, recipe_json TEXT,
+      confidence_json TEXT NOT NULL, duplicate_ids_json TEXT NOT NULL, notes TEXT NOT NULL,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, confirmed_at INTEGER
+    );
+    CREATE TABLE recipe_import_provenance (
+      recipe_id TEXT PRIMARY KEY, household_id TEXT NOT NULL, import_draft_id TEXT NOT NULL UNIQUE,
+      source_type TEXT NOT NULL, source_url TEXT, imported_at INTEGER NOT NULL,
+      extractor_method TEXT NOT NULL, extractor_version TEXT NOT NULL, evidence_json TEXT NOT NULL,
+      FOREIGN KEY (recipe_id) REFERENCES household_recipes(id) ON DELETE CASCADE
+    );
+    INSERT INTO households VALUES ('our-home');
+    INSERT INTO household_recipes VALUES ('forced-collision', 'our-home', 'original', 'Original', NULL, '{"name":"Existing"}', 1, 1);
+    INSERT INTO recipe_import_drafts VALUES (
+      'draft-collision', 'our-home', 'kay', 'extracted', 'url', '["https://example.com/source"]',
+      '[]', '{"extractorMethod":"json-ld","extractorVersion":"url-extractor-v1","evidence":{"recipe":{"name":"Imported"}}}',
+      '{"name":"Imported"}', '{}', '[]', '', 2, 2, NULL
+    );
+  `);
+  const db = {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...bound) { values = bound; return this; },
+        async first() { return sqlite.prepare(sql).get(...values) || null; },
+        async all() { return { results: sqlite.prepare(sql).all(...values) }; },
+        async run() { const result = sqlite.prepare(sql).run(...values); return { meta: { changes: Number(result.changes) } }; },
+      };
+    },
+    async batch(statements) {
+      sqlite.exec('BEGIN IMMEDIATE');
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        sqlite.exec('COMMIT');
+        return results;
+      } catch (error) {
+        sqlite.exec('ROLLBACK');
+        throw error;
+      }
+    },
+  };
+
+  const result = await confirmDraft(db, {
+    id: 'draft-collision', householdId: 'our-home', actorSub: 'kay', actorName: 'Kay',
+    recipe: { name: 'Imported' }, now: 3, recipeIdFactory: () => 'forced-collision',
+  });
+
+  assert.deepEqual(result, { status: 409, body: { error: 'recipe_id_collision' } });
+  assert.equal(sqlite.prepare('SELECT status FROM recipe_import_drafts WHERE id = ?').get('draft-collision').status, 'extracted');
+  assert.equal(sqlite.prepare('SELECT recipe_json FROM household_recipes WHERE id = ?').get('forced-collision').recipe_json, '{"name":"Existing"}');
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM recipe_import_provenance').get().count, 0);
 });
 
 test('rejectDraft marks rejected without publishing', async () => {

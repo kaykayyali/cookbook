@@ -200,9 +200,9 @@ export async function onRequestPost(context) {
 					sourceUrls: [body.url],
 					extracted: {
 						recipe: out.recipe || out.partial,
-						extractorMethod: out.extractorMethod || "unknown",
-						extractorVersion: out.extractorVersion || "legacy",
-						evidence: out.evidence || {},
+						extractorMethod: out.extractorMethod,
+						extractorVersion: out.extractorVersion,
+						evidence: out.evidence,
 					},
 				},
 				now: Date.now(),

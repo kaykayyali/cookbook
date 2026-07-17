@@ -295,6 +295,19 @@ function boundedExtractionEvidence(value) {
   return boundedJsonValue(value || {}, EVIDENCE_CAP);
 }
 
+function partialExtractionFailure(status, error, partial, jsonLd) {
+  if (!partial) return { ok: false, status, error };
+  return {
+    ok: false,
+    status,
+    error,
+    partial,
+    extractorMethod: 'json-ld-partial',
+    extractorVersion: URL_EXTRACTOR_VERSION,
+    evidence: boundedExtractionEvidence({ jsonLd }),
+  };
+}
+
 function extracted(recipe, extractorMethod, evidence) {
   return {
     ok: true,
@@ -338,11 +351,11 @@ export async function extractRecipe(url, deps) {
   const partial = found && found.name ? toSimpleRecipe(found) : undefined;
 
   const text = cleanText(page.html || '');
-  if (!text) return { ok: false, status: 422, error: 'no_recipe', partial };
+  if (!text) return partialExtractionFailure(422, 'no_recipe', partial, found);
 
   let output;
   try { output = await deps.runLLM(buildExtractionPrompt(text)); }
-  catch { return { ok: false, status: 502, error: 'llm_failed' }; }
+  catch { return partialExtractionFailure(502, 'llm_failed', partial, found); }
 
   const parsed = parseLLMRecipe(output);
   if (parsed) return extracted(parsed, 'workers-ai', { visibleText: text, modelOutput: output, recipe: parsed });
@@ -358,7 +371,7 @@ export async function extractRecipe(url, deps) {
     visibleText: text, modelOutput: output, repairedOutput: repaired, recipe: retry,
   });
 
-  return { ok: false, status: 422, error: 'no_recipe', partial };
+  return partialExtractionFailure(422, 'no_recipe', partial, found);
 }
 
 /**

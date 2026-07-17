@@ -253,3 +253,36 @@ test('direct URL extraction creates an import draft carrying the exact submitted
     globalThis.fetch = originalFetch;
   }
 });
+
+test('recoverable partial URL extraction persists truthful metadata and bounded original JSON-LD evidence', async () => {
+  const { db, calls } = stubDb();
+  const originalFetch = globalThis.fetch;
+  const partialUrl = 'https://recipes.example/partial?source=review';
+  globalThis.fetch = async () => new Response(
+    '<script type="application/ld+json">{"@type":"Recipe","name":"Partial Soup","recipeIngredient":["water"]}</script>',
+    { status: 200 },
+  );
+  try {
+    const response = await extractRoute({
+      request: { json: async () => ({ url: partialUrl }) },
+      env: { DB: db, AI: { run: async () => ({ response: 'not a recipe' }) }, EXTRACT_RATE_PER_MIN: '10' },
+      data: {
+        auth: { sub: 'kay', email: 'partial-review@example.com' },
+        household: { household: { id: 'our-home' } },
+      },
+    });
+    assert.equal(response.status, 422);
+    const body = await response.json();
+    assert.equal(body.partial.name, 'Partial Soup');
+    assert.ok(body.importDraftId);
+    const insert = calls.find((call) => call.op === 'run' && call.sql.includes('INSERT INTO recipe_import_drafts'));
+    const extracted = JSON.parse(insert.values[6]);
+    assert.equal(extracted.extractorMethod, 'json-ld-partial');
+    assert.equal(extracted.extractorVersion, 'url-extractor-v1');
+    assert.equal(extracted.evidence.jsonLd.name, 'Partial Soup');
+    assert.notDeepEqual(extracted.evidence, {});
+    assert.equal(JSON.stringify(extracted.evidence).includes('<script'), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

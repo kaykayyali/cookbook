@@ -161,7 +161,9 @@ export async function updateDraftExtraction(db, { id, householdId, extracted, co
   return { status: 200, body: { ...draftFromRow(existing), status: 'extracted', extracted, confidence, duplicateIds, updatedAt: now } };
 }
 
-export async function confirmDraft(db, { id, householdId, actorSub, recipe, now = Date.now() }) {
+export async function confirmDraft(db, {
+  id, householdId, actorSub, actorName, actorPicture, recipe, now = Date.now(), recipeIdFactory,
+}) {
   const blocked = requireHousehold(householdId);
   if (blocked) return blocked;
   const existing = await db.prepare('SELECT * FROM recipe_import_drafts WHERE id = ? AND household_id = ?')
@@ -169,19 +171,30 @@ export async function confirmDraft(db, { id, householdId, actorSub, recipe, now 
   if (!existing) return { status: 404, body: { error: 'draft_not_found' } };
   if (TERMINAL_STATES.has(existing.status)) return { status: 409, body: { error: 'draft_terminal' } };
 
-  const recipeId = globalThis.crypto?.randomUUID?.() || `r-${now}-${Math.random().toString(36).slice(2)}`;
+  const recipeId = typeof recipeIdFactory === 'function'
+    ? recipeIdFactory()
+    : globalThis.crypto?.randomUUID?.() || `r-${now}-${Math.random().toString(36).slice(2)}`;
   const recipeJson = JSON.stringify(recipe);
+  const displayName = typeof actorName === 'string' && actorName.trim() ? actorName.trim() : 'member';
+  const displayPicture = typeof actorPicture === 'string' && actorPicture ? actorPicture : null;
 
-  await db.batch([
-    db.prepare(
-      `INSERT OR IGNORE INTO household_recipes (id, household_id, added_by_sub, added_by_name, recipe_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).bind(recipeId, householdId, actorSub, '', recipeJson, now, now),
-    provenanceStatement(db, { draft: existing, recipeId, importedAt: existing.created_at ?? now }),
-    db.prepare(
-      `UPDATE recipe_import_drafts SET recipe_json = ?, status = 'confirmed', confirmed_at = ?, updated_at = ? WHERE id = ? AND household_id = ?`
-    ).bind(recipeJson, now, now, id, householdId),
-  ]);
+  try {
+    await db.batch([
+      db.prepare(
+        `INSERT INTO household_recipes (
+           id, household_id, added_by_sub, added_by_name, added_by_picture, recipe_json, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(recipeId, householdId, actorSub, displayName, displayPicture, recipeJson, now, now),
+      provenanceStatement(db, { draft: existing, recipeId, importedAt: existing.created_at ?? now }),
+      db.prepare(
+        `UPDATE recipe_import_drafts SET recipe_json = ?, status = 'confirmed', confirmed_at = ?, updated_at = ? WHERE id = ? AND household_id = ?`
+      ).bind(recipeJson, now, now, id, householdId),
+    ]);
+  } catch (error) {
+    const collision = await db.prepare('SELECT id FROM household_recipes WHERE id = ?').bind(recipeId).first();
+    if (collision) return { status: 409, body: { error: 'recipe_id_collision' } };
+    throw error;
+  }
 
   return { status: 200, body: { status: 'confirmed', recipeId, updatedAt: now } };
 }

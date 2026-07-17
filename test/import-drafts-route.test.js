@@ -123,6 +123,62 @@ test('confirm draft publishes recipe and returns recipeId', async () => {
   assert.ok(body.recipeId);
 });
 
+test('API confirmation stores authenticated subject, display name, and picture', async (t) => {
+  let DatabaseSync;
+  try { ({ DatabaseSync } = await import('node:sqlite')); }
+  catch { t.skip('node:sqlite is unavailable on this supported Node version'); return; }
+  const sqlite = new DatabaseSync(':memory:');
+  sqlite.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE households (id TEXT PRIMARY KEY);
+    CREATE TABLE household_recipes (
+      id TEXT PRIMARY KEY, household_id TEXT NOT NULL, added_by_sub TEXT NOT NULL,
+      added_by_name TEXT NOT NULL, added_by_picture TEXT, recipe_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    INSERT INTO households VALUES ('our-home');
+  `);
+  const db = {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...bound) { values = bound; return this; },
+        async first() { return sqlite.prepare(sql).get(...values) || null; },
+        async all() { return { results: sqlite.prepare(sql).all(...values) }; },
+        async run() { const result = sqlite.prepare(sql).run(...values); return { meta: { changes: Number(result.changes) } }; },
+      };
+    },
+    async batch(statements) {
+      sqlite.exec('BEGIN IMMEDIATE');
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        sqlite.exec('COMMIT');
+        return results;
+      } catch (error) {
+        sqlite.exec('ROLLBACK');
+        throw error;
+      }
+    },
+  };
+  const auth = { sub: 'auth-sub', email: 'kay@example.com', name: 'Kaysser', picture: 'https://images.example/kay.png' };
+  const created = await onRequestPost(context(db, 'POST', { imageRefs: ['p1.png'], sourceType: 'image' }, { auth }));
+  const draft = await created.json();
+  const response = await onRequestPatch(context(db, 'PATCH', {
+    action: 'confirm', id: draft.id,
+    recipe: { name: 'Stored Soup', recipeIngredient: ['water'], recipeInstructions: ['Boil'] },
+  }, { auth }));
+
+  assert.equal(response.status, 200);
+  const { recipeId } = await response.json();
+  const stored = sqlite.prepare('SELECT added_by_sub, added_by_name, added_by_picture FROM household_recipes WHERE id = ?').get(recipeId);
+  assert.deepEqual({ ...stored }, {
+    added_by_sub: 'auth-sub',
+    added_by_name: 'Kaysser',
+    added_by_picture: 'https://images.example/kay.png',
+  });
+});
+
 test('reject draft returns rejected status without publishing', async () => {
   const db = memoryDb();
   const created = await onRequestPost(context(db, 'POST', { imageRefs: ['p1.png'], sourceType: 'image' }));

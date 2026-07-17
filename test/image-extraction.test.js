@@ -36,6 +36,28 @@ test('server vision bounds multibyte OCR evidence by UTF-8 bytes', async () => {
   assert.equal(serialized.includes('data:image'), false);
 });
 
+test('oversized OCR evidence fairly preserves every page in order under the UTF-8 cap', async () => {
+  const laterPages = ['PAGE-TWO-MARKER ingredients', 'PAGE-THREE-MARKER method'];
+  const result = await extractRecipeFromImages({
+    imageRefs: [
+      'data:image/png;base64,b25l',
+      'data:image/png;base64,dHdv',
+      'data:image/png;base64,dGhyZWU=',
+    ],
+    runVision: async (_bytes, page) => page === 1 ? `PAGE-ONE-MARKER ${'🍲'.repeat(30_000)}` : laterPages[page - 2],
+    runText: async () => JSON.stringify({ name: 'Soup', recipeIngredient: ['water'], recipeInstructions: ['Boil'] }),
+  });
+
+  const serialized = JSON.stringify(result.evidence);
+  assert.doesNotThrow(() => JSON.parse(serialized));
+  assert.ok(new TextEncoder().encode(serialized).byteLength <= 16_384);
+  assert.deepEqual(result.evidence.pages.map(({ page }) => page), [1, 2, 3]);
+  assert.match(result.evidence.pages[0].text, /PAGE-ONE-MARKER/);
+  assert.match(result.evidence.pages[1].text, /PAGE-TWO-MARKER/);
+  assert.match(result.evidence.pages[2].text, /PAGE-THREE-MARKER/);
+  assert.equal(serialized.includes('data:image'), false);
+});
+
 test('failed vision remains a recoverable draft result', async () => {
   const result = await extractRecipeFromImages({
     imageRefs: ['data:image/jpeg;base64,b25l'],

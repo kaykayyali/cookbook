@@ -14,17 +14,18 @@ import {
   detectDuplicates,
 } from '../_lib/import-drafts.js';
 import { extractRecipeFromImages } from '../_lib/image-extraction.js';
+import { authorFrom } from '../_lib/community.js';
 
 const VISION_MODEL = '@cf/meta/llama-3.2-11b-vision-instruct';
 const TEXT_MODEL = '@cf/meta/llama-3.1-8b-instruct';
 
 function prepare(context) {
   const householdId = context?.data?.household?.household?.id;
-  const actorSub = context?.data?.auth?.sub;
+  const actor = authorFrom(context);
   if (!householdId) return { response: json(403, { error: 'household_required' }) };
-  if (!actorSub) return { response: json(401, { error: 'invalid_token' }) };
+  if (!actor) return { response: json(401, { error: 'invalid_token' }) };
   if (!context?.env?.DB?.prepare) return { response: misconfigured('db_binding') };
-  return { householdId, actorSub, db: context.env.DB };
+  return { householdId, actorSub: actor.sub, actor, db: context.env.DB };
 }
 
 async function ensureSchema(db) {
@@ -133,7 +134,9 @@ export async function onRequestPatch(context) {
         return json(409, { error: 'duplicate_confirmation_required', duplicates: dupes });
       }
       const result = await confirmDraft(ready.db, {
-        id, householdId: ready.householdId, actorSub: ready.actorSub, recipe, now: Date.now(),
+        id, householdId: ready.householdId, actorSub: ready.actor.sub,
+        actorName: ready.actor.name, actorPicture: ready.actor.picture,
+        recipe, now: Date.now(),
       });
       return json(result.status, result.body);
     }
