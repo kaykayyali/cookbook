@@ -3,6 +3,7 @@
 // ════════════════════════════════════════════════════════
 import { esc } from '../lib/format.js';
 import { toast } from '../lib/dom.js';
+import { effectiveIngredientLines } from '../lib/ingredient-corrections.js';
 
 /**
  * Cooking mode: large-type step display, ingredient context, optional wake lock.
@@ -35,7 +36,7 @@ export function initCookingMode({
   function open(recipe) {
     stepIndex = 0;
     steps = normalizeSteps(recipe);
-    ingredients = Array.isArray(recipe?.recipeIngredient) ? recipe.recipeIngredient : [];
+    ingredients = effectiveIngredientLines(recipe);
     recipeName = recipe?.name || '';
     const el = overlay();
     if (el) el.classList.add('open');

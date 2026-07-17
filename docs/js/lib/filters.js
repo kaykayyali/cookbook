@@ -3,6 +3,7 @@
 // ════════════════════════════════════════════════════════
 
 import { eligibility } from './pantry.js';
+import { effectiveIngredientLines, effectiveIngredientRecords } from './ingredient-corrections.js';
 
 /**
  * Does a recipe match a free-text search term?
@@ -13,7 +14,8 @@ import { eligibility } from './pantry.js';
  */
 export function matchesSearch(r, term) {
   if (!term) return true;
-  const hay = [r.name, r.recipeCuisine, r.recipeCategory, ...(r.recipeIngredient || [])]
+  const records = effectiveIngredientRecords(r);
+  const hay = [r.name, r.recipeCuisine, r.recipeCategory, ...effectiveIngredientLines(r), ...records.map((record) => record.name)]
     .join(' ')
     .toLowerCase();
   return hay.includes(term);

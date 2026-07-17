@@ -1,6 +1,6 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
@@ -8,11 +8,13 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { normalizePantry } from '../docs/js/lib/pantry.js';
 import { applyWorkspaceOperation } from '../docs/js/lib/workspace-sync.js';
+import { launchE2eBrowser } from './helpers/playwright-browser.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 const DOCS = join(ROOT, 'docs');
 const EVIDENCE = join(HERE, 'evidence');
+const CAPTURE_ISSUE20_EVIDENCE = process.env.COOKBOOK_ISSUE20_CAPTURE === '1';
 
 let server;
 let baseUrl;
@@ -25,16 +27,11 @@ const json = (route, body, status = 200) => route.fulfill({
 });
 
 async function launchBrowser() {
-  try {
-    return await chromium.launch({ channel: 'chrome', headless: true });
-  } catch {
-    return chromium.launch({ headless: true });
-  }
+  return launchE2eBrowser(chromium, { headless: true });
 }
 
 before(async () => {
   mkdirSync(EVIDENCE, { recursive: true });
-  execFileSync(process.execPath, [join(ROOT, 'scripts', 'build.js')], { cwd: ROOT, stdio: 'pipe' });
   server = createServer((request, response) => {
     const requestPath = request.url.split('?')[0] === '/' ? '/index.html' : request.url.split('?')[0];
     const filePath = normalize(join(DOCS, requestPath));
@@ -165,7 +162,7 @@ test('desktop Pantry row opens an immediately editable item modal', { timeout: 6
   const { context, page, browserErrors } = await createPantryPage();
   try {
     const beforePath = join(EVIDENCE, 'issue-20-before-desktop.png');
-    if (!existsSync(beforePath)) await page.screenshot({ path: beforePath, fullPage: true });
+    if (CAPTURE_ISSUE20_EVIDENCE && !existsSync(beforePath)) await page.screenshot({ path: beforePath, fullPage: true });
     const modal = page.locator('#pantry-item-modal');
     assert.equal(await modal.getAttribute('aria-hidden'), 'true');
     assert.equal(await modal.getAttribute('inert'), '');
@@ -210,7 +207,7 @@ test('desktop edit converts, persists by stable ID, removes exactly, and undoes'
       'ounce', 'pound', 'gram', 'kilogram',
     ]);
     await page.locator('#pantry-item-name').fill('Avocado Oil');
-    await page.screenshot({ path: join(EVIDENCE, 'issue-20-after-desktop.png'), fullPage: true });
+    if (CAPTURE_ISSUE20_EVIDENCE) await page.screenshot({ path: join(EVIDENCE, 'issue-20-after-desktop.png'), fullPage: true });
     const updateResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/workspace'
       && response.request().method() === 'PATCH');
     await page.locator('#pantry-item-save').click();
@@ -449,7 +446,7 @@ test('mobile add-new is accessible, trapped, safe-area sized, semantically touch
     assert.ok(geometry.modal.left >= 0 && geometry.modal.right <= geometry.viewportWidth);
     assert.ok(geometry.modal.top >= 0 && geometry.modal.bottom <= 874);
     assert.ok(geometry.targets.every(({ width, height }) => width >= 44 && height >= 44), JSON.stringify(geometry.targets));
-    await page.screenshot({ path: join(EVIDENCE, 'issue-20-after-mobile.png'), fullPage: true });
+    if (CAPTURE_ISSUE20_EVIDENCE) await page.screenshot({ path: join(EVIDENCE, 'issue-20-after-mobile.png'), fullPage: true });
 
     const addResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/workspace'
       && response.request().method() === 'PATCH');

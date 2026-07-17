@@ -40,6 +40,9 @@ export function toSchema(r) {
   if (r.dateModified) out.dateModified = r.dateModified.split('T')[0];
 
   if (r.recipeIngredient?.length) out.recipeIngredient = r.recipeIngredient;
+  if (Array.isArray(r.ingredientNormalizations) && r.ingredientNormalizations.length) {
+    out.ingredientNormalizations = r.ingredientNormalizations;
+  }
 
   if (r.recipeInstructions?.length) {
     out.recipeInstructions = r.recipeInstructions
@@ -78,6 +81,7 @@ export function fromSchema(s) {
     cookTime: s.cookTime || '',
     totalTime: s.totalTime || '',
     recipeIngredient: Array.isArray(s.recipeIngredient) ? s.recipeIngredient : [],
+    ingredientNormalizations: Array.isArray(s.ingredientNormalizations) ? s.ingredientNormalizations : [],
     recipeInstructions: Array.isArray(s.recipeInstructions)
       ? s.recipeInstructions.map((x) => (typeof x === 'string' ? x : x.text || ''))
       : s.recipeInstructions

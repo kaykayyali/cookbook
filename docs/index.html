@@ -666,6 +666,80 @@
 			</form>
 		</section>
 
+		<!-- ─────────────────────────────── Ingredient correction dialog -->
+		<div class="overlay ingredient-correction-overlay" id="ingredient-correction-overlay" hidden></div>
+		<section
+			class="ingredient-correction-modal"
+			id="ingredient-correction-modal"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="ingredient-correction-title"
+			aria-describedby="ingredient-correction-description"
+			aria-hidden="true"
+			inert
+			hidden
+		>
+			<header class="ingredient-correction-header">
+				<div>
+					<p class="ingredient-correction-eyebrow">Normalization review</p>
+					<h2 id="ingredient-correction-title">Correct ingredient</h2>
+					<p id="ingredient-correction-description">Review the normalized value while keeping its imported evidence unchanged.</p>
+				</div>
+				<button class="ingredient-correction-close" id="ingredient-correction-close" type="button" data-feedback="toggle-off" aria-label="Close ingredient correction">×</button>
+			</header>
+			<form id="ingredient-correction-form" class="ingredient-correction-form" novalidate>
+				<div class="ingredient-correction-body">
+					<section class="ingredient-source-evidence">
+						<strong id="ingredient-source-title">Original source line</strong>
+						<output id="ingredient-correction-raw" aria-label="Original source line"></output>
+						<div id="ingredient-correction-provenance"></div>
+						<small>Import evidence is read-only and remains attached after review.</small>
+					</section>
+					<p class="ingredient-correction-review-status" id="ingredient-correction-review-status"></p>
+					<label class="form-group" for="ingredient-correction-name">
+						<span>Ingredient name <span class="req" aria-hidden="true">*</span></span>
+						<input class="input" id="ingredient-correction-name" name="name" maxlength="80" autocomplete="off" required />
+					</label>
+					<div class="ingredient-correction-grid">
+						<label class="form-group" for="ingredient-correction-state">
+							<span>Amount state</span>
+							<select class="select" id="ingredient-correction-state" name="amountState">
+								<option value="numeric">Numeric</option>
+								<option value="qualitative">As needed / to taste</option>
+								<option value="unknown">Unknown</option>
+							</select>
+						</label>
+						<label class="form-group" id="ingredient-correction-amount-group" for="ingredient-correction-amount">
+							<span>Amount</span>
+							<input class="input" id="ingredient-correction-amount" name="amount" inputmode="decimal" placeholder="1 1/2 or 2 to 4" />
+						</label>
+						<label class="form-group" id="ingredient-correction-family-group" for="ingredient-correction-family">
+							<span>Measurement family</span>
+							<select class="select" id="ingredient-correction-family" name="measurementFamily">
+								<option value="count">Count</option>
+								<option value="volume">Volume</option>
+								<option value="weight">Weight</option>
+							</select>
+						</label>
+						<label class="form-group" id="ingredient-correction-unit-group" for="ingredient-correction-unit">
+							<span>Unit</span>
+							<select class="select" id="ingredient-correction-unit" name="sourceUnit"></select>
+						</label>
+						<label class="form-group" id="ingredient-correction-count-label-group" for="ingredient-correction-count-label">
+							<span>Count label</span>
+							<select class="select" id="ingredient-correction-count-label" name="countLabel"></select>
+						</label>
+					</div>
+					<p class="ingredient-correction-error" id="ingredient-correction-error" role="alert" hidden></p>
+					<p class="ingredient-correction-pending" id="ingredient-correction-pending" role="status" aria-live="polite"></p>
+				</div>
+				<footer class="ingredient-correction-footer">
+					<button class="btn btn-ghost" id="ingredient-correction-cancel" type="button" data-feedback="toggle-off">Cancel</button>
+					<button class="btn btn-primary" id="ingredient-correction-save" type="submit" data-feedback="commit">Save reviewed correction</button>
+				</footer>
+			</form>
+		</section>
+
 		<!-- ─────────────────────────────── Detail modal -->
 		<div
 			class="overlay"

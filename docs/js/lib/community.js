@@ -17,6 +17,8 @@ export function mapCommunityItem(item) {
   internal._id = item.id;
   internal._author = item.author || null;
   internal._provenance = item.provenance || null;
+  internal._createdAt = Number(item.createdAt) || 0;
+  internal._updatedAt = Number(item.updatedAt) || internal._createdAt;
   if (item.createdAt != null) internal.dateCreated = new Date(item.createdAt).toISOString();
   if (item.updatedAt != null && item.updatedAt !== item.createdAt) {
     internal.dateModified = new Date(item.updatedAt).toISOString();

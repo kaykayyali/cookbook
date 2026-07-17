@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { initCookingMode } from '../../docs/js/controllers/cooking-mode.js';
+import { applyReviewedIngredientCorrection, ingredientEvidence } from '../../docs/js/lib/ingredient-corrections.js';
 
 function setup({ recipe, wakeLock = false } = {}) {
   const html = `
@@ -106,4 +107,19 @@ test('cooking mode uses large type and minimal chrome', () => {
   const step = dom.window.document.getElementById('cooking-mode-step');
   // The step should have large-font styling
   assert.ok(step.classList.length > 0 || step.style.fontSize || step.tagName === 'DIV');
+});
+
+test('cooking mode renders effective reviewed ingredient values instead of immutable malformed source text', () => {
+  const recipe = { ...sampleRecipe, recipeIngredient: ['to 4 basil leaves'] };
+  const reviewed = applyReviewedIngredientCorrection(recipe, {
+    ingredientId: ingredientEvidence(recipe)[0].id,
+    correction: { name: 'basil', amountState: 'numeric', amount: '2 to 4', measurementFamily: 'count', sourceUnit: 'count', countLabel: 'leaf' },
+    reviewer: { sub: 'member', name: 'Member' }, reviewedAt: 10,
+  });
+  assert.equal(reviewed.ok, true, reviewed.error);
+  const { dom, controller } = setup({ recipe: reviewed.recipe });
+  controller.open(reviewed.recipe);
+  const text = dom.window.document.getElementById('cooking-mode-ingredients').textContent;
+  assert.match(text, /2–4 basil leaves/);
+  assert.doesNotMatch(text, /to 4 basil leaves/);
 });

@@ -2,6 +2,8 @@
 // controllers/search.js — search input, category chips, eligible-only
 // ════════════════════════════════════════════════════════
 
+import { buildRecipeUsageIndex } from '../lib/ingredient-corrections.js';
+
 /**
  * Search controller. Wires the search input, category chip bar, and
  * "ready to make" toggle. All three write to `state` and call onChange
@@ -99,9 +101,13 @@ export function initSearch({
     if (chips) chips.addEventListener('click', _onCategoryClick);
   }
 
+  function findRecipeUses(ingredientName) {
+    return buildRecipeUsageIndex(state.recipes).find(ingredientName);
+  }
+
   wireSearch();
   return {
-    setQuery, setCategory, setEligibleOnly,
+    setQuery, setCategory, setEligibleOnly, findRecipeUses,
     _onSearchInput, _onEligibleChange, _onCategoryClick,
   };
 }

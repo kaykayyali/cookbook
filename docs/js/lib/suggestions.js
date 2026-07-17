@@ -1,3 +1,5 @@
+import { effectiveIngredientLines } from './ingredient-corrections.js';
+
 const lower = (value) => String(value || '').trim().toLowerCase();
 const idOf = (recipe) => String(recipe?._id || recipe?.id || '');
 
@@ -22,7 +24,7 @@ function eligibleRecipes(recipes, reactions, preferences) {
   return recipes.filter((recipe) => {
     const id = idOf(recipe);
     if (!id || !String(recipe?.name || '').trim() || excludedIds.has(id) || rejected.has(id)) return false;
-    const ingredients = (recipe.recipeIngredient || []).map(lower).join(' ');
+    const ingredients = effectiveIngredientLines(recipe).map(lower).join(' ');
     const tags = [recipe.recipeDiet, recipe.recipeCategory]
       .flat().map(lower).join(' ');
     return !disliked.some((term) => ingredients.includes(term))

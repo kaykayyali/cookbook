@@ -136,3 +136,21 @@ test('setEligibleOnly updates state and fires onChange', () => {
   assert.equal(state.eligibleOnly, true);
   assert.ok(changed > 0);
 });
+
+test('production search controller exposes reviewed recipe usage lookup without issue-21 UI', () => {
+  const { document } = makeDom();
+  const state = {
+    recipes: [
+      { _id: 'soup', name: 'Soup', recipeIngredient: ['1 onion', '2 onions'] },
+      { _id: 'soup', name: 'Stale duplicate', recipeIngredient: ['1 onion'] },
+      { name: 'No id', recipeIngredient: ['1 onion'] },
+    ],
+  };
+  const ctrl = mod.initSearch({ state, document });
+  assert.equal(typeof ctrl.findRecipeUses, 'function');
+  const forward = ctrl.findRecipeUses('onions');
+  state.recipes.reverse();
+  assert.deepEqual(ctrl.findRecipeUses('onion'), forward);
+  assert.equal(forward.length, 2);
+  assert.deepEqual(forward.map((use) => use.recipeName), ['No id', 'Soup']);
+});

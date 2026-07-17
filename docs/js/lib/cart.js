@@ -1,11 +1,12 @@
 // cart.js — deterministic normalized shopping-cart logic (no DOM)
 export const NORMALIZATION_VERSION = 2;
 export const INGREDIENT_CATEGORIES = ['produce', 'meat-seafood', 'dairy-eggs', 'bakery', 'pantry', 'frozen', 'other'];
-export const COUNT_LABELS = ['', 'clove', 'slice', 'sheet', 'portion', 'can', 'jar', 'bottle', 'package', 'piece'];
+export const COUNT_LABELS = ['', 'clove', 'leaf', 'bunch', 'slice', 'sheet', 'portion', 'can', 'jar', 'bottle', 'package', 'piece'];
 
 const FRACTIONS = { '¼': .25, '½': .5, '¾': .75, '⅓': 1 / 3, '⅔': 2 / 3, '⅛': .125, '⅜': .375, '⅝': .625, '⅞': .875 };
 const OUNCE_FACTORS = {
   ml: .035274, milliliter: .035274, milliliters: .035274,
+  l: 35.274, liter: 35.274, liters: 35.274, litre: 35.274, litres: 35.274,
   g: .035274, gram: .035274, grams: .035274,
   oz: 1, ounce: 1, ounces: 1, 'fl oz': 1, 'fluid ounce': 1, 'fluid ounces': 1,
   cup: 8, cups: 8, tbsp: .5, tablespoon: .5, tablespoons: .5,
@@ -214,6 +215,9 @@ export function recipeSetSignature(recipes) {
     recipeId: String(recipe.recipeId || recipe._id || recipe.id || ''),
     raw: (Array.isArray(recipe.ingredients) ? recipe.ingredients : Array.isArray(recipe.recipeIngredient) ? recipe.recipeIngredient : [])
       .map((item) => typeof item === 'string' ? item : item?.raw).filter((item) => typeof item === 'string'),
+    effective: String(recipe.effectiveSignature || ''),
+    normalized: (Array.isArray(recipe.ingredients) ? recipe.ingredients : []).filter((item) => item && typeof item === 'object')
+      .map((item) => [item.name, item.quantity, item.quantityMin, item.unit, item.countLabel, item.reviewVersion || 0, item.reviewedAt || 0]),
   })).sort((a, b) => a.recipeId.localeCompare(b.recipeId));
   return `v${NORMALIZATION_VERSION}:${JSON.stringify(rows)}`;
 }
@@ -234,7 +238,8 @@ export function aggregateCart(cart) {
         note.confidence = Math.min(note.confidence, confidence);
         continue;
       }
-      const key = `${ingredient.name}\u0000${ingredient.unit}`;
+      const packageIdentity = ingredient.unit === 'count' ? ingredient.countLabel || '' : '';
+      const key = `${ingredient.name}\u0000${ingredient.unit}\u0000${packageIdentity}`;
       if (!groups.has(key)) groups.set(key, { ...metadata(ingredient.name, ingredient.countLabel, ingredient), unit: ingredient.unit, kind: ingredient.kind, quantity: 0, raw: [], confidence: 1 });
       const group = groups.get(key);
       if (!group.raw.includes(ingredient.raw)) group.raw.push(ingredient.raw);
@@ -294,7 +299,8 @@ export function formatCanonicalAmount(quantity, unit, options = {}) {
   if (unit === 'count') {
     const number = cleanNumber(quantity);
     const label = COUNT_LABELS.includes(options.countLabel) ? options.countLabel : '';
-    return label ? `${number} ${label}${Number(quantity) === 1 ? '' : 's'}` : number;
+    const plural = Number(quantity) === 1 ? label : label === 'leaf' ? 'leaves' : label ? `${label}s` : '';
+    return label ? `${number} ${plural}` : number;
   }
   const required = Number(options.requiredQuantity);
   const buffered = Number(quantity);

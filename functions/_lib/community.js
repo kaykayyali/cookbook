@@ -8,6 +8,7 @@ import {
   PROVENANCE_SUMMARY_SELECT,
   provenanceFromRow,
 } from './import-provenance.js';
+import { preserveReviewedIngredientCorrections } from '../../docs/js/lib/ingredient-corrections.js';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
@@ -245,6 +246,7 @@ export async function shareRecipe(db, { id: requestedId, recipe, author, househo
   const err = validateRecipe(recipe);
   if (err) return { status: 400, body: { error: err } };
   const id = typeof requestedId === 'string' && requestedId.trim() ? requestedId.trim().slice(0, 100) : uuid();
+  const persistedRecipe = preserveReviewedIngredientCorrections({}, recipe);
   const now = Date.now();
   await db.prepare(
     `INSERT OR IGNORE INTO household_recipes (
@@ -257,7 +259,7 @@ export async function shareRecipe(db, { id: requestedId, recipe, author, househo
     author.sub,
     author.name,
     author.picture || null,
-    JSON.stringify(recipe),
+    JSON.stringify(persistedRecipe),
     now,
     now,
   ).run();
@@ -266,7 +268,7 @@ export async function shareRecipe(db, { id: requestedId, recipe, author, househo
     body: {
       id,
       householdId,
-      recipe,
+      recipe: persistedRecipe,
       author: { sub: author.sub, name: author.name, picture: author.picture || null },
       createdAt: now,
       updatedAt: now,
@@ -285,18 +287,21 @@ export async function editRecipe(db, { id, recipe, author, householdId } = {}) {
   const err = validateRecipe(recipe);
   if (err) return { status: 400, body: { error: err } };
   const row = await db.prepare(
-    `SELECT r.added_by_sub, r.created_at, ${PROVENANCE_SELECT}
+    `SELECT r.added_by_sub, r.created_at, r.recipe_json, ${PROVENANCE_SELECT}
      FROM ${RECIPE_FROM} WHERE r.id = ? AND r.household_id = ?`,
   ).bind(id, householdId).first();
   if (!row) return { status: 404, body: { error: 'not_found' } };
   if (row.added_by_sub !== author.sub) return { status: 403, body: { error: 'not_author' } };
+  let existingRecipe = {};
+  try { existingRecipe = JSON.parse(row.recipe_json || '{}'); } catch { /* Preserve nothing from corrupt legacy JSON. */ }
+  const persistedRecipe = preserveReviewedIngredientCorrections(existingRecipe, recipe);
   const now = Date.now();
   await db.prepare(
     `UPDATE household_recipes
      SET recipe_json = ?, added_by_name = ?, added_by_picture = ?, updated_at = ?
      WHERE id = ? AND household_id = ? AND added_by_sub = ?`,
   ).bind(
-    JSON.stringify(recipe),
+    JSON.stringify(persistedRecipe),
     author.name,
     author.picture || null,
     now,
@@ -309,7 +314,7 @@ export async function editRecipe(db, { id, recipe, author, householdId } = {}) {
     body: {
       id,
       householdId,
-      recipe,
+      recipe: persistedRecipe,
       author: { sub: author.sub, name: author.name, picture: author.picture || null },
       createdAt: row.created_at,
       updatedAt: now,

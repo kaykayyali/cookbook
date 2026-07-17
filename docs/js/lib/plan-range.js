@@ -1,9 +1,14 @@
-import { normalizeIngredientsLocal, parseServings } from './cart.js';
+import { parseServings } from './cart.js';
+import { applyIngredientTombstones, effectiveIngredientRecords, recipeEffectiveSignature } from './ingredient-corrections.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function selectionFor(recipe, entries, rangeStart, rangeEnd, previous) {
   const sourceRecipeId = String(recipe._id || recipe.id || recipe.recipeId || '');
+  const projected = applyIngredientTombstones(
+    effectiveIngredientRecords(recipe),
+    previous?.removedIngredientNames,
+  );
   return {
     recipeId: `plan:${rangeStart}:${rangeEnd}:${sourceRecipeId}`,
     sourceRecipeId,
@@ -11,9 +16,9 @@ function selectionFor(recipe, entries, rangeStart, rangeEnd, previous) {
     sourceServings: parseServings(recipe.recipeYield),
     targetServings: entries.reduce((sum, entry) => sum + Number(entry.targetServings || 0), 0),
     normalizationVersion: 2,
-    ingredients: normalizeIngredientsLocal(recipe.recipeIngredient),
-    removedIngredientNames: Array.isArray(previous?.removedIngredientNames)
-      ? [...previous.removedIngredientNames] : [],
+    ingredients: projected.ingredients,
+    effectiveSignature: recipeEffectiveSignature(recipe),
+    removedIngredientNames: projected.removedIngredientNames,
     origin: {
       kind: 'plan', rangeStart, rangeEnd,
       signature: JSON.stringify(entries.map(({ id, date, status, targetServings: servings }) => ({ id, date, status, servings }))

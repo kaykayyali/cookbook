@@ -20,6 +20,11 @@ import { createCookbookTour } from './cookbook-tour.js';
 import { createThemeRecommendation } from './theme-recommendation.js';
 import { showRecipeSchema, wireSchemaModal, exportRecipesToFile } from './schema-modal.js';
 import { interactionFeedback } from './interaction-feedback.js';
+import {
+  reconcileReviewedRecipesInCart,
+  reconcileReviewedShoppingChecked,
+  reviewedShoppingCheckedKeys,
+} from './ingredient-corrections.js';
 
 export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cookRuntime = null, onSignedIn, onSignedOut }) {
   interactionFeedback.init();
@@ -56,7 +61,8 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
     ),
   });
   detail = initDetail({
-    state, mutate: runtime.mutate, onEdit: (id) => drawer.open(id), onSchema: showRecipeSchema,
+    state, mutate: runtime.mutate, mutateRecipe: recipeRuntime?.mutate,
+    onEdit: (id) => drawer.open(id), onSchema: showRecipeSchema,
     onChange: () => recipes.render(), getHistory: engagement.history,
     getReactions: () => state.cookReactions || [], onMarkCooked: engagement.markRecipe,
     onCookMode: cookingMode.open,
@@ -85,14 +91,19 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
   settings.renderAuth();
   $('settings-tour-btn')?.addEventListener('click', () => tour.start('cookbook'));
   initFab({ state, openDrawer: (id) => drawer.open(id), extract, imageCapture, showPanel: panels.showPanel });
-  initSearch({ state, onChange: () => recipes.render() });
+  const search = initSearch({ state, onChange: () => recipes.render() });
   wireSchemaModal();
   reminders.maybeWeeklyPlanReminder(state.plan);
   void engagement.load();
   globalThis.window?.addEventListener?.('online', () => { void engagement.load(); });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
-    if ($('pantry-item-modal') && !$('pantry-item-modal').hidden) {
+    if ($('ingredient-correction-modal') && !$('ingredient-correction-modal').hidden) {
+      event.preventDefault();
+      event.stopImmediatePropagation?.();
+      detail.closeCorrection();
+    }
+    else if ($('pantry-item-modal') && !$('pantry-item-modal').hidden) {
       event.preventDefault();
       event.stopImmediatePropagation?.();
       pantry.closeEditor();
@@ -107,7 +118,32 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
   const tourStarted = tour.maybeStart('cookbook');
   if (!tourStarted) summerTheme.maybeShow();
   return {
+    findRecipeUses: search.findRecipeUses,
     renderShared: () => { week.render(); pantry.render(); cart.render(); engagement.render(); },
-    renderActive: panels.renderActive,
+    renderActive: (_recipes, meta = {}) => {
+      const before = Array.isArray(state.cart) ? state.cart : [];
+      const beforeChecked = state.shoppingChecked && typeof state.shoppingChecked === 'object'
+        ? state.shoppingChecked : {};
+      const reconciled = reconcileReviewedRecipesInCart(before, state.recipes);
+      const reconciledChecked = reconcileReviewedShoppingChecked(beforeChecked, before, reconciled);
+      state.cart = reconciled;
+      state.shoppingChecked = reconciledChecked;
+      const persistedMigrationKeys = new Set();
+      reconciled.forEach((selection, index) => {
+        if (JSON.stringify(selection) !== JSON.stringify(before[index])) {
+          const checkedKeys = reviewedShoppingCheckedKeys(beforeChecked, before[index], selection);
+          checkedKeys.forEach((key) => persistedMigrationKeys.add(key));
+          void runtime.mutate('cart.upsertSelection', { selection, checkedKeys });
+        }
+      });
+      Object.keys(reconciledChecked).forEach((key) => {
+        if (reconciledChecked[key] === true && beforeChecked[key] !== true
+            && !key.startsWith('pantry-transfer:') && !persistedMigrationKeys.has(key)) {
+          void runtime.mutate('shopping.setChecked', { key, checked: true });
+        }
+      });
+      detail.reconcileRecipes(meta);
+      panels.renderActive();
+    },
   };
 }

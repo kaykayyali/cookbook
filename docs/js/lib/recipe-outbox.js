@@ -1,11 +1,33 @@
 const clone = (value) => JSON.parse(JSON.stringify(value));
+import { applyReviewedIngredientCorrection } from './ingredient-corrections.js';
 const makeMutationId = () => globalThis.crypto?.randomUUID?.() || `recipe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const recipeId = (item) => String(item?._id || item?.id || '');
+
+function mergeRecipeAuthority(current, updates) {
+  const byId = new Map((Array.isArray(updates) ? updates : []).map((item) => [recipeId(item), clone(item)]).filter(([id]) => id));
+  const merged = (Array.isArray(current) ? current : []).map((item) => byId.has(recipeId(item)) ? byId.get(recipeId(item)) : clone(item));
+  const existing = new Set(merged.map(recipeId));
+  for (const item of byId.values()) if (!existing.has(recipeId(item))) merged.push(item);
+  return merged;
+}
 
 export function applyRecipeOperation(recipes, request) {
   const next = clone(recipes);
   const payload = request.payload || {};
   if (request.op === 'recipe.delete') return next.filter((item) => recipeId(item) !== String(payload.id));
+  if (request.op === 'recipe.ingredient.review') {
+    const index = next.findIndex((item) => recipeId(item) === String(payload.id));
+    if (index < 0) return next;
+    const reviewedAt = Math.max(Date.now(), Number(next[index]._updatedAt) + 1 || 0);
+    const reviewed = applyReviewedIngredientCorrection(next[index], {
+      ingredientId: payload.ingredientId,
+      correction: payload.correction,
+      reviewer: { sub: 'pending', name: 'You' },
+      reviewedAt,
+    });
+    if (reviewed.ok) next[index] = { ...reviewed.recipe, _updatedAt: reviewedAt };
+    return next;
+  }
   if (request.op === 'recipe.create' || request.op === 'recipe.update') {
     const item = clone(payload.item || { ...payload.recipe, id: payload.id, _id: payload.id });
     const id = String(payload.id || recipeId(item));
@@ -31,6 +53,7 @@ export function createRecipeOutbox({
   let authorityWrites = Promise.resolve();
   let sendingMutationId = null;
   let acceptedMutationId = null;
+  const discarding = new Set();
   const neverAttempted = new Set();
   const restored = new Set();
   let mutationVersion = 0;
@@ -94,10 +117,18 @@ export function createRecipeOutbox({
     while (rows.length && isOnline()) {
       const row = rows[0];
       if (row.sequence == null) return false;
+      if (discarding.has(row.mutationId)) return false;
       let response;
       sendingMutationId = row.mutationId;
       neverAttempted.delete(row.mutationId);
-      try { response = await send({ mutationId: row.mutationId, op: row.op, payload: row.payload }); }
+      try {
+        const outgoingPayload = clone(row.payload);
+        if (row.op === 'recipe.ingredient.review') {
+          const base = confirmed.find((item) => recipeId(item) === String(outgoingPayload.id));
+          if (base && Number.isSafeInteger(Number(base._updatedAt))) outgoingPayload.expectedUpdatedAt = Number(base._updatedAt);
+        }
+        response = await send({ mutationId: row.mutationId, op: row.op, payload: outgoingPayload });
+      }
       catch {
         syncStatus = 'offline'; blockedSequence = row.sequence; discardable = false; report(); return false;
       }
@@ -117,7 +148,9 @@ export function createRecipeOutbox({
       try {
         outcome = await withAuthorityWrite(async () => {
           if (rows[0]?.mutationId !== row.mutationId) return 'skipped';
-          const authority = clone(response.recipes);
+          const authority = response.authorityMode === 'merge'
+            ? mergeRecipeAuthority(confirmed, response.recipes)
+            : clone(response.recipes);
           await repo.acknowledgeRecipes(authSub, householdId, row.mutationId, authority);
           confirmed = authority;
           rows.shift();
@@ -125,7 +158,7 @@ export function createRecipeOutbox({
           mutationVersion += 1;
           blockedSequence = null;
           rebuild();
-          publish({ optimistic: rows.length > 0, pending: rows.length });
+          publish({ optimistic: rows.length > 0, pending: rows.length, authoritative: true });
           return 'acknowledged';
         });
       } catch {
@@ -170,16 +203,36 @@ export function createRecipeOutbox({
     const safelyRejected = blockedSequence === sequence && discardable;
     if (!target || target.mutationId === acceptedMutationId || (!neverAttempted.has(target.mutationId) && !safelyRejected)) return false;
     const discarded = await withAuthorityWrite(async () => {
-      const index = rows.findIndex((row) => row.sequence === sequence);
-      if (index < 0) return false;
-      await repo.deleteOutbox(sequence);
-      neverAttempted.delete(rows[index].mutationId);
-      restored.delete(rows[index].mutationId);
-      rows.splice(index, 1);
-      mutationVersion += 1;
-      blockedSequence = null;
-      rebuild(); publish({ discarded: true, pending: rows.length });
-      return true;
+      const current = rows.find((row) => row.sequence === sequence);
+      if (!current) return false;
+      let durableRows;
+      try { durableRows = await repo.listOutbox(authSub, householdId, 'recipe'); }
+      catch { return false; }
+      const durable = durableRows.find((row) => row.sequence === sequence);
+      if (!durable || durable.mutationId !== current.mutationId) return false;
+      const protectedDelivery = (row) => row.status === 'sending'
+        || ['attempting', 'accepted', 'uncertain'].includes(row.deliveryState);
+      const safeBeforeSend = neverAttempted.has(current.mutationId)
+        && !protectedDelivery(current) && !protectedDelivery(durable);
+      const safelyRejected = blockedSequence === sequence && discardable
+        && !protectedDelivery(current) && !protectedDelivery(durable);
+      if (current.mutationId === sendingMutationId || current.mutationId === acceptedMutationId
+        || (!safeBeforeSend && !safelyRejected)) return false;
+      discarding.add(current.mutationId);
+      try {
+        await repo.deleteOutbox(sequence);
+        const index = rows.findIndex((row) => row.sequence === sequence && row.mutationId === current.mutationId);
+        if (index < 0) return false;
+        neverAttempted.delete(current.mutationId);
+        restored.delete(current.mutationId);
+        rows.splice(index, 1);
+        mutationVersion += 1;
+        blockedSequence = null;
+        rebuild(); publish({ discarded: true, pending: rows.length });
+        return true;
+      } finally {
+        discarding.delete(current.mutationId);
+      }
     });
     if (!discarded) return false;
     syncStatus = rows.length ? (isOnline() ? 'syncing' : 'offline') : 'synced'; report();

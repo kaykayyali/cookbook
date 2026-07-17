@@ -2,6 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { ingredientEvidenceId } from '../../docs/js/lib/ingredient-corrections.js';
 
 let mod;
 try { mod = await import('../../docs/js/controllers/detail.js'); } catch (e) { mod = {}; }
@@ -194,4 +195,25 @@ test('opening a recipe always starts the detail scroller at the top', () => {
   const state = { recipes: [SAMPLE], pantry: [] };
   mod.initDetail({ state, document }).open('r1');
   assert.equal(elements.detailBody.scrollTop, 0);
+});
+
+test('open detail reconciles immediately to discarded authoritative recipe state', () => {
+  const { document, elements } = makeDom();
+  const reviewed = {
+    ...SAMPLE,
+    ingredientNormalizations: [{
+      id: ingredientEvidenceId('spaghetti'), raw: 'spaghetti', name: 'reviewed pasta', displayName: 'Reviewed Pasta',
+      amountState: 'unknown', quantity: null, quantityState: 'unknown', measurementFamily: null,
+      sourceUnit: null, unit: 'qualitative', kind: 'qualitative', countLabel: '', category: 'pantry',
+      confidence: 1, reviewVersion: 1, reviewStatus: 'reviewed', parserVersion: 2, reviewedAt: 10,
+    }],
+  };
+  const state = { recipes: [reviewed], pantry: [] };
+  const ctrl = mod.initDetail({ state, document });
+  ctrl.open('r1');
+  assert.match(elements['dm-ingredients'].innerHTML, /Reviewed/);
+  state.recipes = [{ ...SAMPLE }];
+  assert.equal(ctrl.reconcileRecipes({ discarded: true }), true);
+  assert.doesNotMatch(elements['dm-ingredients'].innerHTML, /Reviewed/);
+  assert.match(elements['dm-ingredients'].innerHTML, /spaghetti/);
 });

@@ -6,6 +6,11 @@ import { createRecipeOutbox } from '../docs/js/lib/recipe-outbox.js';
 
 const dbName = () => `recipe-outbox-${Date.now()}-${Math.random()}`;
 const recipe = { id: 'local-r1', _id: 'local-r1', name: 'Offline soup', recipeIngredient: ['tomato'] };
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+};
 
 test('online recipe mutation returns after IndexedDB publication without waiting for D1', async () => {
   const repo = await openOfflineDb({ indexedDB, name: dbName() });
@@ -233,6 +238,97 @@ test('discard waits for an in-flight accepted recipe mutation to reconcile', asy
   assert.equal(await discarded, false);
   assert.deepEqual(manager.current().map(({ id }) => id), ['local-r1']);
   assert.deepEqual((await repo.getRecipes('kay', 'our-home')).map(({ id }) => id), ['local-r1']);
+  repo.close();
+});
+
+test('discard revalidates a rejected recipe retry inside the authority mutex before deleting', async () => {
+  const repo = await openOfflineDb({ indexedDB, name: dbName() });
+  const serverBefore = [{ id: 'r1', _id: 'r1', name: 'Before' }];
+  const serverAfter = [{ id: 'r1', _id: 'r1', name: 'After' }];
+  let serverRecipes = serverBefore;
+  let online = false;
+  let attempts = 0;
+  const refreshWriteStarted = deferred();
+  const releaseRefreshWrite = deferred();
+  const retrySendStarted = deferred();
+  const retryResponse = deferred();
+  const originalPutRecipes = repo.putRecipes;
+  repo.putRecipes = async (...args) => {
+    refreshWriteStarted.resolve();
+    await releaseRefreshWrite.promise;
+    return originalPutRecipes(...args);
+  };
+  const manager = createRecipeOutbox({
+    repo, authSub: 'kay', householdId: 'our-home', initial: serverBefore, isOnline: () => online,
+    makeId: () => 'discard-retry-race',
+    send: async () => {
+      attempts += 1;
+      if (attempts === 1) return { ok: false, status: 409, error: 'recipe_conflict' };
+      serverRecipes = serverAfter;
+      retrySendStarted.resolve();
+      return retryResponse.promise;
+    },
+  });
+  await manager.init();
+  await manager.mutate('recipe.update', { id: 'r1', item: serverAfter[0] });
+  const [pending] = manager.pending();
+  online = true;
+  assert.equal(await manager.drain(), false);
+
+  const refresh = manager.setAuthority(serverBefore);
+  await refreshWriteStarted.promise;
+  const discarded = manager.discard(pending.sequence);
+  const retried = manager.retry(pending.sequence);
+  await retrySendStarted.promise;
+  releaseRefreshWrite.resolve();
+
+  assert.equal(await refresh, true);
+  assert.equal(await discarded, false, 'a queued discard cannot delete a retry that has started sending');
+  retryResponse.resolve({ ok: true, recipes: serverRecipes });
+  assert.equal(await retried, true);
+  assert.deepEqual(serverRecipes, serverAfter);
+  assert.deepEqual(await repo.getRecipes('kay', 'our-home'), serverRecipes);
+  assert.deepEqual(manager.current(), serverRecipes);
+  assert.deepEqual(await repo.listOutbox('kay', 'our-home', 'recipe'), []);
+  repo.close();
+});
+
+test('discard that wins before retry prevents any later recipe send', async () => {
+  const repo = await openOfflineDb({ indexedDB, name: dbName() });
+  let online = false;
+  const sent = [];
+  const deleteStarted = deferred();
+  const releaseDelete = deferred();
+  const originalDeleteOutbox = repo.deleteOutbox;
+  repo.deleteOutbox = async (...args) => {
+    deleteStarted.resolve();
+    await releaseDelete.promise;
+    return originalDeleteOutbox(...args);
+  };
+  const manager = createRecipeOutbox({
+    repo, authSub: 'kay', householdId: 'our-home', initial: [], isOnline: () => online,
+    makeId: () => 'discard-wins',
+    send: async ({ mutationId }) => {
+      sent.push(mutationId);
+      return { ok: false, status: 409, error: 'recipe_conflict' };
+    },
+  });
+  await manager.init();
+  await manager.mutate('recipe.create', { id: recipe.id, item: recipe });
+  const [pending] = manager.pending();
+  online = true;
+  assert.equal(await manager.drain(), false);
+
+  const discarded = manager.discard(pending.sequence);
+  await deleteStarted.promise;
+  assert.equal(await manager.retry(pending.sequence), false, 'retry cannot send after discard owns the row');
+  releaseDelete.resolve();
+  assert.equal(await discarded, true);
+  assert.equal(await manager.discard(pending.sequence), false, 'duplicate discard is idempotent');
+  assert.equal(await manager.retry(pending.sequence), false);
+  assert.deepEqual(sent, ['discard-wins']);
+  assert.deepEqual(manager.current(), []);
+  assert.deepEqual(await repo.listOutbox('kay', 'our-home', 'recipe'), []);
   repo.close();
 });
 

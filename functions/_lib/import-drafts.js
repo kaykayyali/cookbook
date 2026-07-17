@@ -11,6 +11,7 @@ import {
   normalizeServerProvenance,
   provenanceStatement,
 } from './import-provenance.js';
+import { preserveReviewedIngredientCorrections } from '../../docs/js/lib/ingredient-corrections.js';
 
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS recipe_import_drafts (
@@ -234,7 +235,7 @@ export async function confirmDraft(db, {
   const recipeId = typeof recipeIdFactory === 'function'
     ? recipeIdFactory()
     : globalThis.crypto?.randomUUID?.() || `r-${now}-${Math.random().toString(36).slice(2)}`;
-  const recipeJson = JSON.stringify(recipe);
+  const recipeJson = JSON.stringify(preserveReviewedIngredientCorrections({}, recipe));
   const displayName = typeof actorName === 'string' && actorName.trim() ? actorName.trim() : 'member';
   const displayPicture = typeof actorPicture === 'string' && actorPicture ? actorPicture : null;
 

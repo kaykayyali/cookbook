@@ -7,8 +7,9 @@
 @layer base {
   *, *::before, *::after { box-sizing: border-box; }
   *, *::before, *::after { margin: 0; padding: 0; }
+  :where([hidden]) { display: none !important; }
 
-  html { -webkit-text-size-adjust: 100%; }
+  html { -webkit-text-size-adjust: 100%; max-width: 100%; overflow-x: clip; }
 
   body {
     font-family: var(--font-body);

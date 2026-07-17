@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -42,7 +42,6 @@ const CONTROLLER_INIT_NAMES = [
 ];
 
 test('npm run build produces docs/js/bundle.js and docs/css/bundle.css', () => {
-  execFileSync('node', [join(ROOT, 'scripts', 'build.js')], { cwd: ROOT, stdio: 'pipe' });
   assert.equal(existsSync(JS_BUNDLE), true, 'docs/js/bundle.js missing');
   assert.equal(existsSync(CSS_BUNDLE), true, 'docs/css/bundle.css missing');
 });

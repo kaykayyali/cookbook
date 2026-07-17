@@ -1,7 +1,6 @@
 import {
   aggregateCart,
   canonicalName,
-  normalizeIngredientsLocal,
   parseServings,
   removeShoppingItem,
   setTargetServings,
@@ -15,6 +14,7 @@ import {
   restorePantryRecord,
   updatePantryRecord,
 } from '../../docs/js/lib/pantry.js';
+import { applyIngredientTombstones, effectiveIngredientRecords, recipeEffectiveSignature } from '../../docs/js/lib/ingredient-corrections.js';
 
 const PLAN_TYPES = new Set(['recipe', 'leftovers', 'dining-out', 'open']);
 const PLAN_STATUSES = new Set(['active', 'skipped', 'cooked']);
@@ -93,6 +93,10 @@ function planSelection(recipe, entries, rangeStart, rangeEnd, previous) {
   const signature = JSON.stringify(entries
     .map(({ id, date, status, targetServings: servings }) => ({ id, date, status, servings }))
     .sort((a, b) => a.id.localeCompare(b.id)));
+  const projected = applyIngredientTombstones(
+    effectiveIngredientRecords(recipe),
+    previous?.removedIngredientNames,
+  );
   return {
     recipeId: `plan:${rangeStart}:${rangeEnd}:${sourceRecipeId}`,
     sourceRecipeId,
@@ -100,9 +104,9 @@ function planSelection(recipe, entries, rangeStart, rangeEnd, previous) {
     sourceServings,
     targetServings,
     normalizationVersion: 2,
-    ingredients: normalizeIngredientsLocal(recipe.recipeIngredient),
-    removedIngredientNames: Array.isArray(previous?.removedIngredientNames)
-      ? [...previous.removedIngredientNames] : [],
+    ingredients: projected.ingredients,
+    effectiveSignature: recipeEffectiveSignature(recipe),
+    removedIngredientNames: projected.removedIngredientNames,
     origin: {
       kind: 'plan',
       rangeStart,
@@ -218,6 +222,10 @@ function applyOperation(workspace, operation, context) {
       const index = workspace.cart.findIndex((item) => item.recipeId === selection.recipeId);
       if (index >= 0) workspace.cart[index] = selection;
       else workspace.cart.push(selection);
+      for (const rawKey of (Array.isArray(payload.checkedKeys) ? payload.checkedKeys : []).slice(0, 100)) {
+        const key = text(rawKey, 300);
+        if (key) workspace.shoppingChecked[key] = true;
+      }
       pruneTransferMarkers(workspace);
       break;
     }
