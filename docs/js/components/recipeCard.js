@@ -2,7 +2,7 @@
 // components/recipeCard.js — recipe grid card (design-system v1)
 // ════════════════════════════════════════════════════════
 
-import { esc, formatDuration, formatListValue } from '../lib/format.js';
+import { esc, formatDuration, formatListValue, formatRecipeYield } from '../lib/format.js';
 import { Icon, IconButton } from '../lib/ui.js';
 import { eligibility, haveIngredient, ingredientCounts } from '../lib/pantry.js';
 import { householdIdentityHTML } from './householdIdentity.js';
@@ -24,6 +24,7 @@ export function recipeCardHTML(r, pantry, { currentUserSub = null, history = nul
   const ings = r.recipeIngredient || [];
   const { have, total } = ingredientCounts(r, pantry);
   const statusText = e === 'partial' ? STATUS_TEXT.partial(have, total) : STATUS_TEXT[e];
+  const recipeYield = formatRecipeYield(r.recipeYield);
 
   const ingTags =
     ings
@@ -38,7 +39,7 @@ export function recipeCardHTML(r, pantry, { currentUserSub = null, history = nul
   const metaPills = [
     r.prepTime && `<span class="meta-pill">${Icon({ name: 'clock' })}Prep ${esc(formatDuration(r.prepTime))}</span>`,
     r.cookTime && `<span class="meta-pill">${Icon({ name: 'pot' })}Cook ${esc(formatDuration(r.cookTime))}</span>`,
-    r.recipeYield && `<span class="meta-pill">${Icon({ name: 'serves' })}${esc(r.recipeYield)}</span>`,
+    recipeYield && `<span class="meta-pill">${Icon({ name: 'serves' })}${esc(`${recipeYield.label} ${recipeYield.value}`)}</span>`,
   ].filter(Boolean).join('');
 
   const author = r._author;
@@ -48,7 +49,7 @@ export function recipeCardHTML(r, pantry, { currentUserSub = null, history = nul
     <article class="card recipe-card card-fold-${e}" data-id="${esc(r._id)}">
       <div class="card-stripe"></div>
       <div class="card-body">
-        <span class="badge ${e === 'complete' ? 'badge-success' : 'badge-accent'}">${esc(r.recipeCategory || 'Recipe')}</span>
+        <span class="badge ${e === 'complete' ? 'badge-success' : 'badge-accent'}">${esc(formatListValue(r.recipeCategory) || 'Recipe')}</span>
         ${r.recipeCuisine ? `<span class="badge">${esc(formatListValue(r.recipeCuisine))}</span>` : ''}
         <div class="card-head">
           <h3 class="card-title">${esc(r.name)}</h3>
