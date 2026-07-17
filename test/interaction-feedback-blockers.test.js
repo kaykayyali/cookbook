@@ -145,6 +145,20 @@ test('capture-phase integration observes stopPropagation controls exactly once',
   system.destroy();
 });
 
+test('nested actions never inherit a card select cue when their own feedback is intentionally absent', () => {
+  const dom = new JSDOM('<article class="recipe-card" data-feedback="select" role="button"><button data-action="delete">Delete</button></article>');
+  const emitted = [];
+  dom.window.document.addEventListener('cookbook:feedback', (event) => emitted.push(event.detail.type));
+  const system = createInteractionFeedback({
+    document: dom.window.document,
+    storage: storage({ [SOUNDS_KEY]: 'off', [HAPTICS_KEY]: 'off' }),
+    navigator: {}, AudioContext: null,
+  }).init();
+  dom.window.document.querySelector('[data-action="delete"]').click();
+  assert.deepEqual(emitted, [], 'a cancelled destructive action stays silent');
+  system.destroy();
+});
+
 test('adapter and observer exceptions are isolated from visual feedback and one another', () => {
   const dom = new JSDOM('<button id="save">Save</button>');
   const button = dom.window.document.getElementById('save');

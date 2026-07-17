@@ -219,6 +219,8 @@ export function createHapticAdapter({
 function semanticControl(target) {
   const control = target?.closest?.('[data-feedback]');
   if (!control || control.disabled || control.getAttribute?.('aria-disabled') === 'true') return null;
+  const nestedAction = target?.closest?.('button, a[href], input, select, textarea, [data-action], [role="button"]');
+  if (nestedAction && nestedAction !== control && control.contains?.(nestedAction)) return null;
   return FEEDBACK_EVENTS[control.dataset.feedback] ? control : null;
 }
 

@@ -29,6 +29,7 @@ test('recipe detail is modal, focuses inside, traps Tab, closes on Escape, and r
   const modal = document.getElementById('detail-modal');
   const close = document.getElementById('detail-close-btn');
   const last = document.getElementById('dm-schema-btn');
+  assert.equal(modal.getAttribute('aria-modal'), null, 'closed detail is not exposed as modal');
   opener.focus();
   detail.open('r1');
   assert.equal(modal.getAttribute('aria-modal'), 'true');
@@ -40,5 +41,6 @@ test('recipe detail is modal, focuses inside, traps Tab, closes on Escape, and r
   assert.equal(document.activeElement, close, 'Tab wraps to the first control');
   close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   assert.equal(modal.classList.contains('open'), false);
+  assert.equal(modal.getAttribute('aria-modal'), null, 'closed detail releases modal semantics');
   assert.equal(document.activeElement, opener, 'closing restores the exact opener');
 });

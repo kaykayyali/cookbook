@@ -284,6 +284,7 @@ test('production bundle preserves optimistic flows, recovery, modal transitions,
       assert.equal((await page.evaluate(() => window.__feedbackEvents.at(-1))).modality, 'keyboard');
 
       const card = page.locator(`.recipe-card[data-id="${RECIPE_ID}"]`);
+      assert.equal(await page.locator('#detail-modal').getAttribute('aria-modal'), null, 'closed detail is not modal');
       await card.focus();
       await card.press('Enter');
       const modal = page.locator('#detail-modal.open');
@@ -292,6 +293,7 @@ test('production bundle preserves optimistic flows, recovery, modal transitions,
       assert.equal(await page.evaluate(() => document.activeElement?.id), 'detail-close-btn');
       await page.keyboard.press('Escape');
       assert.equal(await page.locator('#detail-modal').getAttribute('class').then((value) => value.includes('open')), false);
+      assert.equal(await page.locator('#detail-modal').getAttribute('aria-modal'), null, 'closed detail releases modal semantics');
       assert.equal(await page.evaluate(() => document.activeElement?.dataset?.id), RECIPE_ID);
 
       const beforeMouse = await page.evaluate(() => window.__hapticCalls.length);

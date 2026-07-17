@@ -231,7 +231,10 @@ export function initDetail({
   function closeSheet() {
     const modal = document.getElementById('detail-modal');
     const overlay = document.getElementById('detail-overlay');
-    if (modal) modal.classList.remove('open');
+    if (modal) {
+      modal.classList.remove('open');
+      modal.removeAttribute?.('aria-modal');
+    }
     if (overlay) overlay.classList.remove('open');
     if (!isAnyOpen(document)) document.body.style.overflow = '';
     state.detailId = null;
