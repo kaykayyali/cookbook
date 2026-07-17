@@ -35,12 +35,15 @@ test('recipe cards use compact household identity and a four-ingredient preview'
   assert.match(fallback, /class="household-avatar household-initial"[^>]*>G</);
 });
 
-test('recipe metadata formats imported list values for people', () => {
+test('recipe category metadata formats imported list values for people', () => {
   const card = recipeCardHTML({ ...recipe, recipeCuisine: ['Italian', 'American'] }, []);
   assert.match(card, /Italian · American/);
+});
+
+test('recipe yield copy avoids duplicate servings and spells out a single whole item', () => {
   const meta = metaRowHTML({ recipeYield: ['4', '1 10-inch pizza'] });
-  assert.match(meta, /4 servings · 1 10-inch pizza/);
-  assert.doesNotMatch(meta, />4,1 10-inch pizza</);
+  assert.match(meta, /<span class="k">Serves<\/span><span class="v">4 · One 10-inch pizza<\/span>/);
+  assert.doesNotMatch(meta, /Serves<\/span><span class="v">4 servings/);
 });
 
 test('overhaul stylesheet establishes readable surfaces and 44px mobile actions', () => {

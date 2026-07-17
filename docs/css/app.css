@@ -709,6 +709,9 @@
 		grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
 		-webkit-overflow-scrolling: touch;
 	}
+	.detail-main {
+		min-width: 0;
+	}
 	.section-label {
 		font-size: var(--text-xs);
 		font-weight: 700;

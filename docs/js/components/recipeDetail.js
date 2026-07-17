@@ -2,7 +2,7 @@
 // components/recipeDetail.js — recipe detail sheet (design-system v1)
 // ════════════════════════════════════════════════════════
 
-import { esc, formatDuration, formatListValue } from '../lib/format.js';
+import { esc, formatDuration } from '../lib/format.js';
 import { Icon } from '../lib/ui.js';
 import { haveIngredient, ingredientCounts } from '../lib/pantry.js';
 
@@ -39,6 +39,21 @@ export function pantryNoteHTML(ings, pantry) {
     : `<strong>${missing} ingredient${missing !== 1 ? 's' : ''} needed</strong> — ${have} of ${total} in your pantry. <button class="btn btn-ghost btn-sm" data-action="add-missing">Add to cart</button>`;
 }
 
+/** Format recipe yields without repeating the surrounding “Serves” label. */
+function formatRecipeYield(value) {
+  const parts = (Array.isArray(value) ? value : [value])
+    .filter((part) => part !== null && part !== undefined && String(part).trim())
+    .map((part) => String(part).trim());
+
+  return parts.map((part, index) => {
+    if (index === 0) {
+      const servings = part.match(/^(?:(?:serves?|makes?)\s+)?(\d+(?:\.\d+)?)\s*(?:servings?|people|portions?)?$/i);
+      if (servings) return servings[1];
+    }
+    return part.replace(/^1\s+(?=\S)/, 'One ');
+  }).join(' · ');
+}
+
 /**
  * Meta pills for the detail header.
  * @param {object} r
@@ -49,7 +64,7 @@ export function metaRowHTML(r) {
     r.prepTime && ['Prep', formatDuration(r.prepTime)],
     r.cookTime && ['Cook', formatDuration(r.cookTime)],
     r.totalTime && ['Total', formatDuration(r.totalTime)],
-    r.recipeYield && ['Serves', formatListValue(r.recipeYield, { numericServings: true })],
+    r.recipeYield && ['Serves', formatRecipeYield(r.recipeYield)],
     r.cookingMethod && ['Method', r.cookingMethod],
   ].filter(Boolean);
   if (!meta.length) return '';
