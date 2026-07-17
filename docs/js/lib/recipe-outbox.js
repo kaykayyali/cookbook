@@ -53,6 +53,7 @@ export function createRecipeOutbox({
   let authorityWrites = Promise.resolve();
   let sendingMutationId = null;
   let acceptedMutationId = null;
+  const discarding = new Set();
   const neverAttempted = new Set();
   const restored = new Set();
   let mutationVersion = 0;
@@ -116,6 +117,7 @@ export function createRecipeOutbox({
     while (rows.length && isOnline()) {
       const row = rows[0];
       if (row.sequence == null) return false;
+      if (discarding.has(row.mutationId)) return false;
       let response;
       sendingMutationId = row.mutationId;
       neverAttempted.delete(row.mutationId);
@@ -201,16 +203,36 @@ export function createRecipeOutbox({
     const safelyRejected = blockedSequence === sequence && discardable;
     if (!target || target.mutationId === acceptedMutationId || (!neverAttempted.has(target.mutationId) && !safelyRejected)) return false;
     const discarded = await withAuthorityWrite(async () => {
-      const index = rows.findIndex((row) => row.sequence === sequence);
-      if (index < 0) return false;
-      await repo.deleteOutbox(sequence);
-      neverAttempted.delete(rows[index].mutationId);
-      restored.delete(rows[index].mutationId);
-      rows.splice(index, 1);
-      mutationVersion += 1;
-      blockedSequence = null;
-      rebuild(); publish({ discarded: true, pending: rows.length });
-      return true;
+      const current = rows.find((row) => row.sequence === sequence);
+      if (!current) return false;
+      let durableRows;
+      try { durableRows = await repo.listOutbox(authSub, householdId, 'recipe'); }
+      catch { return false; }
+      const durable = durableRows.find((row) => row.sequence === sequence);
+      if (!durable || durable.mutationId !== current.mutationId) return false;
+      const protectedDelivery = (row) => row.status === 'sending'
+        || ['attempting', 'accepted', 'uncertain'].includes(row.deliveryState);
+      const safeBeforeSend = neverAttempted.has(current.mutationId)
+        && !protectedDelivery(current) && !protectedDelivery(durable);
+      const safelyRejected = blockedSequence === sequence && discardable
+        && !protectedDelivery(current) && !protectedDelivery(durable);
+      if (current.mutationId === sendingMutationId || current.mutationId === acceptedMutationId
+        || (!safeBeforeSend && !safelyRejected)) return false;
+      discarding.add(current.mutationId);
+      try {
+        await repo.deleteOutbox(sequence);
+        const index = rows.findIndex((row) => row.sequence === sequence && row.mutationId === current.mutationId);
+        if (index < 0) return false;
+        neverAttempted.delete(current.mutationId);
+        restored.delete(current.mutationId);
+        rows.splice(index, 1);
+        mutationVersion += 1;
+        blockedSequence = null;
+        rebuild(); publish({ discarded: true, pending: rows.length });
+        return true;
+      } finally {
+        discarding.delete(current.mutationId);
+      }
     });
     if (!discarded) return false;
     syncStatus = rows.length ? (isOnline() ? 'syncing' : 'offline') : 'synced'; report();
