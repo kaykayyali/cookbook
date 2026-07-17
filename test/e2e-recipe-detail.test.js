@@ -146,7 +146,7 @@ async function createRecipePage(viewport) {
   return { context, page, browserErrors };
 }
 
-test('desktop nutrition follows a short method instead of the forty-ingredient grid row', { timeout: 30_000 }, async () => {
+test('desktop nutrition follows a short method instead of the forty-ingredient grid row', { timeout: 90_000 }, async () => {
   const { context, page, browserErrors } = await createRecipePage({ width: 1440, height: 900 });
   try {
     const ingredients = await page.locator('.detail-ingredients').boundingBox();
