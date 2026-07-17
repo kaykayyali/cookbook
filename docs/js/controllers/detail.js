@@ -4,7 +4,7 @@
 
 import { toast } from '../lib/dom.js';
 import { save as persist } from '../lib/store.js';
-import { normalizePantryEntry, togglePantry } from '../lib/pantry.js';
+import { normalizePantryEntry, pantryRecordFingerprint, togglePantry } from '../lib/pantry.js';
 import {
   addRecipeSelection,
   isNormalizedIngredient,
@@ -497,7 +497,7 @@ export function initDetail({
         state.pantry = pantry;
         if (mutate) void mutate(added ? 'pantry.add' : 'pantry.remove', added
           ? { item: pantryItem }
-          : { id: pantryItem?.id });
+          : { id: pantryItem?.id, expectedFingerprint: pantryRecordFingerprint(pantryItem) });
         persist();
         renderIngredients();
         if (onChange) onChange();

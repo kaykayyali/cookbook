@@ -399,7 +399,7 @@
 							autocomplete="off"
 						/>
 						<datalist id="pantry-suggestions"></datalist>
-						<button class="btn btn-primary" id="pantry-add-btn" data-feedback="commit">Add item</button>
+						<button class="btn btn-primary" id="pantry-add-btn" data-feedback="select">Add item</button>
 					</div>
 					<p class="pantry-hint">Add an amount when it’s useful. Bought shopping amounts add up here; Pantry never changes your shopping list.</p>
 				</div>
@@ -596,6 +596,75 @@
 				</svg>
 			</button>
 		</div>
+
+		<!-- ─────────────────────────────── Pantry item modal -->
+		<div class="overlay pantry-item-overlay" id="pantry-item-overlay" hidden></div>
+		<section
+			class="pantry-item-modal"
+			id="pantry-item-modal"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="pantry-item-title"
+			aria-describedby="pantry-item-description"
+			aria-hidden="true"
+			inert
+			hidden
+		>
+			<header class="pantry-item-header">
+				<div>
+					<p class="pantry-item-eyebrow">Shared Pantry</p>
+					<h2 id="pantry-item-title">Edit Pantry item</h2>
+					<p id="pantry-item-description">Correct the shared amount without losing the original text.</p>
+				</div>
+				<button class="pantry-item-close" id="pantry-item-close" type="button" data-feedback="toggle-off" aria-label="Close Pantry item editor">×</button>
+			</header>
+			<form id="pantry-item-form" class="pantry-item-form" novalidate>
+				<div class="pantry-item-body">
+					<label class="form-group" for="pantry-item-name">
+						<span>Item name <span class="req" aria-hidden="true">*</span></span>
+						<input class="input" id="pantry-item-name" name="name" maxlength="80" autocomplete="off" required />
+					</label>
+					<div class="pantry-item-measurement-grid">
+						<label class="form-group" for="pantry-item-family">
+							<span>Measurement</span>
+							<select class="select" id="pantry-item-family" name="family">
+								<option value="count">Count</option>
+								<option value="solid">Solid</option>
+								<option value="fluid">Fluid</option>
+								<option value="unknown">Not sure</option>
+							</select>
+						</label>
+						<label class="form-group" id="pantry-item-quantity-group" for="pantry-item-quantity">
+							<span>Amount</span>
+							<input class="input" id="pantry-item-quantity" name="quantity" type="number" min="0.000001" max="1000000" step="any" inputmode="decimal" />
+						</label>
+						<label class="form-group" id="pantry-item-unit-group" for="pantry-item-unit">
+							<span>Unit</span>
+							<select class="select" id="pantry-item-unit" name="unit"></select>
+						</label>
+					</div>
+					<section class="pantry-original" aria-labelledby="pantry-original-title">
+						<strong id="pantry-original-title">Original text</strong>
+						<output id="pantry-item-raw"></output>
+						<ul class="pantry-original-evidence" id="pantry-item-raw-evidence" aria-label="Earlier original text" hidden></ul>
+						<small>Kept as correction context and never replaced silently.</small>
+					</section>
+					<p class="pantry-item-error" id="pantry-item-error" role="alert" hidden></p>
+					<p class="pantry-item-status" id="pantry-item-status" role="status" aria-live="polite"></p>
+					<div class="pantry-remove-confirm" id="pantry-remove-confirm" hidden>
+						<p><strong>Remove this exact item?</strong><span>Other same-name Pantry records will stay.</span></p>
+						<div>
+							<button class="btn btn-ghost" data-action="cancel-pantry-remove" data-feedback="toggle-off" type="button">Keep item</button>
+							<button class="btn pantry-danger-button" data-action="confirm-pantry-remove" type="button">Remove item</button>
+						</div>
+					</div>
+				</div>
+				<footer class="pantry-item-footer">
+					<button class="btn btn-ghost pantry-remove-action" id="pantry-item-remove" type="button" data-feedback="select">Remove from Pantry</button>
+					<button class="btn btn-primary" id="pantry-item-save" type="submit" data-feedback="commit">Save item</button>
+				</footer>
+			</form>
+		</section>
 
 		<!-- ─────────────────────────────── Detail modal -->
 		<div

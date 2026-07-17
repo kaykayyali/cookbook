@@ -92,7 +92,12 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
   globalThis.window?.addEventListener?.('online', () => { void engagement.load(); });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
-    if ($('schema-overlay')?.classList.contains('open')) $('schema-overlay').classList.remove('open');
+    if ($('pantry-item-modal') && !$('pantry-item-modal').hidden) {
+      event.preventDefault();
+      event.stopImmediatePropagation?.();
+      pantry.closeEditor();
+    }
+    else if ($('schema-overlay')?.classList.contains('open')) $('schema-overlay').classList.remove('open');
     else if ($('url-overlay')?.classList.contains('open')) extract.close();
     else if ($('recipe-drawer')?.classList.contains('open')) drawer.close();
     else if ($('detail-modal')?.classList.contains('open')) detail.close();

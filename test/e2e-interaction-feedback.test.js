@@ -291,6 +291,8 @@ test('primary controls are 44px touch-safe on mobile without desktop bloat', { t
           measurements[selector] = { width: box.width, height: box.height };
           if (label === 'mobile') {
             assert.ok(box.width >= 44 && box.height >= 44, `${selector} is not touch-safe: ${JSON.stringify(box)}`);
+          } else if (selector === '.pantry-tag') {
+            assert.ok(box.height <= 48, `${selector} content row bloats desktop: ${JSON.stringify(box)}`);
           } else if (!selector.includes('detail-ing-item')) {
             assert.ok(box.height <= 44.5, `${selector} bloats desktop: ${JSON.stringify(box)}`);
           }
@@ -305,8 +307,13 @@ test('primary controls are 44px touch-safe on mobile without desktop bloat', { t
         '[data-entry-id="plan-soup"] [data-action="mark-cooked"]',
       ]);
       await page.locator('button[data-panel="pantry"]').click();
-      await page.locator('.pantry-remove').waitFor();
-      await measure(['.pantry-remove']);
+      const pantryRow = page.locator('.pantry-tag').first();
+      await pantryRow.waitFor();
+      await measure(['.pantry-tag']);
+      await pantryRow.click();
+      await page.locator('#pantry-item-modal').waitFor({ state: 'visible' });
+      await measure(['#pantry-item-close', '#pantry-item-remove', '#pantry-item-save']);
+      await page.locator('#pantry-item-close').click();
       await page.locator('button[data-panel="cart"]').click();
       await page.locator('.cart-check').first().waitFor();
       await measure([
@@ -412,9 +419,25 @@ test('production bundle preserves optimistic flows, recovery, modal transitions,
       assert.equal(authoritative().plan.find((entry) => entry.id === 'plan-soup')?.status, 'skipped');
 
       await page.locator('button[data-panel="pantry"]').click();
-      const remove = page.locator('.pantry-remove').first();
-      await remove.click();
-      await page.locator('[data-pantry-id="pantry-onion"]').waitFor({ state: 'detached', timeout: 700 });
+      const pantryFeedbackStart = await page.evaluate(() => window.__feedbackEvents.length);
+      const pantryRow = page.locator('[data-pantry-id="pantry-onion"]');
+      if (label === 'mobile') await pantryRow.tap(); else await pantryRow.click();
+      await page.locator('#pantry-item-modal').waitFor({ state: 'visible' });
+      const remove = page.locator('#pantry-item-remove');
+      if (label === 'mobile') await remove.tap(); else await remove.click();
+      const confirmRemove = page.locator('[data-action="confirm-pantry-remove"]');
+      if (label === 'mobile') await confirmRemove.tap(); else await confirmRemove.click();
+      await pantryRow.waitFor({ state: 'detached', timeout: 700 });
+      await page.waitForFunction(
+        (start) => window.__feedbackEvents.slice(start).some(({ type }) => type === 'success'),
+        pantryFeedbackStart,
+        { timeout: 2_000 },
+      );
+      const pantryFeedback = await page.evaluate((start) => window.__feedbackEvents.slice(start), pantryFeedbackStart);
+      assert.deepEqual(pantryFeedback.map(({ type }) => type), ['select', 'select', 'destructive', 'success']);
+      if (label === 'mobile') {
+        assert.ok(pantryFeedback.every(({ modality, touchOrigin }) => modality === 'touch' && touchOrigin), JSON.stringify(pantryFeedback));
+      }
 
       await page.locator('button[data-panel="cart"]').click();
       const activeRow = page.locator('.shopping-list:not(.shopping-list-completed) .cart-row').first();
@@ -520,7 +543,10 @@ test('scenario-pure evidence resets fixtures, asserts labels, and captures only 
       const onion = page.locator('[data-pantry-id="pantry-onion"]');
       await onion.waitFor();
       await captureSurface(page, `${label}-06-pantry-before`);
-      await onion.locator('.pantry-remove').click();
+      await activate(onion);
+      await page.locator('#pantry-item-modal').waitFor({ state: 'visible' });
+      await activate(page.locator('#pantry-item-remove'));
+      await activate(page.locator('[data-action="confirm-pantry-remove"]'));
       await onion.waitFor({ state: 'detached' });
       assert.equal(authoritative().pantry.length, 1, 'pantry capture is optimistic, not a reused settled fixture');
       await captureSurface(page, `${label}-07-pantry-optimistic`, { toast: /removed.*onion/i });
