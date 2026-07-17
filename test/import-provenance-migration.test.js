@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -8,7 +7,10 @@ const migration = readFileSync(
   'utf8',
 );
 
-test('provenance migration leaves old/manual recipes valid and supports indexed source lookup after edits', () => {
+test('provenance migration leaves old/manual recipes valid and supports indexed source lookup after edits', async (t) => {
+  let DatabaseSync;
+  try { ({ DatabaseSync } = await import('node:sqlite')); }
+  catch { t.skip('node:sqlite is unavailable on this supported Node version'); return; }
   const db = new DatabaseSync(':memory:');
   db.exec(`
     PRAGMA foreign_keys = ON;
