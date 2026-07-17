@@ -132,5 +132,6 @@ async function initDurableRuntime({
   poller?.unref?.();
   document?.addEventListener?.('visibilitychange', () => { if (!document.hidden) void refresh(); });
   window?.addEventListener?.('online', () => { void manager.drain(); });
+  if (window?.navigator?.onLine !== false) void manager.drain();
   return { mutate: manager.mutate, current: manager.current, refresh, drain: manager.drain };
 }

@@ -284,6 +284,51 @@ test('refresh authority persistence is serialized before a newer acknowledgement
   assert.equal(manager.current().revision, 2);
 });
 
+test('discard revalidates delivery safety inside the authority mutex before deleting', async () => {
+  const repo = memoryRepo();
+  let online = false;
+  const refreshWriteStarted = deferred();
+  const releaseRefreshWrite = deferred();
+  const sendStarted = deferred();
+  const response = deferred();
+  const originalPutWorkspace = repo.putWorkspace;
+  repo.putWorkspace = async (...args) => {
+    if (args[2].revision === 1) {
+      refreshWriteStarted.resolve();
+      await releaseRefreshWrite.promise;
+    }
+    return originalPutWorkspace(...args);
+  };
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => online,
+    makeId: () => 'discard-toctou',
+    send: async () => {
+      sendStarted.resolve();
+      return response.promise;
+    },
+  });
+  await manager.mutate('pantry.add', { name: 'flour' });
+  const [pending] = await repo.listOutbox();
+
+  const refresh = manager.refresh(base({ revision: 1 }));
+  await refreshWriteStarted.promise;
+  const discarded = manager.discard(pending.sequence);
+  online = true;
+  const draining = manager.drain();
+  await sendStarted.promise;
+  response.resolve({ ok: true, workspace: base({ revision: 2, pantry: ['flour'] }) });
+  await Promise.resolve();
+  await Promise.resolve();
+  releaseRefreshWrite.resolve();
+
+  assert.equal(await refresh, true);
+  assert.equal(await discarded, false, 'an accepted row cannot be deleted by an earlier queued discard');
+  assert.equal(await draining, true);
+  assert.equal((await repo.getWorkspace()).revision, 2);
+  assert.deepEqual(await repo.listOutbox(), []);
+  assert.deepEqual(manager.current().pantry.map((item) => item.name), ['flour']);
+});
+
 test('accepted workspace mutation survives acknowledgement persistence failure and retries safely', async () => {
   const repo = memoryRepo();
   let online = false;
@@ -325,6 +370,47 @@ test('accepted workspace mutation survives acknowledgement persistence failure a
   assert.deepEqual(await repo.listOutbox(), []);
 });
 
+test('durable accepted marker survives restart and a later permanent response', async () => {
+  const repo = memoryRepo();
+  let online = false;
+  const sent = [];
+  repo.acknowledge = async () => { throw new Error('ack_failed'); };
+  const first = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => online,
+    makeId: () => 'accepted-before-restart',
+    send: async ({ mutationId }) => {
+      sent.push(mutationId);
+      return { ok: true, workspace: base({ revision: 1, pantry: ['flour'] }) };
+    },
+  });
+  await first.mutate('pantry.add', { name: 'flour' });
+  online = true;
+  assert.equal(await first.drain(), false);
+  assert.equal((await repo.listOutbox())[0].deliveryState, 'accepted');
+
+  const statuses = [];
+  const restarted = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => online,
+    onStatus: (value) => statuses.push(value),
+    send: async ({ mutationId }) => {
+      sent.push(mutationId);
+      return { ok: false, status: 401, error: 'authentication_required' };
+    },
+  });
+  const [pending] = await repo.listOutbox();
+  assert.equal(await restarted.drain(), false);
+
+  const [durable] = await repo.listOutbox();
+  assert.deepEqual(sent, ['accepted-before-restart', 'accepted-before-restart']);
+  assert.equal(durable.deliveryState, 'accepted', 'later errors cannot downgrade known server acceptance');
+  assert.deepEqual(statuses.at(-1), {
+    state: 'failed', pending: 1, sequence: pending.sequence,
+    code: 'authentication_required', discardable: false,
+  });
+  assert.equal(await restarted.discard(pending.sequence), false);
+  assert.equal(restarted.pending(), 1);
+});
+
 test('status zero keeps unknown workspace delivery retry-only and cannot discard reconciliation intent', async () => {
   const repo = memoryRepo();
   let online = false;
@@ -347,6 +433,35 @@ test('status zero keeps unknown workspace delivery retry-only and cannot discard
   assert.equal(manager.pending(), 1);
   const [durable] = await repo.listOutbox();
   assert.equal(durable.deliveryState, 'uncertain');
+});
+
+test('background drain contains outbox enumeration failure and reports retry-only durable work', async () => {
+  const repo = memoryRepo();
+  const originalList = repo.listOutbox;
+  let listCalls = 0;
+  repo.listOutbox = async (...args) => {
+    listCalls += 1;
+    if (listCalls > 1) throw new Error('indexeddb_enumeration_failed');
+    return originalList(...args);
+  };
+  const statuses = [];
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial: base(), isOnline: () => true,
+    makeId: () => 'enumeration-failure', onStatus: (value) => statuses.push(value),
+    send: async () => { throw new Error('transport must not run when enumeration fails'); },
+  });
+
+  assert.equal(await manager.mutate('pantry.add', { name: 'flour' }), true);
+  assert.equal(await manager.drain(), false, 'the shared background drain boundary contains enumeration rejection');
+  const [durable] = await originalList();
+  assert.equal(durable.mutationId, 'enumeration-failure');
+  assert.equal(manager.pending(), 1);
+  assert.deepEqual(manager.current().pantry.map((item) => item.name), ['flour']);
+  assert.deepEqual(statuses.at(-1), {
+    state: 'failed', pending: 1, sequence: durable.sequence,
+    code: 'local_storage_unavailable', discardable: false,
+  });
+  assert.equal(await manager.discard(durable.sequence), false);
 });
 
 test('real IndexedDB repository exposes a newly persisted workspace mutation to the same drain', async () => {

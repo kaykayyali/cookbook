@@ -55,6 +55,11 @@ export async function createWorkspaceOutbox({
     onChange(clone(optimistic), { pending: rows.length, ...meta });
   };
   const status = (state, extra = {}) => onStatus({ state, pending: rows.length, ...extra });
+  const preserveDeliveryState = (row, fallback) => {
+    if (fallback === 'accepted' || row.deliveryState === 'accepted') return 'accepted';
+    if (row.deliveryState === 'uncertain') return 'uncertain';
+    return fallback;
+  };
   const withAuthorityWrite = (task) => {
     const result = authorityWrites.then(task, task);
     authorityWrites = result.then(() => undefined, () => undefined);
@@ -165,7 +170,9 @@ export async function createWorkspaceOutbox({
       try {
         response = await sendOnce(row);
       } catch {
-        row = await retainForReconciliation(row, 'network_unavailable', 'uncertain');
+        row = await retainForReconciliation(
+          row, 'network_unavailable', preserveDeliveryState(row, 'uncertain'),
+        );
         blockedSequence = row.sequence;
         discardable = false;
         status('offline', {
@@ -182,7 +189,9 @@ export async function createWorkspaceOutbox({
         return false;
       }
       if (response?.ok) {
-        row = await retainForReconciliation(row, 'stale_workspace_response', 'accepted');
+        row = await retainForReconciliation(
+          row, 'stale_workspace_response', preserveDeliveryState(row, 'accepted'),
+        );
         blockedSequence = row.sequence;
         discardable = false;
         status('failed', {
@@ -201,7 +210,9 @@ export async function createWorkspaceOutbox({
             return true;
           });
         } catch {
-          row = await retainForReconciliation(row, 'local_authority_persistence_failed', 'uncertain');
+          row = await retainForReconciliation(
+            row, 'local_authority_persistence_failed', preserveDeliveryState(row, 'uncertain'),
+          );
           blockedSequence = row.sequence;
           discardable = false;
           status('failed', {
@@ -221,7 +232,9 @@ export async function createWorkspaceOutbox({
             return false;
           }
           if (!response?.status) {
-            row = await retainForReconciliation(row, 'workspace_unavailable', 'uncertain');
+            row = await retainForReconciliation(
+              row, 'workspace_unavailable', preserveDeliveryState(row, 'uncertain'),
+            );
             blockedSequence = row.sequence;
             discardable = false;
             status('offline', {
@@ -249,8 +262,7 @@ export async function createWorkspaceOutbox({
       const permanent = [400, 401, 403, 404, 422].includes(responseStatus);
       const code = responseStatus === 401 ? 'authentication_required'
         : permanent ? 'invalid_mutation' : 'workspace_unavailable';
-      const deliveryState = permanent && !['accepted', 'uncertain'].includes(row.deliveryState)
-        ? 'rejected' : 'uncertain';
+      const deliveryState = preserveDeliveryState(row, permanent ? 'rejected' : 'uncertain');
       if (permanent) {
         const failed = { ...row, status: 'failed', lastError: code, deliveryState };
         try { row = await setRow(row, failed); }
@@ -280,8 +292,23 @@ export async function createWorkspaceOutbox({
     return processRows();
   }
 
+  function reportDrainFailure() {
+    const row = rows.find((item) => item.sequence != null) || rows[0];
+    blockedSequence = row?.sequence ?? null;
+    discardable = false;
+    status('failed', {
+      sequence: blockedSequence, code: 'local_storage_unavailable', discardable: false,
+    });
+    publish({ queued: rows.length > 0 });
+    return false;
+  }
+
   function drain() {
-    if (!draining) draining = persistence.then(runDrain).finally(() => { draining = null; });
+    if (!draining) {
+      draining = persistence.then(runDrain)
+        .catch(reportDrainFailure)
+        .finally(() => { draining = null; });
+    }
     return draining;
   }
 
@@ -344,9 +371,22 @@ export async function createWorkspaceOutbox({
       const safeBeforeSend = target && neverAttempted.has(target.mutationId);
       if (!target || target.mutationId === acceptedMutationId || (!safeBeforeSend && !safelyRejected)) return false;
       const discarded = await withAuthorityWrite(async () => {
-        const index = rows.findIndex((row) => row.sequence === sequence);
-        if (index < 0) return false;
+        const current = rows.find((row) => row.sequence === sequence);
+        if (!current) return false;
+        let durableRows;
+        try { durableRows = await repo.listOutbox(authSub, householdId); }
+        catch { return false; }
+        const durable = durableRows.find((row) => row.sequence === sequence);
+        if (!durable || durable.mutationId !== current.mutationId) return false;
+        const safeBeforeSend = neverAttempted.has(current.mutationId)
+          && !['attempting', 'accepted', 'uncertain'].includes(durable.deliveryState);
+        const safelyRejected = blockedSequence === sequence && discardable
+          && current.deliveryState === 'rejected' && durable.deliveryState === 'rejected';
+        if (current.mutationId === sendingMutationId || current.mutationId === acceptedMutationId
+          || (!safeBeforeSend && !safelyRejected)) return false;
         await repo.deleteOutbox(sequence);
+        const index = rows.findIndex((row) => row.sequence === sequence && row.mutationId === current.mutationId);
+        if (index < 0) return false;
         const [removed] = rows.splice(index, 1);
         neverAttempted.delete(removed.mutationId);
         restored.delete(removed.mutationId);
