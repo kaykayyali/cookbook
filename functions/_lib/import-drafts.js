@@ -2,6 +2,8 @@
 // import-drafts.js — recipe image capture draft lifecycle (pure, deps injected)
 // ════════════════════════════════════════════════════════
 
+import { ensureImportProvenanceSchema, provenanceStatement } from './import-provenance.js';
+
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS recipe_import_drafts (
   id              TEXT PRIMARY KEY,
@@ -30,6 +32,10 @@ CREATE INDEX IF NOT EXISTS idx_import_drafts_status
 `;
 
 const text = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
+const sourceUrl = (value) => {
+  if (typeof value !== 'string' || !value.trim() || value.length > 2048) return '';
+  return value;
+};
 const VALID_SOURCES = new Set(['image', 'url']);
 const TERMINAL_STATES = new Set(['confirmed', 'rejected']);
 
@@ -42,7 +48,7 @@ export function normalizeDraftInput(input, now = Date.now()) {
     ? input.imageRefs.map((r) => text(r, 2_000_000)).filter(Boolean)
     : [];
   const sourceUrls = Array.isArray(input.sourceUrls)
-    ? input.sourceUrls.map((u) => text(u, 500)).filter(Boolean)
+    ? input.sourceUrls.map(sourceUrl).filter(Boolean)
     : [];
 
   if (sourceType === 'image' && !imageRefs.length) throw new Error('invalid_draft_input');
@@ -102,7 +108,7 @@ export async function createDraft(db, { householdId, actorSub, input, now = Date
     JSON.stringify(normalized.extracted), JSON.stringify(normalized.confidence),
     normalized.notes, now, now,
   ).run();
-  return { status: 201, body: draftFromRow({ id, household_id: householdId, created_by_sub: actorSub, status: 'pending', source_type: normalized.sourceType, source_urls_json: JSON.stringify(normalized.sourceUrls), image_refs_json: JSON.stringify(normalized.imageRefs), extracted_json: '{}', confidence_json: '{}', duplicate_ids_json: '[]', notes: normalized.notes, created_at: now, updated_at: now, confirmed_at: null }) };
+  return { status: 201, body: draftFromRow({ id, household_id: householdId, created_by_sub: actorSub, status: 'pending', source_type: normalized.sourceType, source_urls_json: JSON.stringify(normalized.sourceUrls), image_refs_json: JSON.stringify(normalized.imageRefs), extracted_json: JSON.stringify(normalized.extracted), confidence_json: JSON.stringify(normalized.confidence), duplicate_ids_json: '[]', notes: normalized.notes, created_at: now, updated_at: now, confirmed_at: null }) };
 }
 
 export async function listDrafts(db, { householdId, status = null, limit = 50 }) {
@@ -171,6 +177,7 @@ export async function confirmDraft(db, { id, householdId, actorSub, recipe, now 
       `INSERT OR IGNORE INTO household_recipes (id, household_id, added_by_sub, added_by_name, recipe_json, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).bind(recipeId, householdId, actorSub, '', recipeJson, now, now),
+    provenanceStatement(db, { draft: existing, recipeId, importedAt: existing.created_at ?? now }),
     db.prepare(
       `UPDATE recipe_import_drafts SET recipe_json = ?, status = 'confirmed', confirmed_at = ?, updated_at = ? WHERE id = ? AND household_id = ?`
     ).bind(recipeJson, now, now, id, householdId),
@@ -213,7 +220,7 @@ export async function detectDuplicates(db, { householdId, recipeName }) {
 }
 
 export async function ensureImportDraftsSchema(db) {
-  await db.batch([
-    db.prepare(SCHEMA),
-  ]);
+  const statements = SCHEMA.split(';').map((sql) => sql.trim()).filter(Boolean);
+  await db.batch(statements.map((sql) => db.prepare(sql)));
+  await ensureImportProvenanceSchema(db);
 }

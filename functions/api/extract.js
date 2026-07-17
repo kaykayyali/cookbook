@@ -4,6 +4,7 @@
 // ════════════════════════════════════════════════════════
 import { json, misconfigured } from "../_lib/http.js";
 import { handleExtract } from "../_lib/extract.js";
+import { createDraft, ensureImportDraftsSchema } from "../_lib/import-drafts.js";
 
 const AI_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 
@@ -181,6 +182,41 @@ export async function onRequestPost(context) {
 
 	// 5. Execute Extraction Core
 	const { status, body: out } = await handleExtract(body, env, realDeps(env));
+	let responseBody = out;
+	if (out.recipe || out.partial) {
+		if (!env.DB?.prepare) return misconfigured("db_binding");
+		const householdId = data?.household?.household?.id;
+		const actorSub = data?.auth?.sub;
+		if (!householdId) return json(403, { error: "household_required" });
+		try {
+			await ensureImportDraftsSchema(env.DB);
+			const draft = await createDraft(env.DB, {
+				householdId,
+				actorSub,
+				input: {
+					sourceType: "url",
+					sourceUrls: [body.url],
+					extracted: {
+						recipe: out.recipe || out.partial,
+						extractorMethod: out.extractorMethod || "unknown",
+						extractorVersion: out.extractorVersion || "legacy",
+						evidence: out.evidence || {},
+					},
+				},
+				now: Date.now(),
+			});
+			if (draft.status !== 201) return json(draft.status, draft.body);
+			responseBody = {
+				recipe: out.recipe,
+				error: out.error,
+				partial: out.partial,
+				importDraftId: draft.body.id,
+			};
+		} catch (error) {
+			console.error("[Route Extract] Failed to persist import draft:", error);
+			return json(500, { error: "import_provenance_unavailable" });
+		}
+	}
 
 	if (status >= 400) {
 		console.warn(
@@ -193,5 +229,5 @@ export async function onRequestPost(context) {
 		);
 	}
 
-	return json(status, out);
+	return json(status, responseBody);
 }

@@ -39,19 +39,20 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
   const week = initWeek({ state, mutate: runtime.mutate, onMarkCooked: engagement.markPlan });
   const cookingMode = initCookingMode({ state });
   const drawer = initDrawer({ state, mutateRecipe: recipeRuntime?.mutate, onSchema: showRecipeSchema, onSaved: () => panels.renderActive() });
+  const confirmImportDraft = (draftId) => async (recipe) => {
+    let result = await patchImportDraft(draftId, 'confirm', { recipe });
+    if (!result.ok && result.error === 'duplicate_confirmation_required'
+        && globalThis.confirm?.('A recipe with this name already exists. Publish this reviewed draft anyway?')) {
+      result = await patchImportDraft(draftId, 'confirm', { recipe, allowDuplicate: true });
+    }
+    if (result.ok) setTimeout(() => globalThis.location?.reload?.(), 0);
+    return result;
+  };
   const imageCapture = initImageCapture({
     state,
     onDraftCreated: (draft) => drawer.openPrefilled(
       draft.recipe || draft.extracted?.recipe || { name: 'Untitled image draft', recipeIngredient: [], recipeInstructions: [] },
-      { uncertainFields: draft.confidence?.uncertainFields || [], onSave: async (recipe) => {
-        let result = await patchImportDraft(draft.id, 'confirm', { recipe });
-        if (!result.ok && result.error === 'duplicate_confirmation_required'
-            && globalThis.confirm?.('A recipe with this name already exists. Publish this reviewed draft anyway?')) {
-          result = await patchImportDraft(draft.id, 'confirm', { recipe, allowDuplicate: true });
-        }
-        if (result.ok) setTimeout(() => globalThis.location?.reload?.(), 0);
-        return result;
-      } },
+      { uncertainFields: draft.confidence?.uncertainFields || [], onSave: confirmImportDraft(draft.id) },
     ),
   });
   detail = initDetail({
@@ -68,7 +69,13 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
   });
   const pantry = initPantry({ state, mutate: runtime.mutate });
   const cart = initCart({ state, mutate: runtime.mutate });
-  const extract = initExtract({ state, openPrefilled: (recipe) => drawer.openPrefilled(recipe) });
+  const extract = initExtract({
+    state,
+    openPrefilled: (recipe, { importDraftId } = {}) => drawer.openPrefilled(
+      recipe,
+      importDraftId ? { onSave: confirmImportDraft(importDraftId) } : {},
+    ),
+  });
   const settings = initSettings({ state, exportRecipes: () => exportRecipesToFile(state), onSignedIn, onSignedOut });
   panels.register('week', week.render);
   panels.register('recipes', recipes.render);

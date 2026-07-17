@@ -216,6 +216,8 @@ export function parseLLMRecipe(output) {
 }
 
 const TEXT_CAP = 6000;
+const EVIDENCE_CAP = 16_384;
+export const URL_EXTRACTOR_VERSION = 'url-extractor-v1';
 const PRIVATE_IPV4 = /^(10\.|192\.168\.|169\.254\.|127\.|172\.(1[6-9]|2\d|3[01])\.)/;
 const PRIVATE_IPV6 = /^(::1|fc|fd|fe80:)/i;
 
@@ -287,6 +289,32 @@ export function cleanText(html) {
   return t;
 }
 
+function boundedExtractionEvidence(value) {
+  const serialized = JSON.stringify(value || {});
+  if (serialized.length <= EVIDENCE_CAP) return value || {};
+  const envelope = {
+    truncated: true,
+    originalLength: serialized.length,
+    jsonPrefix: serialized.slice(0, EVIDENCE_CAP - 200),
+  };
+  let length = JSON.stringify(envelope).length;
+  while (length > EVIDENCE_CAP && envelope.jsonPrefix.length) {
+    envelope.jsonPrefix = envelope.jsonPrefix.slice(0, envelope.jsonPrefix.length - (length - EVIDENCE_CAP));
+    length = JSON.stringify(envelope).length;
+  }
+  return envelope;
+}
+
+function extracted(recipe, extractorMethod, evidence) {
+  return {
+    ok: true,
+    recipe,
+    extractorMethod,
+    extractorVersion: URL_EXTRACTOR_VERSION,
+    evidence: boundedExtractionEvidence(evidence),
+  };
+}
+
 /**
  * Orchestrate extraction: JSON-LD first, LLM fallback (with a repair pass).
  * deps are injected so tests use fixtures (no network, no Workers AI).
@@ -303,14 +331,15 @@ export async function extractRecipe(url, deps) {
 
   const found = findRecipeInHtml(page.html || '');
   if (found && hasRequiredFields(found)) {
-    return { ok: true, recipe: toSimpleRecipe(found) };
+    const recipe = toSimpleRecipe(found);
+    return extracted(recipe, 'json-ld', { recipe });
   }
 
   // Prefer a deterministic article parser before Workers AI. Besides being
   // faster, this avoids platform AI failures for pages that already expose
   // clear ingredient tables and numbered step headings in their HTML.
   const articleRecipe = findRecipeInArticleHtml(page.html || '', url);
-  if (articleRecipe) return { ok: true, recipe: articleRecipe };
+  if (articleRecipe) return extracted(articleRecipe, 'article-html', { recipe: articleRecipe });
 
   // Partial recovery: if JSON-LD had a name but was missing required fields
   // (e.g. had ingredients but no instructions), capture it as a partial so
@@ -326,7 +355,7 @@ export async function extractRecipe(url, deps) {
   catch { return { ok: false, status: 502, error: 'llm_failed' }; }
 
   const parsed = parseLLMRecipe(output);
-  if (parsed) return { ok: true, recipe: parsed };
+  if (parsed) return extracted(parsed, 'workers-ai', { visibleText: text, modelOutput: output, recipe: parsed });
 
   // Repair pass: re-send the FAILED first output so the model fixes its own
   // (real) JSON rather than fabricating an unrelated recipe from nothing.
@@ -335,7 +364,9 @@ export async function extractRecipe(url, deps) {
   try { repaired = await deps.runLLM([{ role: 'user', content: 'This is a schema.org/Recipe with JSON formatting errors. Return ONLY the corrected single JSON object — no prose, no code fences:\n\n' + output }]); }
   catch { /* fall through */ }
   const retry = parseLLMRecipe(repaired || '');
-  if (retry) return { ok: true, recipe: retry };
+  if (retry) return extracted(retry, 'workers-ai-repair', {
+    visibleText: text, modelOutput: output, repairedOutput: repaired, recipe: retry,
+  });
 
   return { ok: false, status: 422, error: 'no_recipe', partial };
 }
@@ -352,6 +383,17 @@ export async function handleExtract(body, env, deps) {
   const url = body && typeof body === 'object' ? body.url : undefined;
   if (typeof url !== 'string' || !url.trim()) return { status: 400, body: { error: 'missing_url' } };
   const res = await extractRecipe(url, deps);
-  if (res.ok) return { status: 200, body: { recipe: res.recipe } };
-  return { status: res.status, body: { error: res.error, partial: res.partial || undefined } };
+  if (res.ok) return { status: 200, body: {
+    recipe: res.recipe,
+    extractorMethod: res.extractorMethod,
+    extractorVersion: res.extractorVersion,
+    evidence: res.evidence,
+  } };
+  return { status: res.status, body: {
+    error: res.error,
+    partial: res.partial || undefined,
+    extractorMethod: res.extractorMethod,
+    extractorVersion: res.extractorVersion,
+    evidence: res.evidence,
+  } };
 }

@@ -19,7 +19,8 @@ export async function onRequestGet(context) {
   const url = new URL(request.url);
   const cursor = url.searchParams.get('cursor') || null;
   const limit = url.searchParams.get('limit') || null;
-  const res = await listCommunity(env.DB, { householdId, cursor, limit });
+  const sourceUrl = url.searchParams.get('sourceUrl') || null;
+  const res = await listCommunity(env.DB, { householdId, cursor, limit, sourceUrl });
   return json(res.status, res.body);
 }
 

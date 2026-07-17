@@ -16,6 +16,7 @@ export function mapCommunityItem(item) {
   const internal = fromSchema(item.recipe);
   internal._id = item.id;
   internal._author = item.author || null;
+  internal._provenance = item.provenance || null;
   if (item.createdAt != null) internal.dateCreated = new Date(item.createdAt).toISOString();
   if (item.updatedAt != null && item.updatedAt !== item.createdAt) {
     internal.dateModified = new Date(item.updatedAt).toISOString();
