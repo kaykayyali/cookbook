@@ -191,6 +191,55 @@ test('restore collision semantics exactly match every pair normalization would c
   }
 });
 
+test('update collision semantics preserve stable IDs across all 90 ordered identity pairs', () => {
+  const record = (id, overrides = {}) => normalizePantryEntry({
+    id, raw: '1 ounce Oil', name: 'oil', displayName: 'Oil',
+    quantity: 1, unit: 'ounce', kind: 'divisible', countLabel: '', confidence: 1,
+    ...overrides,
+  });
+  const identities = [
+    record('qualitative', { raw: 'Oil', quantity: null, unit: 'qualitative', kind: 'qualitative' }),
+    record('ounce-1'),
+    record('ounce-2', { raw: '2 ounces Oil', quantity: 2 }),
+    record('count', { raw: '1 Oil', quantity: 1, unit: 'count', kind: 'indivisible' }),
+    record('bottle-1', { raw: '1 bottle Oil', quantity: 1, unit: 'count', kind: 'indivisible', countLabel: 'bottle' }),
+    record('bottle-2', { raw: '2 bottles Oil', quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle' }),
+    record('can', { raw: '1 can Oil', quantity: 1, unit: 'count', kind: 'indivisible', countLabel: 'can' }),
+    record('jar', { raw: '1 jar Oil', quantity: 1, unit: 'count', kind: 'indivisible', countLabel: 'jar' }),
+    record('package', { raw: '1 package Oil', quantity: 1, unit: 'count', kind: 'indivisible', countLabel: 'package' }),
+    record('piece', { raw: '1 piece Oil', quantity: 1, unit: 'count', kind: 'indivisible', countLabel: 'piece' }),
+  ];
+  const target = normalizePantryEntry({
+    id: 'edited-stable-id', raw: '1 Before Item', name: 'before item', displayName: 'Before Item',
+    quantity: 1, unit: 'count', kind: 'indivisible', countLabel: '', confidence: 1,
+  });
+  let pairs = 0;
+
+  for (const candidate of identities) {
+    for (const authority of identities) {
+      if (candidate === authority) continue;
+      pairs += 1;
+      const current = normalizePantry([target, authority]);
+      const wouldCoalesce = pantryRecordsWouldCoalesce(authority, candidate);
+      const label = `${candidate.id} edited beside ${authority.id}`;
+      if (wouldCoalesce) {
+        assert.throws(
+          () => updatePantryRecord(current, target.id, candidate, { updatedAt: 200 }),
+          /pantry_record_conflict/,
+          label,
+        );
+      } else {
+        const updated = updatePantryRecord(current, target.id, candidate, { updatedAt: 200 });
+        const expectedIds = new Set([target.id, authority.id]);
+        assert.deepEqual(new Set(updated.map(({ id }) => id)), expectedIds, label);
+        assert.deepEqual(new Set(normalizePantry(updated).map(({ id }) => id)), expectedIds,
+          `${label} remains identity-stable after normalization`);
+      }
+    }
+  }
+  assert.equal(pairs, 90);
+});
+
 test('count package labels are part of Pantry quantity compatibility and removal identity', () => {
   const bottles = normalizePantryEntry('2 bottles water');
   const cans = normalizePantryEntry('3 cans water');

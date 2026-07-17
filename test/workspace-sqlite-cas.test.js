@@ -123,3 +123,41 @@ test('real SQLite CAS makes restore expected-absent and remove expected-version 
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM household_workspace_mutations WHERE mutation_id = 'stale-remove'").get().count, 0);
   sqlite.close();
 });
+
+test('real SQLite rejects Pantry update coalescence without revision, authority, or receipt changes', async (t) => {
+  let DatabaseSync;
+  try { ({ DatabaseSync } = await import('node:sqlite')); }
+  catch { t.skip('node:sqlite unavailable'); return; }
+  const sqlite = new DatabaseSync(':memory:');
+  sqlite.exec("PRAGMA foreign_keys = ON; CREATE TABLE households (id TEXT PRIMARY KEY); INSERT INTO households VALUES ('our-home');");
+  const db = new SqliteD1(sqlite);
+  await readWorkspace(db, 'our-home');
+  const bottles = {
+    id: 'oil-bottles', raw: '2 bottles Oil', name: 'oil', displayName: 'Oil',
+    quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle', confidence: 1,
+  };
+  const ounce = {
+    id: 'oil-ounce', raw: '1 ounce Oil', name: 'oil', displayName: 'Oil',
+    quantity: 1, unit: 'ounce', kind: 'divisible', countLabel: '', confidence: 1,
+  };
+  assert.equal((await mutateWorkspace(db, 'our-home', mutation(
+    'seed-bottles', 0, 'pantry.add', { item: bottles },
+  ))).status, 200);
+  assert.equal((await mutateWorkspace(db, 'our-home', mutation(
+    'seed-ounce', 1, 'pantry.add', { item: ounce },
+  ))).status, 200);
+  const authority = await readWorkspace(db, 'our-home');
+  const storedBottles = authority.pantry.find(({ id }) => id === bottles.id);
+  const rejected = await mutateWorkspace(db, 'our-home', mutation(
+    'coalescing-update', authority.revision, 'pantry.update', { id: bottles.id, item: {
+      ...storedBottles, quantity: null, unit: 'qualitative', kind: 'qualitative',
+      countLabel: '', amountState: 'unknown',
+    } },
+  ));
+
+  assert.deepEqual({ status: rejected.status, error: rejected.error },
+    { status: 409, error: 'pantry_record_conflict' });
+  assert.deepEqual(await readWorkspace(db, 'our-home'), authority);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM household_workspace_mutations WHERE mutation_id = 'coalescing-update'").get().count, 0);
+  sqlite.close();
+});

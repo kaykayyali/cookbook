@@ -716,6 +716,78 @@ test('remote Pantry removal blocks an offline update without crashing replay', a
   assert.equal(statuses.at(-1).code, 'revision_conflict');
 });
 
+test('durable Pantry update rejects local coalescence before persistence or send', async () => {
+  const initial = base({ pantry: [
+    {
+      id: 'oil-bottles', raw: '2 bottles Oil', name: 'oil', displayName: 'Oil',
+      quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle', confidence: 1,
+    },
+    {
+      id: 'oil-ounce', raw: '1 ounce Oil', name: 'oil', displayName: 'Oil',
+      quantity: 1, unit: 'ounce', kind: 'divisible', countLabel: '', confidence: 1,
+    },
+  ] });
+  const repo = memoryRepo(initial);
+  const statuses = [];
+  let sends = 0;
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => false,
+    makeId: () => 'coalescing-update', onStatus: (value) => statuses.push(value),
+    send: async () => { sends += 1; return { ok: false, status: 500 }; },
+  });
+  const bottles = manager.current().pantry.find(({ id }) => id === 'oil-bottles');
+
+  assert.equal(await manager.mutate('pantry.update', { id: bottles.id, item: {
+    ...bottles, quantity: null, unit: 'qualitative', kind: 'qualitative',
+    countLabel: '', amountState: 'unknown',
+  } }), false);
+  assert.equal(manager.pending(), 0);
+  assert.equal(sends, 0);
+  assert.deepEqual(await repo.listOutbox(), []);
+  assert.deepEqual(manager.current().pantry.map(({ id }) => id).sort(), ['oil-bottles', 'oil-ounce']);
+  assert.equal(statuses.at(-1).code, 'pantry_record_conflict');
+});
+
+test('remote coalescence marks a durable update pantry_record_conflict without retry', async () => {
+  const bottles = {
+    id: 'oil-bottles', raw: '2 bottles Oil', name: 'oil', displayName: 'Oil',
+    quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle', confidence: 1,
+  };
+  const ounce = {
+    id: 'oil-ounce', raw: '1 ounce Oil', name: 'oil', displayName: 'Oil',
+    quantity: 1, unit: 'ounce', kind: 'divisible', countLabel: '', confidence: 1,
+  };
+  const initial = base({ pantry: [bottles] });
+  const remote = base({ revision: 1, pantry: [bottles, ounce] });
+  const repo = memoryRepo(initial);
+  const statuses = [];
+  let online = false;
+  let sends = 0;
+  const manager = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial,
+    isOnline: () => online, makeId: () => 'remote-coalescing-update',
+    onStatus: (value) => statuses.push(value),
+    send: async () => {
+      sends += 1;
+      return { ok: false, status: 409, error: 'pantry_record_conflict', workspace: remote };
+    },
+  });
+  const target = manager.current().pantry[0];
+  assert.equal(await manager.mutate('pantry.update', { id: target.id, item: {
+    ...target, quantity: null, unit: 'qualitative', kind: 'qualitative',
+    countLabel: '', amountState: 'unknown',
+  } }), true);
+  online = true;
+
+  assert.equal(await manager.drain(), false);
+  assert.equal(sends, 1);
+  assert.equal(statuses.at(-1).code, 'pantry_record_conflict');
+  assert.deepEqual(manager.current().pantry.map(({ id }) => id).sort(), ['oil-bottles', 'oil-ounce']);
+  const [durable] = await repo.listOutbox();
+  assert.deepEqual({ status: durable.status, lastError: durable.lastError, deliveryState: durable.deliveryState },
+    { status: 'failed', lastError: 'pantry_record_conflict', deliveryState: 'rejected' });
+});
+
 test('durable Pantry restore survives offline reload with the same stable ID', async () => {
   const repo = memoryRepo();
   let manager = await createWorkspaceOutbox({

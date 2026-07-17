@@ -190,6 +190,40 @@ test('Pantry restore rejects a qualitative/numeric merge-equivalent authority re
   assert.equal(store.current().revision, 1, 'rejected restore performs no authority write');
 });
 
+test('Pantry update coalescence returns actionable 409 without authority write or receipt batch', async () => {
+  const store = workspaceDb();
+  for (const [mutationId, baseRevision, item] of [
+    ['seed-bottles', 0, {
+      id: 'oil-bottles', raw: '2 bottles Oil', name: 'oil', displayName: 'Oil',
+      quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle', confidence: 1,
+    }],
+    ['seed-ounce', 1, {
+      id: 'oil-ounce', raw: '1 ounce Oil', name: 'oil', displayName: 'Oil',
+      quantity: 1, unit: 'ounce', kind: 'divisible', countLabel: '', confidence: 1,
+    }],
+  ]) {
+    assert.equal((await onRequestPatch(context(store.db, { body: {
+      mutationId, baseRevision, op: 'pantry.add', payload: { item },
+    } }))).status, 200);
+  }
+  const authority = await (await onRequestGet(context(store.db))).json();
+  const commitBatches = store.batches.length;
+  const bottles = authority.pantry.find(({ id }) => id === 'oil-bottles');
+  const response = await onRequestPatch(context(store.db, { body: {
+    mutationId: 'coalescing-update', baseRevision: authority.revision, op: 'pantry.update',
+    payload: { id: bottles.id, item: {
+      ...bottles, quantity: null, unit: 'qualitative', kind: 'qualitative',
+      countLabel: '', amountState: 'unknown',
+    } },
+  } }));
+
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: 'pantry_record_conflict', workspace: authority });
+  assert.equal(store.current().revision, authority.revision);
+  assert.equal(store.batches.length, commitBatches, 'rejected update creates no workspace/receipt batch');
+  assert.deepEqual((await (await onRequestGet(context(store.db))).json()).pantry, authority.pantry);
+});
+
 test('planner attribution comes from authenticated membership, not client payload', async () => {
   const store = workspaceDb();
   const response = await onRequestPatch(context(store.db, { body: {

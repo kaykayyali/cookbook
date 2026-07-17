@@ -372,7 +372,9 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       }
     } catch (error) {
       setEditorPending(false);
-      setError(error?.message || 'Check the item details and try again.');
+      setError(error?.message === 'pantry_record_conflict'
+        ? 'Cannot save this change because it would combine this item with another Pantry item. Keep both items separate by changing the name or amount type.'
+        : error?.message || 'Check the item details and try again.');
       return false;
     }
     state.pantry = next;

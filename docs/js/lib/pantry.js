@@ -681,8 +681,9 @@ export function updatePantryRecord(pantry, recordId, value, options = {}) {
     ...updated,
     rawEvidence: mergeEvidence(current[index], updated),
   }, { ...options, id, overrideUpdatedAt: true });
-  if (current.some((entry, entryIndex) => entryIndex !== index && pantryKey(entry) === pantryKey(updated))) {
-    throw new Error('duplicate_pantry_identity');
+  if (current.some((entry, entryIndex) => entryIndex !== index
+      && pantryRecordsWouldCoalesce(entry, updated))) {
+    throw new Error('pantry_record_conflict');
   }
   return current.map((entry, entryIndex) => entryIndex === index ? updated : entry)
     .sort((a, b) => a.name.localeCompare(b.name) || a.unit.localeCompare(b.unit));

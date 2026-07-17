@@ -44,6 +44,15 @@ export function workspaceMutationRebaseDecision(request, authority) {
       ? { safe: true, code: '' }
       : { safe: false, code: 'pantry_record_conflict' };
   }
+  if (request.op === 'pantry.update') {
+    try { applyWorkspaceOperation(authority, request); }
+    catch (error) {
+      if (error?.message === 'pantry_record_conflict') {
+        return { safe: false, code: 'pantry_record_conflict' };
+      }
+    }
+    return { safe: false, code: '' };
+  }
   if (request.op === 'pantry.restore') {
     if (request.payload?.expectedAbsent !== true) return { safe: false, code: 'pantry_restore_conflict' };
     try {

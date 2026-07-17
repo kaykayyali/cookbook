@@ -299,6 +299,44 @@ test('save failure rolls back optimistic state but keeps modal edits and visible
   assert.match(dom.window.document.getElementById('pantry-item-error').textContent, /could not be saved/i);
 });
 
+test('Not sure edit refuses to combine oil bottles with ounce authority and keeps both stable IDs', async () => {
+  const dom = editorDom();
+  globalThis.document = dom.window.document;
+  globalThis.window = dom.window;
+  globalThis.localStorage = dom.window.localStorage;
+  const state = { pantry: normalizePantry([
+    {
+      id: 'oil-bottles', raw: '2 bottles Oil', name: 'oil', displayName: 'Oil',
+      quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle', confidence: 1,
+    },
+    {
+      id: 'oil-ounce', raw: '1 ounce Oil', name: 'oil', displayName: 'Oil',
+      quantity: 1, unit: 'ounce', kind: 'divisible', countLabel: '', confidence: 1,
+    },
+  ]), recipes: [] };
+  const before = structuredClone(state.pantry);
+  const mutations = [];
+  const controller = initPantry({
+    state, document: dom.window.document,
+    mutate: async (op, payload) => { mutations.push({ op, payload }); return true; },
+  });
+  controller.render();
+  click(dom.window, dom.window.document.querySelector('[data-pantry-id="oil-bottles"]'));
+  const family = dom.window.document.getElementById('pantry-item-family');
+  family.value = 'unknown';
+  family.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  dom.window.document.getElementById('pantry-item-form')
+    .dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick();
+
+  assert.deepEqual(state.pantry, before);
+  assert.deepEqual(state.pantry.map(({ id }) => id).sort(), ['oil-bottles', 'oil-ounce']);
+  assert.equal(mutations.length, 0, 'identity-losing update never reaches sync');
+  assert.equal(dom.window.document.getElementById('pantry-item-modal').hidden, false);
+  assert.match(dom.window.document.getElementById('pantry-item-error').textContent,
+    /cannot save.*combine.*another.*item|keep both.*separate/i);
+});
+
 test('remote update or deletion blocks stale modal save without losing the draft', async () => {
   for (const remoteChange of ['update', 'delete']) {
     const dom = editorDom();
