@@ -127,6 +127,163 @@ export const PANTRY_RAW_EVIDENCE_LIMITS = Object.freeze({
   maxEntries: 16,
 });
 
+const PANTRY_EDITOR_UNIT_GROUPS = Object.freeze({
+  count: Object.freeze([
+    ['item', 'Items', 1, ''],
+    ['clove', 'Cloves', 1, 'clove'],
+    ['slice', 'Slices', 1, 'slice'],
+    ['sheet', 'Sheets', 1, 'sheet'],
+    ['portion', 'Portions', 1, 'portion'],
+    ['can', 'Cans', 1, 'can'],
+    ['jar', 'Jars', 1, 'jar'],
+    ['bottle', 'Bottles', 1, 'bottle'],
+    ['package', 'Packages', 1, 'package'],
+    ['piece', 'Pieces', 1, 'piece'],
+  ]),
+  solid: Object.freeze([
+    ['ounce', 'Ounces', 1],
+    ['pound', 'Pounds', 16],
+    ['gram', 'Grams', 0.035274],
+    ['kilogram', 'Kilograms', 35.274],
+  ]),
+  fluid: Object.freeze([
+    ['teaspoon', 'Teaspoons', 1 / 6],
+    ['tablespoon', 'Tablespoons', 0.5],
+    ['fluid-ounce', 'Fluid ounces', 1],
+    ['cup', 'Cups', 8],
+    ['milliliter', 'Milliliters', 0.035274],
+    ['liter', 'Liters', 35.274],
+  ]),
+  unknown: Object.freeze([]),
+});
+
+const EDITOR_UNIT_BY_VALUE = new Map(Object.entries(PANTRY_EDITOR_UNIT_GROUPS)
+  .flatMap(([family, units]) => units.map(([value, label, factor, countLabel = '']) => [
+    value, { value, label, factor, countLabel, family },
+  ])));
+const EDITOR_DEFAULT_UNIT = Object.freeze({ count: 'item', solid: 'ounce', fluid: 'cup', unknown: '' });
+
+/** Family-specific unit choices for the Pantry editor. */
+export function pantryUnitsForFamily(family) {
+  return (PANTRY_EDITOR_UNIT_GROUPS[family] || []).map(([value, label]) => ({ value, label }));
+}
+
+function editorRound(value) {
+  if (!Number.isFinite(value)) return value;
+  return Number(value.toFixed(6));
+}
+
+/** Convert between editor units through the app's canonical water-equivalent ounce. */
+export function convertPantryEditorAmount(quantity, fromUnit, toUnit) {
+  const amount = Number(quantity);
+  const from = EDITOR_UNIT_BY_VALUE.get(fromUnit);
+  const to = EDITOR_UNIT_BY_VALUE.get(toUnit);
+  if (!Number.isFinite(amount) || amount < 0 || !from || !to) throw new Error('invalid_pantry_editor_amount');
+  return editorRound((amount * from.factor) / to.factor);
+}
+
+function inferredEditorUnit(record) {
+  if (record.unit === 'count') {
+    return [...EDITOR_UNIT_BY_VALUE.values()].find((unit) => unit.family === 'count'
+      && unit.countLabel === record.countLabel)?.value || 'item';
+  }
+  const raw = String(record.raw || '').toLowerCase();
+  const fluidPatterns = [
+    ['fluid-ounce', /\b(?:fl\.?\s*oz|fluid ounces?)\b/],
+    ['tablespoon', /\b(?:tbsp|tablespoons?)\b/],
+    ['teaspoon', /\b(?:tsp|teaspoons?)\b/],
+    ['milliliter', /\b(?:ml|milliliters?)\b/],
+    ['liter', /\b(?:liters?|litres?)\b/],
+    ['cup', /\bcups?\b/],
+  ];
+  const solidPatterns = [
+    ['kilogram', /\b(?:kg|kilograms?)\b/],
+    ['gram', /\b(?:g|grams?)\b/],
+    ['pound', /\b(?:lb|lbs|pounds?)\b/],
+    ['ounce', /\b(?:oz|ounces?)\b/],
+  ];
+  return fluidPatterns.find(([, pattern]) => pattern.test(raw))?.[0]
+    || solidPatterns.find(([, pattern]) => pattern.test(raw))?.[0]
+    || 'ounce';
+}
+
+/** Convert one normalized Pantry record to immediately editable display values. */
+export function pantryEditorState(value) {
+  const record = normalizePantryEntry(value);
+  if (!record) return { name: '', quantity: '', family: 'unknown', unit: '', raw: '' };
+  if (record.amountState !== 'known' || record.unit === 'qualitative') {
+    return { name: record.displayName, quantity: '', family: 'unknown', unit: '', raw: record.raw };
+  }
+  const unit = inferredEditorUnit(record);
+  const editorUnit = EDITOR_UNIT_BY_VALUE.get(unit);
+  return {
+    name: record.displayName,
+    quantity: editorRound(record.quantity / editorUnit.factor),
+    family: editorUnit.family,
+    unit,
+    raw: record.raw,
+  };
+}
+
+function editorRaw(quantity, unit, displayName) {
+  const descriptor = EDITOR_UNIT_BY_VALUE.get(unit);
+  const label = descriptor?.label || '';
+  const singular = Number(quantity) === 1 ? label.replace(/s$/, '') : label.toLowerCase();
+  return `${editorRound(Number(quantity))} ${singular} ${displayName}`.trim();
+}
+
+/** Validate editor values and build a normalized-record-shaped correction payload. */
+export function pantryRecordFromEditor(editor, original = null, options = {}) {
+  const displayName = typeof editor?.name === 'string' ? editor.name.trim() : '';
+  if (!displayName || displayName.length > 80 || /[<>\x00-\x1f\x7f]/.test(displayName)) {
+    throw new Error('Pantry item name is required.');
+  }
+  const name = canonicalName(displayName);
+  if (!name || name === 'uncertain ingredient') throw new Error('Pantry item name is required.');
+  const family = ['count', 'solid', 'fluid', 'unknown'].includes(editor?.family) ? editor.family : '';
+  if (!family) throw new Error('Choose a measurement family.');
+  const source = original && typeof original === 'object' ? original : {};
+  const updatedAt = finiteTimestamp(options.updatedAt) ?? finiteTimestamp(source.updatedAt) ?? 0;
+  const metadata = {
+    ...(safeRecordId(source.id) ? { id: source.id } : {}),
+    name,
+    displayName,
+    category: INGREDIENT_CATEGORIES.includes(source.category) ? source.category : normalizeIngredient(displayName).category,
+    confidence: Number.isFinite(source.confidence) ? source.confidence : 0.95,
+    normalizationVersion: Number.isInteger(source.normalizationVersion) && source.normalizationVersion > 0
+      ? source.normalizationVersion : PANTRY_RECORD_VERSION,
+    updatedAt,
+    rawEvidence: Array.isArray(source.rawEvidence) ? [...source.rawEvidence] : legacyRawValues(source.raw),
+  };
+  if (family === 'unknown') {
+    return {
+      ...metadata,
+      raw: displayName,
+      amountState: 'unknown',
+      quantity: null,
+      measurementFamily: 'unknown',
+      unit: 'qualitative',
+      kind: 'qualitative',
+      countLabel: '',
+    };
+  }
+  const descriptor = EDITOR_UNIT_BY_VALUE.get(editor?.unit || EDITOR_DEFAULT_UNIT[family]);
+  if (!descriptor || descriptor.family !== family) throw new Error('Choose a valid unit for this measurement family.');
+  const amount = Number(editor?.quantity);
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Enter an amount greater than zero.');
+  const canonicalQuantity = editorRound(amount * descriptor.factor);
+  return {
+    ...metadata,
+    raw: editorRaw(amount, descriptor.value, displayName),
+    amountState: 'known',
+    quantity: canonicalQuantity,
+    measurementFamily: family === 'count' ? 'count' : 'water-equivalent',
+    unit: family === 'count' ? 'count' : 'ounce',
+    kind: family === 'count' ? 'indivisible' : 'divisible',
+    countLabel: family === 'count' ? descriptor.countLabel : '',
+  };
+}
+
 const pantryKey = (item) => `${item.name}\u0000${item.unit}\u0000${item.unit === 'count' ? item.countLabel : ''}`;
 const finiteTimestamp = (value) => Number.isFinite(Number(value)) && Number(value) >= 0
   ? Math.round(Number(value)) : null;
