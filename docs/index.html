@@ -603,7 +603,6 @@
 			class="pantry-item-modal"
 			id="pantry-item-modal"
 			role="dialog"
-			aria-modal="true"
 			aria-labelledby="pantry-item-title"
 			aria-describedby="pantry-item-description"
 			aria-hidden="true"
@@ -651,6 +650,14 @@
 					</section>
 					<p class="pantry-item-error" id="pantry-item-error" role="alert" hidden></p>
 					<p class="pantry-item-status" id="pantry-item-status" role="status" aria-live="polite"></p>
+					<section class="pantry-recipe-discovery" id="pantry-recipe-discovery" aria-labelledby="pantry-recipe-title" hidden>
+						<div class="pantry-recipe-heading">
+							<h3 id="pantry-recipe-title">Recipes using this ingredient</h3>
+							<p>Pantry names, not exact quantities.</p>
+						</div>
+						<div class="pantry-recipe-results" id="pantry-recipe-results"></div>
+						<button class="btn btn-ghost pantry-recipe-toggle" id="pantry-recipe-toggle" type="button" data-feedback="toggle-on" aria-expanded="false" hidden>View all recipes</button>
+					</section>
 					<div class="pantry-remove-confirm" id="pantry-remove-confirm" hidden>
 						<p><strong>Remove this exact item?</strong><span>Other same-name Pantry records will stay.</span></p>
 						<div>

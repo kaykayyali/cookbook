@@ -1,0 +1,165 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { performance } from 'node:perf_hooks';
+
+import {
+  applyReviewedIngredientCorrection,
+  buildRecipeUsageIndex,
+  ingredientEvidence,
+} from '../docs/js/lib/ingredient-corrections.js';
+
+const discovery = await import('../docs/js/lib/pantry-recipe-discovery.js').catch(() => ({}));
+const {
+  discoverPantryRecipes,
+  pantryAvailability,
+  safeRecipeImageUrl,
+} = discovery;
+
+const pantryItem = (name, extras = {}) => ({
+  id: `pantry-${name.replace(/\W+/g, '-')}`,
+  raw: name,
+  name,
+  displayName: name,
+  quantity: null,
+  unit: 'qualitative',
+  kind: 'qualitative',
+  amountState: 'qualitative',
+  ...extras,
+});
+
+const recipe = (id, name, ingredients, extras = {}) => ({
+  _id: id,
+  name,
+  recipeIngredient: ingredients,
+  ...extras,
+});
+
+test('usage lookup matches canonical basil leaf variants but never arbitrary substrings or compounds', () => {
+  const recipes = [
+    recipe('leaf', 'Leaf', ['2 basil leaves', 'basil leaves']),
+    recipe('plain', 'Plain', ['fresh basil']),
+    recipe('basilisk', 'Basilisk', ['1 basilisk steak']),
+    recipe('sauce', 'Sauce', ['1 cup thai basil sauce']),
+  ];
+  const basilUses = buildRecipeUsageIndex(recipes).find('basil');
+  assert.deepEqual(basilUses.map(({ recipeId }) => recipeId), ['leaf', 'plain']);
+  assert.deepEqual(buildRecipeUsageIndex(recipes).find('basil leaves').map(({ recipeId }) => recipeId), ['leaf', 'plain']);
+  assert.equal(basilUses.some(({ recipeId }) => ['basilisk', 'sauce'].includes(recipeId)), false);
+  assert.deepEqual(buildRecipeUsageIndex(recipes).find('basilisk steak').map(({ recipeId }) => recipeId), ['basilisk']);
+});
+
+test('Pantry discovery deduplicates, computes unique-name coverage, and sorts by availability label then stable name and id', () => {
+  assert.equal(typeof discoverPantryRecipes, 'function');
+  const recipes = [
+    recipe('few-z', 'Zulu Few', ['basil', 'rice', 'beans']),
+    recipe('all-b', 'Beta All', ['basil leaves', 'tomato', 'tomato']),
+    recipe('some', 'Some Soup', ['basil', 'tomato', 'stock', 'cream']),
+    recipe('all-a', 'Alpha All', ['fresh basil', '1 tomato']),
+    recipe('few-a', 'Alpha Few', ['basil', 'rice', 'beans', 'lime']),
+    recipe('all-a', 'Stale duplicate', ['basil']),
+  ];
+  const pantry = [pantryItem('basil'), pantryItem('tomato')];
+  const forward = discoverPantryRecipes({ recipes, pantry, ingredientName: 'basil' });
+  const reverse = discoverPantryRecipes({ recipes: [...recipes].reverse(), pantry: [...pantry].reverse(), ingredientName: 'basil' });
+  assert.deepEqual(forward, reverse, 'input order cannot affect results');
+  assert.deepEqual(forward.map(({ recipeId, availability }) => [recipeId, availability.label, availability.have, availability.total]), [
+    ['all-a', 'All', 2, 2],
+    ['all-b', 'All', 2, 2],
+    ['some', 'Some', 2, 4],
+    ['few-a', 'Few', 1, 4],
+    ['few-z', 'Few', 1, 3],
+  ]);
+  assert.equal(new Set(forward.map(({ recipeIdentity }) => recipeIdentity)).size, forward.length);
+  assert.equal(forward.find(({ recipeId }) => recipeId === 'all-b').matchingLine, 'basil leaves');
+});
+
+test('duplicate recipes with the same usage identity choose image evidence independently of input order', () => {
+  const duplicates = [
+    { _id: 'dup', name: 'Pesto', image: 'https://images.example.test/z.png', recipeIngredient: ['basil', 'bread'] },
+    { _id: 'dup', name: 'Pesto', image: 'https://images.example.test/a.png', recipeIngredient: ['basil', 'bread'] },
+  ];
+  const options = { pantry: [pantryItem('basil')], ingredientName: 'basil' };
+  const forward = discoverPantryRecipes({ ...options, recipes: duplicates });
+  const reverse = discoverPantryRecipes({ ...options, recipes: [...duplicates].reverse() });
+  assert.deepEqual(forward, reverse);
+  assert.equal(forward[0]?.imageUrl, 'https://images.example.test/a.png');
+});
+
+test('availability thresholds are deterministic and existence-only for unknown or qualitative amounts', () => {
+  assert.equal(typeof pantryAvailability, 'function');
+  const pantry = [
+    pantryItem('basil', { amountState: 'unknown' }),
+    pantryItem('tomato', { amountState: 'qualitative' }),
+    pantryItem('salt', { quantity: 1, unit: 'count', kind: 'indivisible', amountState: 'known' }),
+  ];
+  assert.deepEqual(pantryAvailability(['basil'], pantry), { label: 'All', have: 1, total: 1, ratio: 1 });
+  assert.deepEqual(pantryAvailability(['basil', 'tomato', 'stock', 'cream'], pantry), { label: 'Some', have: 2, total: 4, ratio: 0.5 });
+  assert.deepEqual(pantryAvailability(['basil', 'stock', 'cream'], pantry), { label: 'Few', have: 1, total: 3, ratio: 1 / 3 });
+  assert.deepEqual(pantryAvailability([], pantry), { label: 'Few', have: 0, total: 0, ratio: 0 });
+});
+
+test('reviewed corrections and Pantry renames change discovery immediately while immutable matching evidence remains raw', () => {
+  assert.equal(typeof discoverPantryRecipes, 'function');
+  const base = recipe('pesto', 'Pesto', ['2 mystery leaves', '1 tomato']);
+  const reviewed = applyReviewedIngredientCorrection(base, {
+    ingredientId: ingredientEvidence(base)[0].id,
+    correction: { name: 'basil', amountState: 'numeric', amount: '2', measurementFamily: 'count', sourceUnit: 'count', countLabel: 'leaf' },
+    reviewer: { sub: 'member', name: 'Member' },
+    reviewedAt: 10,
+  });
+  assert.equal(reviewed.ok, true, reviewed.error);
+  assert.deepEqual(discoverPantryRecipes({ recipes: [base], pantry: [pantryItem('basil')], ingredientName: 'basil' }), []);
+  const corrected = discoverPantryRecipes({ recipes: [reviewed.recipe], pantry: [pantryItem('basil')], ingredientName: 'basil' });
+  assert.equal(corrected.length, 1);
+  assert.equal(corrected[0].matchingLine, '2 mystery leaves', 'display evidence stays immutable source text');
+  assert.deepEqual(discoverPantryRecipes({ recipes: [reviewed.recipe], pantry: [pantryItem('parsley')], ingredientName: 'parsley' }), []);
+});
+
+test('image extraction accepts safe HTTP(S) forms and rejects executable, credentialed, malformed, and missing URLs', () => {
+  assert.equal(typeof safeRecipeImageUrl, 'function');
+  assert.equal(safeRecipeImageUrl('https://images.example.test/a.jpg'), 'https://images.example.test/a.jpg');
+  assert.equal(safeRecipeImageUrl([{ url: 'https://images.example.test/b.jpg' }]), 'https://images.example.test/b.jpg');
+  assert.equal(safeRecipeImageUrl({ contentUrl: 'http://images.example.test/c.jpg' }), 'http://images.example.test/c.jpg');
+  for (const value of ['javascript:alert(1)', 'data:image/svg+xml,<svg/>', 'https://user:secret@example.test/a.jpg', 'not a url', '', null]) {
+    assert.equal(safeRecipeImageUrl(value), '', String(value));
+  }
+});
+
+test('empty, missing-id, missing-image, and large-corpus discovery stay safe and fast without mutating Shopping', () => {
+  assert.equal(typeof discoverPantryRecipes, 'function');
+  const shopping = { basil: true, tomato: false };
+  const beforeShopping = structuredClone(shopping);
+  assert.deepEqual(discoverPantryRecipes({ recipes: [], pantry: [pantryItem('basil')], ingredientName: 'basil' }), []);
+  const missing = discoverPantryRecipes({
+    recipes: [{ name: 'No id', recipeIngredient: ['basil'] }],
+    pantry: [pantryItem('basil')],
+    ingredientName: 'basil',
+  });
+  assert.equal(missing.length, 1);
+  assert.equal(missing[0].canOpen, false);
+  assert.equal(missing[0].imageUrl, '');
+
+  const corpus = Array.from({ length: 5_000 }, (_, index) => recipe(`r-${index}`, `Recipe ${String(index).padStart(5, '0')}`, ['basil', `ingredient ${index}`]));
+  const started = performance.now();
+  const found = discoverPantryRecipes({ recipes: corpus, pantry: [pantryItem('basil')], ingredientName: 'basil' });
+  const elapsed = performance.now() - started;
+  assert.equal(found.length, 5_000);
+  assert.ok(elapsed < 30_000, `5k discovery took ${elapsed}ms`);
+  assert.deepEqual(shopping, beforeShopping, 'availability must never subtract or mutate Shopping');
+});
+
+test('discovery scales with recipes plus Pantry names instead of multiplying both collections', () => {
+  const measure = (size) => {
+    const pantry = [pantryItem('basil'), ...Array.from({ length: size - 1 }, (_, index) => pantryItem(`pantry ${index}`))];
+    const recipes = Array.from({ length: size }, (_, index) => recipe(`scale-${index}`, `Scale ${index}`, ['basil', `recipe ${index}`]));
+    const started = performance.now();
+    const found = discoverPantryRecipes({ recipes, pantry, ingredientName: 'basil' });
+    return { elapsed: Math.max(performance.now() - started, 1), count: found.length };
+  };
+  const small = measure(500);
+  const large = measure(2_000);
+  assert.equal(small.count, 500);
+  assert.equal(large.count, 2_000);
+  assert.ok(large.elapsed < small.elapsed * 10,
+    `discovery scaled like recipes × Pantry: 500=${small.elapsed}ms 2k=${large.elapsed}ms`);
+});

@@ -116,6 +116,7 @@ export function initDetail({
   onReact = async () => false,
   onCorrectHistory = async () => false,
   onDeleteHistory = async () => false,
+  onClose = null,
   prompt = globalThis.prompt,
   confirm = globalThis.confirm,
   feedback = defaultFeedback,
@@ -442,10 +443,11 @@ export function initDetail({
 
   function open(id) {
     const r = state.recipes.find((x) => x._id === id);
-    if (!r) return;
+    if (!r) return false;
     const isAuthor = !r._author || !!(state.auth?.sub && r._author.sub === state.auth.sub);
     openRecipe(r, { source: 'local', author: r._author, isAuthor });
     try { localStorage.setItem('cb_detail_id', id); } catch { /* private mode */ }
+    return true;
   }
 
 
@@ -539,13 +541,15 @@ export function initDetail({
       overlay.classList.remove('open');
       overlay.hidden = true;
     }
+    let focusRestored = false;
+    try { focusRestored = onClose?.() === true; } catch { /* Closing detail remains fail-safe. */ }
     if (!isAnyOpen(document)) document.body.style.overflow = '';
     state.detailId = null;
     current = null;
     try { localStorage.removeItem('cb_detail_id'); } catch { /* private mode */ }
     const restore = opener;
     opener = null;
-    if (restore?.isConnected !== false) {
+    if (!focusRestored && restore?.isConnected !== false) {
       try { restore?.focus?.(); } catch { /* Detached opener. */ }
     }
   }
@@ -561,6 +565,8 @@ export function initDetail({
     if (!modal?.classList.contains('open')) return;
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
       closeSheet();
       return;
     }
@@ -867,5 +873,6 @@ export function initDetail({
 
 function isAnyOpen(document) {
   return !!document.getElementById('recipe-drawer')?.classList.contains('open')
-    || !!document.getElementById('url-overlay')?.classList.contains('open');
+    || !!document.getElementById('url-overlay')?.classList.contains('open')
+    || !!(document.getElementById('pantry-item-modal') && !document.getElementById('pantry-item-modal').hidden);
 }

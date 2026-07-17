@@ -101,6 +101,11 @@ async function createPantryPage(viewport = { width: 1440, height: 900 }, options
       quantity: null, unit: 'qualitative', kind: 'qualitative', countLabel: '', category: 'dairy-eggs',
       confidence: 0.4, normalizationVersion: 1, updatedAt: 102, amountState: 'unknown',
     },
+    {
+      id: 'pantry-basil', raw: 'fresh basil', rawEvidence: ['fresh basil'], name: 'basil', displayName: 'Basil',
+      quantity: null, unit: 'qualitative', kind: 'qualitative', countLabel: '', category: 'produce',
+      confidence: 0.9, normalizationVersion: 2, updatedAt: 103, amountState: 'qualitative',
+    },
   ]);
   let workspace = {
     householdId: 'household-home', revision: 1, plan: [], cart: [], pantry,
@@ -108,6 +113,10 @@ async function createPantryPage(viewport = { width: 1440, height: 900 }, options
   };
   const mutations = [];
 
+  await context.route('https://images.example.test/**', (route) => route.fulfill({
+    path: join(DOCS, 'icons', 'icon-192.png'),
+    contentType: 'image/png',
+  }));
   await context.route('**/api/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -116,7 +125,16 @@ async function createPantryPage(viewport = { width: 1440, height: 900 }, options
       member: { id: 'member-kay', displayName: 'Kaysser', role: 'owner', sub: 'kay' },
     });
     if (url.pathname === '/api/community' && request.method() === 'GET') {
-      return json(route, { recipes: [], nextCursor: null });
+      return json(route, {
+        recipes: (options.recipes || []).map((recipe) => ({
+          id: recipe._id,
+          recipe,
+          author: { sub: 'kay', displayName: 'Kaysser' },
+          createdAt: 1,
+          updatedAt: 1,
+        })),
+        nextCursor: null,
+      });
     }
     if (url.pathname === '/api/workspace' && request.method() === 'GET') return json(route, workspace);
     if (url.pathname === '/api/workspace' && request.method() === 'PATCH') {
@@ -187,6 +205,107 @@ test('desktop Pantry row opens an immediately editable item modal', { timeout: 6
     assert.equal(await page.locator('#pantry-item-quantity-group').isHidden(), true);
     assert.match(await page.locator('#pantry-item-status').textContent(), /clears the trusted amount/i);
     assert.match(await page.locator('#pantry-item-raw').textContent(), /2 cups Olive Oil/i, 'Not sure retains raw context');
+    assert.deepEqual(browserErrors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('selected Pantry ingredient discovers canonical recipe uses and opens detail accessibly', { timeout: 60_000 }, async () => {
+  const recipes = [
+    { _id: 'basil-pasta', name: 'Basil Pasta', image: 'https://images.example.test/basil-pasta.jpg', recipeIngredient: ['2 basil leaves', '1 tomato', 'pasta'], recipeInstructions: ['Cook.'] },
+    { _id: 'green-soup', name: 'Green Soup', recipeIngredient: ['basil', '2 onions', '1 cup stock'] },
+    {
+      _id: 'herb-toast',
+      name: 'Herb Toast with a deliberately long household recipe title that must wrap without horizontal overflow',
+      recipeIngredient: ['fresh basil, torn into very small pieces for serving across the entire platter', '4 slices bread', '1 clove garlic'],
+    },
+    { _id: 'summer-salad', name: 'Summer Salad', recipeIngredient: ['basil leaves', '2 tomatoes', 'olive oil'] },
+    { _id: 'basilisk-stew', name: 'Basilisk Stew', recipeIngredient: ['1 basilisk steak', '1 onion'] },
+    { _id: 'thai-sauce', name: 'Thai Sauce', recipeIngredient: ['1 cup thai basil sauce', '1 lime'] },
+  ];
+  const { context, page, browserErrors } = await createPantryPage({ width: 402, height: 874 }, { touch: true, recipes });
+  try {
+    const pantryRow = page.locator('[data-pantry-id="pantry-basil"]');
+    assert.equal(await pantryRow.count(), 1, 'basil Pantry fixture is rendered');
+    await pantryRow.click({ timeout: 5_000 });
+    const modal = page.locator('#pantry-item-modal');
+    await modal.waitFor({ state: 'visible', timeout: 5_000 });
+
+    const discovery = page.locator('#pantry-recipe-discovery');
+    assert.equal(await discovery.count(), 1, 'Pantry editor should expose recipe discovery');
+    assert.equal(await discovery.getByRole('heading', { name: 'Recipes using Basil' }).count(), 1);
+    const rows = discovery.locator('[data-pantry-recipe-id]');
+    assert.equal(await rows.count(), 3, 'the compact initial result set is bounded');
+    assert.match(await rows.first().innerText(), /(?:All|Some|Few) · \d+ of \d+ Pantry names/i, 'coverage sorts before the stable recipe tie-breakers');
+    const basilPasta = rows.filter({ hasText: 'Basil Pasta' });
+    assert.equal(await basilPasta.count(), 1, 'canonical basil leaves recipe is in the initial set');
+    assert.match(await basilPasta.innerText(), /2 basil leaves/i, 'immutable original line is visible evidence');
+    assert.equal(await basilPasta.locator('img').getAttribute('src'), 'https://images.example.test/basil-pasta.jpg');
+    await basilPasta.locator('img').evaluate((image) => image.dispatchEvent(new Event('error')));
+    assert.equal(await basilPasta.locator('img').count(), 0, 'failed lazy images are removed');
+    assert.equal(await basilPasta.locator('.pantry-recipe-image-fallback').count(), 1, 'failed lazy images get a useful fallback');
+    assert.equal(await discovery.getByText('Basilisk Stew').count(), 0, 'arbitrary substrings never match');
+    assert.equal(await discovery.getByText('Thai Sauce').count(), 0, 'compound sauce identity never matches basil');
+    assert.match(await discovery.innerText(), /Pantry names, not exact quantities/i);
+
+    const toggleNode = discovery.locator('#pantry-recipe-toggle');
+    assert.equal(await toggleNode.isHidden(), false, `expected more than three canonical matches:\n${await discovery.innerText()}`);
+    const toggle = discovery.getByRole('button', { name: 'View all recipes' });
+    await toggle.tap();
+    assert.equal(await rows.count(), 4);
+    assert.equal(await toggleNode.evaluate((element) => element === document.activeElement), true, 'expansion preserves focus');
+    assert.equal(await toggleNode.getAttribute('aria-expanded'), 'true');
+    const bodyScroll = page.locator('.pantry-item-body');
+    await bodyScroll.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await toggleNode.tap();
+    assert.equal(await rows.count(), 3);
+    assert.equal(await toggleNode.evaluate((element) => element === document.activeElement), true, 'View fewer preserves focus');
+    assert.equal(await toggleNode.getAttribute('aria-expanded'), 'false');
+    const collapsedScroll = await bodyScroll.evaluate((element) => ({ top: element.scrollTop, max: Math.max(0, element.scrollHeight - element.clientHeight) }));
+    assert.ok(Math.abs(collapsedScroll.top - collapsedScroll.max) <= 1, JSON.stringify(collapsedScroll));
+    await toggleNode.tap();
+    assert.equal(await rows.count(), 4);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const desktopModal = await modal.boundingBox();
+    const desktopRows = await rows.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
+    assert.ok(desktopModal && desktopModal.width <= 600, `desktop modal stays compact: ${JSON.stringify(desktopModal)}`);
+    assert.ok(desktopRows.every((height) => height >= 44 && height <= 120), JSON.stringify(desktopRows));
+
+    await page.locator('html').evaluate((element) => { element.style.fontSize = '200%'; });
+    const overflowAt200 = await page.locator('#pantry-item-modal, .pantry-item-body, .pantry-recipe-row').evaluateAll((elements) => elements.map((element) => ({
+      id: element.id || element.className,
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    })));
+    assert.ok(overflowAt200.every(({ clientWidth, scrollWidth }) => scrollWidth <= clientWidth + 1), JSON.stringify(overflowAt200));
+    await page.locator('html').evaluate((element) => { element.style.fontSize = ''; });
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    const target = discovery.locator('[data-pantry-recipe-id="basil-pasta"]');
+    const targetBox = await target.boundingBox();
+    assert.ok(targetBox && targetBox.height >= 44, JSON.stringify(targetBox));
+    await target.tap();
+    await page.locator('#detail-modal').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#dm-title').textContent(), 'Basil Pasta');
+    assert.equal(await page.locator('#detail-modal').getAttribute('aria-modal'), 'true');
+    assert.equal(await modal.getAttribute('aria-modal'), null, 'only the top modal owns aria-modal');
+    assert.equal(await modal.getAttribute('inert'), '');
+    assert.equal((await modal.ariaSnapshot()).trim(), '');
+
+    await page.keyboard.press('Escape');
+    await modal.waitFor({ state: 'visible' });
+    assert.equal(await modal.getAttribute('aria-modal'), 'true');
+    assert.equal(await target.evaluate((element) => element === document.activeElement), true, 'detail Escape restores the selected result');
+
+    await target.tap();
+    await page.locator('#detail-modal').waitFor({ state: 'visible' });
+    await page.locator('#detail-close-btn').click();
+    await modal.waitFor({ state: 'visible' });
+    assert.equal(await target.evaluate((element) => element === document.activeElement), true, 'detail Back control restores the selected result');
+    await page.keyboard.press('Escape');
+    assert.equal(await pantryRow.evaluate((element) => element === document.activeElement), true, 'second Escape returns to the Pantry row');
+    assert.equal(await page.locator('body').evaluate((element) => element.style.overflow), '', 'nested modal teardown restores page scrolling');
     assert.deepEqual(browserErrors, []);
   } finally {
     await context.close();

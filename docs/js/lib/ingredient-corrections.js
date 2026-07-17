@@ -23,10 +23,47 @@ const UNIT_FACTORS = Object.freeze({
 const FRACTIONS = Object.freeze({ '¼': 0.25, '½': 0.5, '¾': 0.75, '⅓': 1 / 3, '⅔': 2 / 3, '⅛': 0.125, '⅜': 0.375, '⅝': 0.625, '⅞': 0.875 });
 const MAX_AMOUNT = 1_000_000;
 const SAFE_TEXT = /^[^<>\x00-\x1f\x7f]{1,80}$/;
+const COUNT_NAME_FORMS = new Set([
+  'bottle', 'bottles', 'bunch', 'bunches', 'can', 'cans', 'clove', 'cloves',
+  'item', 'items', 'jar', 'jars', 'leaf', 'leaves', 'package', 'packages',
+  'piece', 'pieces', 'portion', 'portions', 'serving', 'servings', 'sheet',
+  'sheets', 'slice', 'slices',
+]);
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const compareText = (left, right) => left === right ? 0 : left < right ? -1 : 1;
 const round = (value) => Math.round((Number(value) + Number.EPSILON) * 1e9) / 1e9;
+
+/**
+ * Exact normalized identities plus a base form for established count/package
+ * words. Compounds remain intact, so basil cannot match basilisk or sauce.
+ */
+export function canonicalIngredientVariants(value) {
+  const exact = canonicalName(value);
+  if (!exact || exact === 'uncertain ingredient') return [];
+  const variants = new Set([exact]);
+  const words = exact.split(/\s+/).filter(Boolean);
+  if (words.length > 1 && COUNT_NAME_FORMS.has(words[0])) {
+    const base = canonicalName(words.slice(1).join(' '));
+    if (base && base !== 'uncertain ingredient') variants.add(base);
+  }
+  if (words.length > 1 && COUNT_NAME_FORMS.has(words.at(-1))) {
+    const base = canonicalName(words.slice(0, -1).join(' '));
+    if (base && base !== 'uncertain ingredient') variants.add(base);
+  }
+  return [...variants].sort(compareText);
+}
+
+export function canonicalIngredientIdentity(value) {
+  return canonicalIngredientVariants(value)
+    .sort((left, right) => left.split(' ').length - right.split(' ').length
+      || left.length - right.length || compareText(left, right))[0] || '';
+}
+
+export function canonicalIngredientsMatch(left, right) {
+  const rightVariants = new Set(canonicalIngredientVariants(right));
+  return canonicalIngredientVariants(left).some((variant) => rightVariants.has(variant));
+}
 
 function legacyHashText(value) {
   let hash = 0x811c9dc5;
@@ -480,37 +517,49 @@ export function effectiveIngredientLines(recipe) {
   return effectiveIngredientRecords(recipe).map(formatEffectiveIngredient);
 }
 
+export function recipeUsageIdentity(recipe, effective = effectiveIngredientRecords(recipe)) {
+  const id = String(recipe?._id || recipe?.id || '');
+  if (id) return `id:${id}`;
+  const recipeName = String(recipe?.name || 'Untitled');
+  return `derived:${hash128(`${recipeName}\u0000${effectiveSignature(effective)}`)}`;
+}
+
+export function recipeUsageCandidateKey(recipe, effective = effectiveIngredientRecords(recipe)) {
+  return `${String(recipe?.name || 'Untitled')}\u0000${effectiveSignature(effective)}`;
+}
+
 export function buildRecipeUsageIndex(recipes) {
   const byRecipe = new Map();
   for (const recipe of Array.isArray(recipes) ? recipes : []) {
     const id = String(recipe?._id || recipe?.id || '');
     const recipeName = String(recipe?.name || 'Untitled');
     const effective = effectiveIngredientRecords(recipe);
-    const signature = effectiveSignature(effective);
-    const recipeIdentity = id ? `id:${id}` : `derived:${hash128(`${recipeName}\u0000${signature}`)}`;
+    const recipeIdentity = recipeUsageIdentity(recipe, effective);
     const unique = new Map();
     for (const ingredient of effective) {
-      const current = unique.get(ingredient.name);
-      if (!current || compareText(JSON.stringify(ingredient), JSON.stringify(current)) < 0) unique.set(ingredient.name, ingredient);
+      const identity = canonicalIngredientIdentity(ingredient.name);
+      if (!identity) continue;
+      const current = unique.get(identity);
+      if (!current || compareText(JSON.stringify(ingredient), JSON.stringify(current)) < 0) unique.set(identity, ingredient);
     }
     const candidate = { recipeId: id || recipeIdentity, recipeIdentity, recipeName, unique };
     const current = byRecipe.get(recipeIdentity);
-    const candidateKey = `${recipeName}\u0000${signature}`;
+    const candidateKey = recipeUsageCandidateKey(recipe, effective);
     if (!current || compareText(candidateKey, current.key) < 0) byRecipe.set(recipeIdentity, { key: candidateKey, candidate });
   }
 
   const index = new Map();
   for (const { candidate } of byRecipe.values()) {
     const { recipeId, recipeIdentity, recipeName, unique } = candidate;
-    for (const ingredient of unique.values()) {
-      if (!index.has(ingredient.name)) index.set(ingredient.name, []);
-      index.get(ingredient.name).push({ recipeId, recipeIdentity, recipeName, ingredient: clone(ingredient) });
+    for (const [identity, ingredient] of unique.entries()) {
+      if (!index.has(identity)) index.set(identity, []);
+      index.get(identity).push({ recipeId, recipeIdentity, recipeName, ingredient: clone(ingredient) });
     }
   }
   for (const uses of index.values()) uses.sort((a, b) => compareText(a.recipeName, b.recipeName)
     || compareText(a.recipeIdentity, b.recipeIdentity));
   return {
-    find(name) { return clone(index.get(canonicalName(name)) || []); },
+    find(name) { return clone(index.get(canonicalIngredientIdentity(name)) || []); },
     entries() { return [...index.entries()].sort(([a], [b]) => compareText(a, b)).map(([name, uses]) => [name, clone(uses)]); },
   };
 }

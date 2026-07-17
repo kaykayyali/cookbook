@@ -8,7 +8,7 @@
 // ════════════════════════════════════════════════════════
 
 const DIRECT_FIELDS = [
-  'url', 'recipeCategory', 'recipeCuisine', 'recipeYield',
+  'url', 'image', 'recipeCategory', 'recipeCuisine', 'recipeYield',
   'cookingMethod', 'suitableForDiet', 'prepTime', 'cookTime', 'totalTime',
 ];
 
@@ -70,6 +70,7 @@ export function fromSchema(s) {
     _id: s._id || uuid(),
     name: String(s.name || 'Untitled'),
     url: s.url || '',
+    image: s.image || '',
     dateCreated: s.datePublished || new Date().toISOString(),
     dateModified: s.dateModified || '',
     recipeCategory: s.recipeCategory || '',
