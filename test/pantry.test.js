@@ -173,6 +173,24 @@ test('togglePantry distinguishes count labels for quantity-bearing strings', () 
   ]);
 });
 
+test('togglePantry removes and returns the stored stable-ID record matched by Pantry identity', () => {
+  const stored = normalizePantryEntry({
+    id: 'cart-water-bottles', name: 'water', displayName: 'Water', raw: '2 bottles water',
+    quantity: 2, unit: 'count', kind: 'indivisible', countLabel: 'bottle', category: 'pantry',
+  });
+  const pantry = normalizePantry([stored, '3 cans water']);
+  const candidate = normalizePantryEntry('1 bottle water');
+  assert.notEqual(candidate.id, stored.id, 'fresh normalization uses a different generated ID');
+
+  const removed = togglePantry(pantry, candidate);
+
+  assert.equal(removed.added, false);
+  assert.equal(removed.item.id, stored.id, 'callers sync the actual stored record ID');
+  assert.deepEqual(removed.pantry.map(({ id, countLabel }) => ({ id, countLabel })), [
+    { id: pantry.find((item) => item.countLabel === 'can').id, countLabel: 'can' },
+  ], 'the distinct same-name count record remains');
+});
+
 test('an invalid explicit count label fails closed instead of broadening removal', () => {
   const pantry = normalizePantry(['2 bottles water', '3 cans water']);
   assert.deepEqual(removeFromPantry(pantry, { name: 'water', unit: 'count', countLabel: 'crate' }), pantry);

@@ -345,14 +345,14 @@ export function togglePantry(pantry, value) {
   const item = normalizePantryEntry(value);
   if (!item) return { pantry: current, added: false, name: '' };
   const precise = item.unit !== 'qualitative';
-  const present = current.some((entry) => (precise
+  const matched = current.find((entry) => (precise
     ? pantryKey(entry) === pantryKey(item)
     : entry.name === item.name));
-  if (present) return {
-    pantry: removeFromPantry(current, precise ? item : item.name),
+  if (matched) return {
+    pantry: removeFromPantry(current, matched),
     added: false,
     name: item.name,
-    item,
+    item: matched,
   };
   return addToPantry(current, item);
 }
