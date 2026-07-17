@@ -104,6 +104,7 @@ export function initRecipes({
       const card = event.target.closest('.recipe-card');
       if (!card) return;
       event.preventDefault();
+      feedback.emit(card.dataset.feedback || 'select', { target: card, sourceEvent: event });
       onOpenDetail?.(card.dataset.id);
     });
   }

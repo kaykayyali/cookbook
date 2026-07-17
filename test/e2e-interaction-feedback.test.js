@@ -285,10 +285,13 @@ test('production bundle preserves optimistic flows, recovery, modal transitions,
 
       const card = page.locator(`.recipe-card[data-id="${RECIPE_ID}"]`);
       assert.equal(await page.locator('#detail-modal').getAttribute('aria-modal'), null, 'closed detail is not modal');
+      const feedbackBeforeCard = await page.evaluate(() => window.__feedbackEvents.length);
       await card.focus();
       await card.press('Enter');
       const modal = page.locator('#detail-modal.open');
       await modal.waitFor();
+      const cardFeedback = await page.evaluate((start) => window.__feedbackEvents.slice(start), feedbackBeforeCard);
+      assert.ok(cardFeedback.some((event) => event.type === 'select' && event.modality === 'keyboard'), 'keyboard role-button activation emits select');
       assert.equal(await modal.getAttribute('aria-modal'), 'true');
       assert.equal(await page.evaluate(() => document.activeElement?.id), 'detail-close-btn');
       await page.keyboard.press('Escape');
@@ -364,6 +367,36 @@ test('production bundle preserves optimistic flows, recovery, modal transitions,
       await page.locator('.cook-history-card').first().waitFor({ timeout: 1_000 });
       assert.match(await page.locator('#dm-history').innerText(), /Occasion/);
       await captureSurface(page, `${label}-12-completion-history`);
+
+      await page.locator('#detail-close-btn').click();
+      const deleteButton = card.locator('[data-action="delete"]');
+      const eventsBeforeCancel = await page.evaluate(() => window.__feedbackEvents.length);
+      const cancelDialogPromise = page.waitForEvent('dialog');
+      const cancelClick = label === 'mobile' ? deleteButton.tap() : deleteButton.click();
+      const cancelDialog = await cancelDialogPromise;
+      await cancelDialog.dismiss();
+      await cancelClick;
+      assert.equal(await page.evaluate(() => window.__feedbackEvents.length), eventsBeforeCancel, 'cancelled delete stays silent');
+
+      const hapticsBeforeDelete = await page.evaluate(() => window.__hapticCalls.length);
+      const eventsBeforeDelete = await page.evaluate(() => window.__feedbackEvents.length);
+      const acceptDialogPromise = page.waitForEvent('dialog');
+      const acceptClick = label === 'mobile' ? deleteButton.tap() : deleteButton.click();
+      const acceptDialog = await acceptDialogPromise;
+      await acceptDialog.accept();
+      await acceptClick;
+      await page.waitForFunction(
+        (start) => window.__feedbackEvents.slice(start).some((event) => event.type === 'success'),
+        eventsBeforeDelete,
+        { timeout: 2_000 },
+      );
+      await card.waitFor({ state: 'detached', timeout: 2_000 });
+      const deleteFeedback = await page.evaluate((start) => window.__feedbackEvents.slice(start), eventsBeforeDelete);
+      assert.deepEqual(deleteFeedback.map((event) => event.type), ['destructive', 'success']);
+      if (label === 'mobile') {
+        assert.ok(deleteFeedback.every((event) => event.modality === 'touch' && event.touchOrigin), JSON.stringify(deleteFeedback));
+        assert.ok(await page.evaluate(() => window.__hapticCalls.length) > hapticsBeforeDelete, 'confirmed touch delete keeps touch provenance');
+      }
       assert.deepEqual(pageErrors, []);
     } finally { await context.close(); }
   }

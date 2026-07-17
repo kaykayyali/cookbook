@@ -11,7 +11,8 @@ try {
 // Minimal DOM stub: the grid container + a fake document with
 // querySelector returning a single element, plus a click log.
 function makeDom() {
-  const grid = { innerHTML: '', children: [], addEventListener: () => {} };
+  const listeners = {};
+  const grid = { innerHTML: '', children: [], addEventListener: (type, listener) => { listeners[type] = listener; } };
   const count = { textContent: '' };
   const el = (sel) => {
     if (sel === 'recipe-grid') return grid;
@@ -20,7 +21,7 @@ function makeDom() {
     return null;
   };
   const document = { getElementById: el };
-  return { grid, count, document };
+  return { grid, count, document, listeners };
 }
 
 const SAMPLE_RECIPE = {
@@ -97,6 +98,30 @@ test('openDetail with unknown id is a no-op (no callback fired)', () => {
   const ctrl = mod.initRecipes({ state, document, onOpenDetail: (id) => { opened = id; } });
   ctrl.openDetail('does-not-exist');
   assert.equal(opened, null);
+});
+
+test('keyboard activation of a recipe role button emits select before opening detail', () => {
+  const { document, listeners } = makeDom();
+  const state = { recipes: [SAMPLE_RECIPE], pantry: [] };
+  const events = [];
+  let opened = null;
+  mod.initRecipes({
+    state, document,
+    onOpenDetail: (id) => { opened = id; },
+    feedback: { emit: (type, options) => events.push({ type, options }) },
+  });
+  const card = { dataset: { id: 'r1', feedback: 'select' } };
+  const event = {
+    key: 'Enter',
+    target: { closest: (selector) => selector === '.recipe-card' ? card : null },
+    preventDefault() {},
+  };
+  listeners.keydown(event);
+  assert.equal(opened, 'r1');
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, 'select');
+  assert.equal(events[0].options.target, card);
+  assert.equal(events[0].options.sourceEvent, event);
 });
 
 test('cached offline mode blocks recipe deletion before confirmation or network write', async () => {

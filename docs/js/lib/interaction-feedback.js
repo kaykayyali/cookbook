@@ -293,8 +293,8 @@ export function createInteractionFeedback({
 
   function handlePress(event) {
     const control = semanticControl(event.target);
+    const interaction = eventInteraction(event, control || event.target);
     if (!control) return;
-    const interaction = eventInteraction(event, control);
     if (interaction.trusted) recentInteractions.set(control, interaction);
     try { control.classList.add('is-feedback-pressed'); } catch { return; }
     pressed.add(control);
