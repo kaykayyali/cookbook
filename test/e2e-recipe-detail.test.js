@@ -157,6 +157,7 @@ async function createRecipePage(viewport) {
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
   await page.locator('button[data-panel="recipes"]').click();
   const card = page.locator(`.recipe-card[data-id="${RECIPE_ID}"]`);
+  await card.locator('.badge').first().waitFor();
   assert.deepEqual(await card.locator('.badge').allTextContents(), [
     'Dinner · Weeknight',
     'Italian · American',
