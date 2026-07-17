@@ -67,3 +67,22 @@ test('recipe mutation route rejects malformed top-level ingredient-review bodies
   assert.equal((await onRequestPost(ctx)).status, 400);
   assert.equal(calls, 0);
 });
+
+test('recipe mutation route rejects oversize, prototype-key, deeply nested, and malformed identifier payloads atomically', async () => {
+  const deeplyNested = `{"mutationId":"m","op":"recipe.ingredient.review","payload":${'{"x":'.repeat(3_000)}0${'}'.repeat(3_000)}}`;
+  const bodies = [
+    JSON.stringify({ mutationId: 'x'.repeat(201), op: 'recipe.ingredient.review', payload: {} }),
+    JSON.stringify({ mutationId: 'm', op: 'recipe.ingredient.review', payload: { correction: { note: 'x'.repeat(50_001) } } }),
+    '{"mutationId":"m","op":"recipe.ingredient.review","payload":{"__proto__":{"polluted":true}}}',
+    deeplyNested,
+  ];
+  for (const body of bodies) {
+    let calls = 0;
+    const ctx = context({ request: new Request('https://cookbook.test/api/recipe-mutations', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body,
+    }) });
+    ctx.data.recipeMutationStore = { mutate: async () => { calls += 1; return { status: 200, recipes: [] }; } };
+    assert.equal((await onRequestPost(ctx)).status, 400);
+    assert.equal(calls, 0);
+  }
+});

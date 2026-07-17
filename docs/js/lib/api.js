@@ -204,7 +204,8 @@ export async function sendRecipeMutation(mutation, { onUnauthorized, request = a
     if (!response.ok || !Array.isArray(body.recipes)) {
       return { ok: false, status: response.status, error: body.error || 'recipe_mutation_failed' };
     }
-    return { ok: true, recipes: body.recipes.map(mapCommunityItem) };
+    return { ok: true, recipes: body.recipes.map(mapCommunityItem),
+      ...(body.authorityMode === 'merge' ? { authorityMode: 'merge' } : {}) };
   } catch {
     return { ok: false, status: 0, error: 'network_error' };
   }

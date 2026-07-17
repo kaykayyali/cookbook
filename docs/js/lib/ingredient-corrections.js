@@ -25,9 +25,10 @@ const MAX_AMOUNT = 1_000_000;
 const SAFE_TEXT = /^[^<>\x00-\x1f\x7f]{1,80}$/;
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
+const compareText = (left, right) => left === right ? 0 : left < right ? -1 : 1;
 const round = (value) => Math.round((Number(value) + Number.EPSILON) * 1e9) / 1e9;
 
-function hashText(value) {
+function legacyHashText(value) {
   let hash = 0x811c9dc5;
   for (const character of String(value)) {
     hash ^= character.codePointAt(0);
@@ -36,8 +37,37 @@ function hashText(value) {
   return (hash >>> 0).toString(36);
 }
 
+// Four independently mixed 32-bit lanes provide 128 bits of identity space
+// while remaining synchronous in every supported browser. The prior 32-bit
+// FNV ID remains only as a migration key and is never trusted without matching
+// immutable raw evidence.
+function hash128(value) {
+  const text = String(value);
+  let a = 0x9e3779b9; let b = 0x243f6a88; let c = 0xb7e15162; let d = 0xdeadbeef;
+  for (const character of text) {
+    const code = character.codePointAt(0);
+    a = Math.imul(a ^ code, 0x85ebca6b);
+    b = Math.imul(b ^ code, 0xc2b2ae35);
+    c = Math.imul(c ^ code, 0x27d4eb2f);
+    d = Math.imul(d ^ code, 0x165667b1);
+    a ^= b >>> 13; b ^= c >>> 11; c ^= d >>> 17; d ^= a >>> 15;
+  }
+  return [a, b, c, d].map((lane, index, all) => {
+    let mixed = lane ^ (text.length + index);
+    mixed = Math.imul(mixed ^ (mixed >>> 16), 0x7feb352d);
+    mixed = Math.imul(mixed ^ (mixed >>> 15), 0x846ca68b);
+    mixed ^= mixed >>> 16;
+    mixed ^= all[(index + 1) % all.length] >>> ((index + 3) * 3);
+    return (mixed >>> 0).toString(16).padStart(8, '0');
+  }).join('');
+}
+
+function legacyEvidenceId(raw, occurrence = 0) {
+  return `ingredient-${legacyHashText(String(raw))}-${Math.max(0, Number(occurrence) || 0)}`;
+}
+
 export function ingredientEvidenceId(raw, occurrence = 0) {
-  return `ingredient-${hashText(String(raw))}-${Math.max(0, Number(occurrence) || 0)}`;
+  return `ingredient-v2-${hash128(String(raw))}-${Math.max(0, Number(occurrence) || 0)}`;
 }
 
 function numberToken(value) {
@@ -167,13 +197,15 @@ function compatibilityMetadata(record) {
   const amountState = AMOUNT_STATES.includes(record.amountState)
     ? record.amountState
     : record.quantity == null ? 'qualitative' : 'numeric';
-  const measurementFamily = record.measurementFamily
-    || (record.unit === 'count' ? 'count' : record.unit === 'ounce' ? 'volume' : null);
+  const measurementFamily = MEASUREMENT_FAMILIES.includes(record.measurementFamily)
+    ? record.measurementFamily : record.unit === 'count' ? 'count' : null;
+  const compatibleSourceUnit = measurementFamily && FAMILY_UNITS[measurementFamily]?.includes(record.sourceUnit)
+    ? record.sourceUnit : record.unit === 'count' ? 'count' : null;
   return {
     ...clone(record),
     amountState,
     measurementFamily,
-    sourceUnit: record.sourceUnit || record.unit,
+    sourceUnit: compatibleSourceUnit,
     reviewStatus: 'unreviewed',
     parserVersion: Number.isInteger(record.parserVersion) && record.parserVersion > 0
       ? record.parserVersion
@@ -189,31 +221,53 @@ function ingredientSources(recipe) {
 
 function baseIngredientEvidence(recipe) {
   const normalizations = Array.isArray(recipe?.ingredientNormalizations) ? recipe.ingredientNormalizations : [];
+  const normalizationByEvidence = new Map();
+  const anonymousByRaw = new Map();
+  for (const record of normalizations) {
+    if (typeof record?.raw !== 'string' || !legacyNormalizedRecord(record)) continue;
+    if (typeof record.id === 'string' && record.id) {
+      const key = `${record.raw}\u0000${record.id}`;
+      if (!normalizationByEvidence.has(key)) normalizationByEvidence.set(key, record);
+    } else if (!anonymousByRaw.has(record.raw)) {
+      anonymousByRaw.set(record.raw, record);
+    }
+  }
   const occurrences = new Map();
   return ingredientSources(recipe).map((source) => {
     const raw = typeof source === 'string' ? source : source.raw;
     const occurrence = occurrences.get(raw) || 0;
     occurrences.set(raw, occurrence + 1);
     const id = ingredientEvidenceId(raw, occurrence);
-    const cached = normalizations.find((record) => record?.raw === raw
-      && (!record.id || record.id === id) && legacyNormalizedRecord(record));
+    const legacyId = legacyEvidenceId(raw, occurrence);
+    const cached = normalizationByEvidence.get(`${raw}\u0000${id}`)
+      || normalizationByEvidence.get(`${raw}\u0000${legacyId}`)
+      || anonymousByRaw.get(raw);
     const structured = typeof source === 'object' && legacyNormalizedRecord(source) ? source : null;
     const parsed = normalizeIngredient(raw);
     return {
       ...compatibilityMetadata(cached || structured || parsed),
       raw,
       id,
+      evidenceOccurrence: occurrence,
     };
   });
 }
 
 export function ingredientEvidence(recipe) {
   const normalizations = Array.isArray(recipe?.ingredientNormalizations) ? recipe.ingredientNormalizations : [];
+  const reviewedByEvidence = new Map();
+  for (const record of normalizations) {
+    if (!reviewedRecord(record)) continue;
+    const key = `${record.raw}\u0000${record.id}`;
+    const current = reviewedByEvidence.get(key);
+    if (!current || record.reviewedAt > current.reviewedAt) reviewedByEvidence.set(key, record);
+  }
   return baseIngredientEvidence(recipe).map((base) => {
-    const reviewed = normalizations
-      .filter((record) => record?.id === base.id && record.raw === base.raw && reviewedRecord(record))
-      .sort((a, b) => b.reviewedAt - a.reviewedAt)[0];
-    return reviewed ? clone(reviewed) : base;
+    const legacyId = legacyEvidenceId(base.raw, base.evidenceOccurrence);
+    const current = reviewedByEvidence.get(`${base.raw}\u0000${base.id}`);
+    const legacy = reviewedByEvidence.get(`${base.raw}\u0000${legacyId}`);
+    const reviewed = !current ? legacy : !legacy || current.reviewedAt >= legacy.reviewedAt ? current : legacy;
+    return reviewed ? { ...clone(reviewed), id: base.id, evidenceOccurrence: base.evidenceOccurrence } : base;
   });
 }
 
@@ -243,7 +297,11 @@ export function applyReviewedIngredientCorrection(recipe, { ingredientId, correc
   const built = buildReviewedIngredientRecord({ id: evidence.id, raw: evidence.raw, correction, reviewer, reviewedAt });
   if (!built.ok) return built;
   const records = (Array.isArray(recipe?.ingredientNormalizations) ? recipe.ingredientNormalizations : [])
-    .filter((item) => (reviewedRecord(item) || legacyNormalizedRecord(item)) && item.id !== ingredientId);
+    .filter((item) => {
+      if (!(reviewedRecord(item) || legacyNormalizedRecord(item))) return false;
+      if (item.raw !== evidence.raw) return true;
+      return item.id !== ingredientId && item.id !== legacyEvidenceId(evidence.raw, evidence.evidenceOccurrence);
+    });
   return { ok: true, recipe: { ...clone(recipe), ingredientNormalizations: [...records.map(clone), built.record] }, record: built.record };
 }
 
@@ -252,7 +310,7 @@ export function preserveReviewedIngredientCorrections(existingRecipe, incomingRe
   const saved = (Array.isArray(existingRecipe?.ingredientNormalizations) ? existingRecipe.ingredientNormalizations : []).filter(reviewedRecord);
   const savedIds = new Set(saved.map((record) => record.id));
   const compatibleIncoming = (Array.isArray(incoming.ingredientNormalizations) ? incoming.ingredientNormalizations : [])
-    .filter((record) => (reviewedRecord(record) || legacyNormalizedRecord(record)) && !savedIds.has(record.id));
+    .filter((record) => legacyNormalizedRecord(record) && !savedIds.has(record.id));
   const records = [...compatibleIncoming.map(clone), ...saved.map(clone)];
   if (records.length) incoming.ingredientNormalizations = records;
   else delete incoming.ingredientNormalizations;
@@ -260,7 +318,115 @@ export function preserveReviewedIngredientCorrections(existingRecipe, incomingRe
 }
 
 export function effectiveIngredientRecords(recipe) {
-  return ingredientEvidence(recipe).map(clone);
+  return ingredientEvidence(recipe);
+}
+
+const SOURCE_UNIT_ALIASES = Object.freeze({
+  tsp: 'tsp', teaspoon: 'tsp', teaspoons: 'tsp', tbsp: 'tbsp', tablespoon: 'tbsp', tablespoons: 'tbsp',
+  cup: 'cup', cups: 'cup', 'fl oz': 'fl-oz', 'fluid ounce': 'fl-oz', 'fluid ounces': 'fl-oz',
+  ml: 'ml', milliliter: 'ml', milliliters: 'ml', l: 'l', liter: 'l', liters: 'l', litre: 'l', litres: 'l',
+  oz: 'oz', ounce: 'oz', ounces: 'oz', lb: 'lb', lbs: 'lb', pound: 'lb', pounds: 'lb',
+  g: 'g', gram: 'g', grams: 'g', kg: 'kg', kilogram: 'kg', kilograms: 'kg', count: 'count', dozen: 'dozen',
+});
+const QUANTITY_SOURCE = '(?:\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|\\d+(?:\\.\\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])';
+
+function sourceProjection(record) {
+  const raw = String(record?.raw || '').trim().replace(/[–—]/g, '-');
+  const units = Object.keys(SOURCE_UNIT_ALIASES).sort((a, b) => b.length - a.length)
+    .map((unit) => unit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  const match = raw.match(new RegExp(`^(${QUANTITY_SOURCE}(?:\\s*(?:-|to\\b)\\s*${QUANTITY_SOURCE})?)\\s*(${units})\\b`, 'i'));
+  if (!match) return null;
+  const sourceUnit = SOURCE_UNIT_ALIASES[match[2].toLowerCase()];
+  const measurementFamily = sourceUnit === 'count' || sourceUnit === 'dozen' ? 'count'
+    : ['tsp', 'tbsp', 'cup', 'fl-oz', 'ml', 'l'].includes(sourceUnit) ? 'volume' : 'weight';
+  const parsed = parseCorrectionAmount(match[1]);
+  if (!parsed.ok) return null;
+  const factor = UNIT_FACTORS[sourceUnit];
+  if (record.quantity == null || Math.abs(Number(record.quantity) - round(parsed.max * factor)) > 1e-7) return null;
+  if (record.quantityMin != null && Math.abs(Number(record.quantityMin) - round(parsed.min * factor)) > 1e-7) return null;
+  return { amount: match[1], measurementFamily, sourceUnit };
+}
+
+export function ingredientEditorProjection(record) {
+  const amountState = AMOUNT_STATES.includes(record?.amountState)
+    ? record.amountState : record?.quantity == null ? 'qualitative' : 'numeric';
+  const base = { name: canonicalName(record?.name), amountState, countLabel: record?.countLabel || '' };
+  if (amountState !== 'numeric') return base;
+  if (record?.reviewStatus === 'reviewed'
+      && MEASUREMENT_FAMILIES.includes(record.measurementFamily)
+      && FAMILY_UNITS[record.measurementFamily]?.includes(record.sourceUnit)) {
+    return { ...base,
+      amount: String(record.amount || (record.quantityState === 'range' && record.quantityMin != null
+        ? `${record.quantityMin} to ${record.quantity}` : record.quantity)),
+      measurementFamily: record.measurementFamily, sourceUnit: record.sourceUnit };
+  }
+  const reconstructed = sourceProjection(record);
+  if (reconstructed) return { ...base, ...reconstructed };
+  if (record?.unit === 'count') return { ...base, amount: String(record.quantity), measurementFamily: 'count', sourceUnit: 'count' };
+  // Legacy canonical ounces omit the source family. Literal canonical ounces
+  // are lossless; selecting a teaspoon default is not.
+  return { ...base, amount: String(record?.quantity), measurementFamily: 'weight', sourceUnit: 'oz' };
+}
+
+export function recipeEffectiveSignature(recipe) {
+  return JSON.stringify(effectiveIngredientRecords(recipe).map((item) => ({
+    id: item.id, raw: item.raw, name: item.name, amountState: item.amountState,
+    quantity: item.quantity, quantityMin: item.quantityMin, quantityState: item.quantityState,
+    unit: item.unit, measurementFamily: item.measurementFamily, sourceUnit: item.sourceUnit,
+    countLabel: item.countLabel, reviewVersion: item.reviewVersion || 0, reviewedAt: item.reviewedAt || 0,
+  })));
+}
+
+export function reconcileReviewedRecipesInCart(cart, recipes) {
+  const recipeMap = new Map((Array.isArray(recipes) ? recipes : []).map((recipe) => [String(recipe?._id || recipe?.id || recipe?.recipeId || ''), recipe]));
+  return (Array.isArray(cart) ? cart : []).map((selection) => {
+    const recipe = recipeMap.get(String(selection?.sourceRecipeId || selection?.recipeId || ''));
+    if (!recipe) return clone(selection);
+    const effective = effectiveIngredientRecords(recipe);
+    const signature = recipeEffectiveSignature(recipe);
+    if (!effective.some((ingredient) => ingredient.reviewStatus === 'reviewed') && !selection.effectiveSignature) {
+      return clone(selection);
+    }
+    if (selection.effectiveSignature === signature) return clone(selection);
+    const removed = new Set((selection.removedIngredientNames || []).map(canonicalName));
+    const ingredients = effective.filter((ingredient) => {
+      const rawName = canonicalName(normalizeIngredient(ingredient.raw).name);
+      return !removed.has(ingredient.name) && !removed.has(rawName);
+    }).map(clone);
+    return { ...clone(selection), recipeName: String(recipe.name || selection.recipeName), ingredients,
+      effectiveSignature: signature };
+  });
+}
+
+export function reconcileReviewedShoppingChecked(shoppingChecked, previousCart, reconciledCart) {
+  const checked = clone(shoppingChecked && typeof shoppingChecked === 'object' ? shoppingChecked : {});
+  const nextByRecipe = new Map((Array.isArray(reconciledCart) ? reconciledCart : []).map((selection) => [
+    String(selection?.recipeId || ''), selection,
+  ]));
+  for (const previous of Array.isArray(previousCart) ? previousCart : []) {
+    const next = nextByRecipe.get(String(previous?.recipeId || ''));
+    if (!next) continue;
+    const nextByRaw = new Map();
+    for (const ingredient of Array.isArray(next.ingredients) ? next.ingredients : []) {
+      const raw = String(ingredient?.raw || '');
+      const rows = nextByRaw.get(raw) || [];
+      rows.push(ingredient);
+      nextByRaw.set(raw, rows);
+    }
+    const occurrences = new Map();
+    for (const ingredient of Array.isArray(previous.ingredients) ? previous.ingredients : []) {
+      const raw = String(ingredient?.raw || '');
+      const occurrence = occurrences.get(raw) || 0;
+      occurrences.set(raw, occurrence + 1);
+      const replacement = nextByRaw.get(raw)?.[occurrence];
+      const previousName = canonicalName(ingredient?.name);
+      const nextName = canonicalName(replacement?.name);
+      if (!previousName || !nextName || previousName === nextName) continue;
+      if (checked[previousName] === true) checked[nextName] = true;
+      if (checked[`pantry-transfer:${previousName}`] === true) checked[`pantry-transfer:${nextName}`] = true;
+    }
+  }
+  return checked;
 }
 
 function pluralCountLabel(label, quantity) {
@@ -293,13 +459,22 @@ export function buildRecipeUsageIndex(recipes) {
   const index = new Map();
   for (const recipe of Array.isArray(recipes) ? recipes : []) {
     const id = String(recipe?._id || recipe?.id || '');
+    const recipeName = String(recipe?.name || 'Untitled');
+    const recipeIdentity = `${id || 'derived'}:${hash128(`${recipeName}\u0000${recipeEffectiveSignature(recipe)}`)}`;
+    const unique = new Map();
     for (const ingredient of effectiveIngredientRecords(recipe)) {
+      const current = unique.get(ingredient.name);
+      if (!current || compareText(JSON.stringify(ingredient), JSON.stringify(current)) < 0) unique.set(ingredient.name, ingredient);
+    }
+    for (const ingredient of unique.values()) {
       if (!index.has(ingredient.name)) index.set(ingredient.name, []);
-      index.get(ingredient.name).push({ recipeId: id, recipeName: String(recipe?.name || 'Untitled'), ingredient: clone(ingredient) });
+      index.get(ingredient.name).push({ recipeId: id || recipeIdentity, recipeIdentity, recipeName, ingredient: clone(ingredient) });
     }
   }
+  for (const uses of index.values()) uses.sort((a, b) => compareText(a.recipeName, b.recipeName)
+    || compareText(a.recipeIdentity, b.recipeIdentity));
   return {
     find(name) { return clone(index.get(canonicalName(name)) || []); },
-    entries() { return [...index.entries()].map(([name, uses]) => [name, clone(uses)]); },
+    entries() { return [...index.entries()].sort(([a], [b]) => compareText(a, b)).map(([name, uses]) => [name, clone(uses)]); },
   };
 }

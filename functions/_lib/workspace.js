@@ -1,7 +1,6 @@
 import {
   aggregateCart,
   canonicalName,
-  normalizeIngredientsLocal,
   parseServings,
   removeShoppingItem,
   setTargetServings,
@@ -15,6 +14,7 @@ import {
   restorePantryRecord,
   updatePantryRecord,
 } from '../../docs/js/lib/pantry.js';
+import { effectiveIngredientRecords, recipeEffectiveSignature } from '../../docs/js/lib/ingredient-corrections.js';
 
 const PLAN_TYPES = new Set(['recipe', 'leftovers', 'dining-out', 'open']);
 const PLAN_STATUSES = new Set(['active', 'skipped', 'cooked']);
@@ -100,7 +100,8 @@ function planSelection(recipe, entries, rangeStart, rangeEnd, previous) {
     sourceServings,
     targetServings,
     normalizationVersion: 2,
-    ingredients: normalizeIngredientsLocal(recipe.recipeIngredient),
+    ingredients: effectiveIngredientRecords(recipe),
+    effectiveSignature: recipeEffectiveSignature(recipe),
     removedIngredientNames: Array.isArray(previous?.removedIngredientNames)
       ? [...previous.removedIngredientNames] : [],
     origin: {

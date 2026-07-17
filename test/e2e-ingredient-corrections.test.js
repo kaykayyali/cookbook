@@ -1,12 +1,13 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+
 import { createServer } from 'node:http';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { launchE2eBrowser } from './helpers/playwright-browser.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -14,6 +15,7 @@ const DOCS = join(ROOT, 'docs');
 const CANONICAL_EVIDENCE = process.env.COOKBOOK_ISSUE22_EVIDENCE_DIR
   ? resolve(process.env.COOKBOOK_ISSUE22_EVIDENCE_DIR)
   : join(HERE, 'evidence');
+const CAPTURE_EVIDENCE = process.env.COOKBOOK_CAPTURE_EVIDENCE === '1';
 const EVIDENCE = mkdtempSync(join(tmpdir(), 'cookbook-issue22-evidence-'));
 const EXPECTED_EVIDENCE = [
   'issue-22-before-mobile.png', 'issue-22-after-mobile.png',
@@ -33,7 +35,7 @@ const json = (route, body, status = 200) => route.fulfill({
 });
 
 async function launchBrowser() {
-  return chromium.launch({
+  return launchE2eBrowser(chromium, {
     headless: true,
     args: [
       '--disable-gpu',
@@ -46,7 +48,6 @@ async function launchBrowser() {
 }
 
 before(async () => {
-  execFileSync(process.execPath, [join(ROOT, 'scripts', 'build.js')], { cwd: ROOT, stdio: 'pipe' });
   mkdirSync(EVIDENCE, { recursive: true });
   server = createServer((request, response) => {
     const requestPath = request.url.split('?')[0] === '/' ? '/index.html' : request.url.split('?')[0];
@@ -73,8 +74,10 @@ after(async () => {
       const bytes = readFileSync(join(EVIDENCE, name));
       assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', `${name} must be a PNG`);
     }
-    mkdirSync(CANONICAL_EVIDENCE, { recursive: true });
-    for (const name of EXPECTED_EVIDENCE) copyFileSync(join(EVIDENCE, name), join(CANONICAL_EVIDENCE, name));
+    if (CAPTURE_EVIDENCE) {
+      mkdirSync(CANONICAL_EVIDENCE, { recursive: true });
+      for (const name of EXPECTED_EVIDENCE) copyFileSync(join(EVIDENCE, name), join(CANONICAL_EVIDENCE, name));
+    }
   } finally {
     rmSync(EVIDENCE, { recursive: true, force: true });
   }
@@ -134,6 +137,7 @@ async function createPage(viewport, evidenceLabel) {
   let updatedAt = 1000;
   let reviewRequests = 0;
   let normalizationRequests = 0;
+  let pantryMutations = 0;
   let workspace = { householdId: 'household-home', revision: 0, plan: [], cart: [], pantry: [], shoppingChecked: {}, manualItems: [], recentMutations: [] };
 
   await context.route('**/api/**', async (route) => {
@@ -145,6 +149,7 @@ async function createPage(viewport, evidenceLabel) {
     if (url.pathname === '/api/workspace' && request.method() === 'PATCH') {
       const body = JSON.parse(request.postData() || '{}');
       if (body.op === 'cart.upsertSelection') workspace = { ...workspace, revision: workspace.revision + 1, cart: [body.payload.selection] };
+      if (body.op?.startsWith('pantry.')) pantryMutations += 1;
       return json(route, workspace);
     }
     if (url.pathname === '/api/cooks' && request.method() === 'GET') return json(route, { events: [], reactions: [] });
@@ -176,7 +181,7 @@ async function createPage(viewport, evidenceLabel) {
 
   const page = await context.newPage();
   const browserErrors = [];
-  page.on('pageerror', (error) => browserErrors.push(error.message));
+  page.on('pageerror', (error) => browserErrors.push(error.stack || error.message));
   page.on('console', (message) => { if (message.type() === 'error' && !message.text().includes('Failed to load resource')) browserErrors.push(message.text()); });
   page.on('response', (response) => { if (response.status() >= 400 && !response.url().endsWith('/api/normalize')) browserErrors.push(`${response.status()} ${response.url()}`); });
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
@@ -186,11 +191,12 @@ async function createPage(viewport, evidenceLabel) {
   await page.locator(`.recipe-card[data-id="${RECIPE_ID}"]`).click();
   await page.locator('#detail-modal.open').waitFor();
   await settledScreenshot(page, `issue-22-before-${evidenceLabel}.png`);
-  return { context, page, browserErrors, stats: () => ({ reviewRequests, normalizationRequests }) };
+  return { context, page, browserErrors, stats: () => ({ reviewRequests, normalizationRequests, pantryMutations }) };
 }
 
 async function completeReviewedCorrection(page, { alreadyOpen = false } = {}) {
-  const action = page.getByRole('button', { name: `Correct ${RAW_LINE}` });
+  const action = page.locator('.ingredient-correction-action').first();
+  assert.equal(await action.getAttribute('aria-label'), `Correct ${RAW_LINE}`);
   const box = await action.boundingBox();
   assert.ok(box && box.width >= 44 && box.height >= 44, `correction action must be at least 44px: ${JSON.stringify(box)}`);
   if (!alreadyOpen) await action.click();
@@ -209,6 +215,13 @@ async function completeReviewedCorrection(page, { alreadyOpen = false } = {}) {
   await dialog.getByLabel('Amount state').selectOption('unknown');
   assert.equal(await dialog.getByLabel('Amount', { exact: true }).isDisabled(), true);
   assert.equal(await dialog.getByLabel('Measurement family').isDisabled(), true);
+  assert.deepEqual(await dialog.evaluate(() => ['ingredient-correction-amount-group', 'ingredient-correction-family-group', 'ingredient-correction-unit-group', 'ingredient-correction-count-label-group']
+    .map((id) => ({ id, hidden: document.getElementById(id).hidden, display: getComputedStyle(document.getElementById(id)).display }))), [
+    { id: 'ingredient-correction-amount-group', hidden: true, display: 'none' },
+    { id: 'ingredient-correction-family-group', hidden: true, display: 'none' },
+    { id: 'ingredient-correction-unit-group', hidden: true, display: 'none' },
+    { id: 'ingredient-correction-count-label-group', hidden: true, display: 'none' },
+  ]);
   await dialog.getByLabel('Ingredient name').fill('basil');
   await dialog.getByLabel('Amount state').selectOption('numeric');
   await dialog.getByLabel('Amount', { exact: true }).fill('4 to 2');
@@ -245,14 +258,43 @@ async function completeReviewedCorrection(page, { alreadyOpen = false } = {}) {
 test('mobile reviews malformed ingredient evidence, persists it, and reuses it downstream without another LLM call', { timeout: 120_000 }, async () => {
   const { context, page, browserErrors, stats } = await createPage({ width: 402, height: 874 }, 'mobile');
   try {
-    await completeReviewedCorrection(page);
+    const keyboardAction = page.getByRole('button', { name: `Correct ${RAW_LINE}` });
+    await keyboardAction.focus();
+    await page.keyboard.press('Enter');
+    const keyboardDialog = page.getByRole('dialog', { name: 'Correct ingredient' });
+    await keyboardDialog.waitFor();
+    assert.deepEqual(await page.locator('#detail-modal').evaluate((element) => ({
+      inert: element.hasAttribute('inert'), hidden: element.getAttribute('aria-hidden'), modal: element.getAttribute('aria-modal'),
+    })), { inert: true, hidden: 'true', modal: null });
+    assert.equal(stats().pantryMutations, 0, 'Enter on Correct must not toggle Pantry');
+    await page.keyboard.press('Escape');
+    await keyboardDialog.waitFor({ state: 'hidden' });
+    assert.deepEqual(await page.locator('#detail-modal').evaluate((element) => ({
+      inert: element.hasAttribute('inert'), hidden: element.getAttribute('aria-hidden'), modal: element.getAttribute('aria-modal'),
+    })), { inert: false, hidden: null, modal: 'true' });
+    await keyboardAction.focus();
+    await page.keyboard.press('Space');
+    await keyboardDialog.waitFor();
+    assert.equal(stats().pantryMutations, 0, 'Space on Correct must not toggle Pantry');
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    const overflow = await page.evaluate(() => ({
+      width: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      offenders: [...document.querySelectorAll('body *')].map((element) => {
+        const box = element.getBoundingClientRect();
+        return { tag: element.tagName, id: element.id, className: String(element.className || ''), left: box.left, right: box.right, width: box.width };
+      }).filter((row) => row.right > document.documentElement.clientWidth + 1 || row.left < -1).slice(0, 20),
+    }));
+    assert.equal(overflow.scrollWidth <= overflow.width, true, `200% text must not overflow the document: ${JSON.stringify(overflow)}`);
+    await completeReviewedCorrection(page, { alreadyOpen: true });
     const trigger = page.getByRole('button', { name: `Correct ${RAW_LINE}` });
     await trigger.click();
     const dialog = page.getByRole('dialog', { name: 'Correct ingredient' });
     assert.match(await dialog.getByText(/reviewed by/i).textContent(), /Kaysser/i);
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'hidden' });
-    await assert.doesNotReject(() => trigger.evaluate((element) => { if (document.activeElement !== element) throw new Error('focus not restored'); }));
+    await page.waitForFunction((label) => document.activeElement?.getAttribute('aria-label') === label,
+      `Correct ${RAW_LINE}`);
 
     await page.locator('#dm-add-all-btn').click();
     await page.locator('#detail-close-btn').click();
@@ -272,7 +314,7 @@ test('mobile reviews malformed ingredient evidence, persists it, and reuses it d
     assert.equal(await reloadedDialog.getByRole('link', { name: 'Open import source' }).getAttribute('href'), SOURCE_URL);
     assert.match(await reloadedDialog.getByText(/reviewed by/i).textContent(), /Kaysser/i);
     await page.keyboard.press('Escape');
-    assert.deepEqual(stats(), { reviewRequests: 1, normalizationRequests: 0 });
+    assert.deepEqual(stats(), { reviewRequests: 1, normalizationRequests: 0, pantryMutations: 0 });
     assert.deepEqual(browserErrors, []);
     await settledScreenshot(page, 'issue-22-after-mobile.png');
     completedCaptures.add('mobile');

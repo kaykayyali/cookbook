@@ -3,6 +3,14 @@ import { applyReviewedIngredientCorrection } from './ingredient-corrections.js';
 const makeMutationId = () => globalThis.crypto?.randomUUID?.() || `recipe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const recipeId = (item) => String(item?._id || item?.id || '');
 
+function mergeRecipeAuthority(current, updates) {
+  const byId = new Map((Array.isArray(updates) ? updates : []).map((item) => [recipeId(item), clone(item)]).filter(([id]) => id));
+  const merged = (Array.isArray(current) ? current : []).map((item) => byId.has(recipeId(item)) ? byId.get(recipeId(item)) : clone(item));
+  const existing = new Set(merged.map(recipeId));
+  for (const item of byId.values()) if (!existing.has(recipeId(item))) merged.push(item);
+  return merged;
+}
+
 export function applyRecipeOperation(recipes, request) {
   const next = clone(recipes);
   const payload = request.payload || {};
@@ -138,7 +146,9 @@ export function createRecipeOutbox({
       try {
         outcome = await withAuthorityWrite(async () => {
           if (rows[0]?.mutationId !== row.mutationId) return 'skipped';
-          const authority = clone(response.recipes);
+          const authority = response.authorityMode === 'merge'
+            ? mergeRecipeAuthority(confirmed, response.recipes)
+            : clone(response.recipes);
           await repo.acknowledgeRecipes(authSub, householdId, row.mutationId, authority);
           confirmed = authority;
           rows.shift();
@@ -146,7 +156,7 @@ export function createRecipeOutbox({
           mutationVersion += 1;
           blockedSequence = null;
           rebuild();
-          publish({ optimistic: rows.length > 0, pending: rows.length });
+          publish({ optimistic: rows.length > 0, pending: rows.length, authoritative: true });
           return 'acknowledged';
         });
       } catch {

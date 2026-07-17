@@ -48,7 +48,7 @@ async function bootAfterAuth() {
       state, repo, authSub: state.auth.sub, onUnauthorized,
       onChange: () => ui?.renderShared(),
     });
-    recipeRuntime = await initRecipeRuntime({ state, repo, authSub: state.auth.sub, onChange: () => ui?.renderActive() });
+    recipeRuntime = await initRecipeRuntime({ state, repo, authSub: state.auth.sub, onChange: (recipes, meta) => ui?.renderActive(recipes, meta) });
     cookRuntime = await initCookRuntime({ state, repo, authSub: state.auth.sub,
       onChange: () => ui?.renderShared(), refreshWorkspace: () => runtime.refresh() });
     ui = wireAuthenticatedUi({

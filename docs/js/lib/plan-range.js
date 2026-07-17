@@ -1,4 +1,5 @@
-import { normalizeIngredientsLocal, parseServings } from './cart.js';
+import { parseServings } from './cart.js';
+import { effectiveIngredientRecords, recipeEffectiveSignature } from './ingredient-corrections.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -11,7 +12,8 @@ function selectionFor(recipe, entries, rangeStart, rangeEnd, previous) {
     sourceServings: parseServings(recipe.recipeYield),
     targetServings: entries.reduce((sum, entry) => sum + Number(entry.targetServings || 0), 0),
     normalizationVersion: 2,
-    ingredients: normalizeIngredientsLocal(recipe.recipeIngredient),
+    ingredients: effectiveIngredientRecords(recipe),
+    effectiveSignature: recipeEffectiveSignature(recipe),
     removedIngredientNames: Array.isArray(previous?.removedIngredientNames)
       ? [...previous.removedIngredientNames] : [],
     origin: {

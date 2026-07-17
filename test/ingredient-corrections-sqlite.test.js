@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ingredientEvidence } from '../docs/js/lib/ingredient-corrections.js';
+import { applyReviewedIngredientCorrection, ingredientEvidence } from '../docs/js/lib/ingredient-corrections.js';
 import { ensureOnce, editRecipe, getCommunity } from '../functions/_lib/community.js';
 import { createD1RecipeMutationStore } from '../functions/_lib/recipe-mutations.js';
 
@@ -10,6 +10,9 @@ class D1Statement {
   async first() { return this.owner.sqlite.prepare(this.sql).get(...this.values) || null; }
   async all() { return { results: this.owner.sqlite.prepare(this.sql).all(...this.values) }; }
   async run() {
+    if (this.owner.failReceipt && /INSERT INTO household_recipe_mutations/i.test(this.sql)) {
+      throw new Error('injected_receipt_failure');
+    }
     const result = this.owner.sqlite.prepare(this.sql).run(...this.values);
     return { meta: { changes: Number(result.changes || 0) } };
   }
@@ -96,6 +99,14 @@ test('real SQLite persists household-reviewed authority, immutable evidence, ide
   assert.equal(duplicate.status, 200);
   assert.equal(sqlite.prepare('SELECT COUNT(*) count FROM household_recipe_mutations').get().count, 1);
 
+  const collision = await store.mutate({
+    mutationId: 'review-1', op: 'recipe.ingredient.review', householdId: 'our-home',
+    author: { sub: 'partner', name: 'Partner' },
+    payload: { id: 'r1', ingredientId, expectedUpdatedAt: Number(stored.updated_at), correction: { ...correction, name: 'mint' } },
+  });
+  assert.deepEqual({ status: collision.status, error: collision.error }, { status: 409, error: 'mutation_receipt_collision' });
+  assert.equal(JSON.parse(sqlite.prepare('SELECT recipe_json FROM household_recipes WHERE id = ?').get('r1').recipe_json).ingredientNormalizations[0].name, 'basil');
+
   const stale = await store.mutate({
     mutationId: 'review-stale-tab', op: 'recipe.ingredient.review', householdId: 'our-home',
     author: { sub: 'owner', name: 'Owner' },
@@ -104,6 +115,28 @@ test('real SQLite persists household-reviewed authority, immutable evidence, ide
   assert.deepEqual({ status: stale.status, error: stale.error }, { status: 409, error: 'recipe_conflict' });
   assert.equal(JSON.parse(sqlite.prepare('SELECT recipe_json FROM household_recipes WHERE id = ?').get('r1').recipe_json).ingredientNormalizations[0].name, 'basil');
   assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM household_recipe_mutations WHERE mutation_id = 'review-stale-tab'").get().count, 0);
+  sqlite.close();
+});
+
+test('concurrent receipt collision cannot apply or acknowledge a different ingredient-review payload', async (t) => {
+  const setup = await fixture(t);
+  if (!setup) return;
+  const { sqlite, db, ingredientId } = setup;
+  const store = await createD1RecipeMutationStore(db);
+  const request = (name) => store.mutate({
+    mutationId: 'concurrent-review', op: 'recipe.ingredient.review', householdId: 'our-home',
+    author: { sub: 'partner', name: 'Partner' },
+    payload: { id: 'r1', ingredientId, expectedUpdatedAt: 1000, correction: { ...correction, name } },
+  });
+  const outcomes = await Promise.all([request('basil'), request('mint')]);
+  assert.deepEqual(outcomes.map(({ status, error }) => ({ status, error })).sort((a, b) => a.status - b.status), [
+    { status: 200, error: undefined },
+    { status: 409, error: 'mutation_receipt_collision' },
+  ]);
+  const storedName = JSON.parse(sqlite.prepare("SELECT recipe_json FROM household_recipes WHERE id = 'r1'").get().recipe_json)
+    .ingredientNormalizations[0].name;
+  assert.ok(['basil', 'mint'].includes(storedName));
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM household_recipe_mutations WHERE mutation_id = 'concurrent-review'").get().count, 1);
   sqlite.close();
 });
 
@@ -136,6 +169,19 @@ test('review route/store fails closed for malformed payloads and cross-household
   });
   assert.equal(forgedCreate.status, 200);
   assert.equal(JSON.parse(sqlite.prepare('SELECT recipe_json FROM household_recipes WHERE id = ?').get('r2').recipe_json).ingredientNormalizations, undefined);
+
+  const forgedBase = { name: 'Forged authority', recipeIngredient: ['1 tsp mint'] };
+  const forgedReviewed = applyReviewedIngredientCorrection(forgedBase, {
+    ingredientId: ingredientEvidence(forgedBase)[0].id,
+    correction: { name: 'poison', amountState: 'numeric', amount: '1', measurementFamily: 'volume', sourceUnit: 'tsp' },
+    reviewer: { sub: 'forged-authority', name: 'Forged Authority' }, reviewedAt: 100,
+  }).recipe;
+  const validForgedCreate = await store.mutate({
+    mutationId: 'valid-forged-create', op: 'recipe.create', householdId: 'our-home', author: actor,
+    payload: { id: 'r3', recipe: forgedReviewed },
+  });
+  assert.equal(validForgedCreate.status, 200);
+  assert.equal(JSON.parse(sqlite.prepare('SELECT recipe_json FROM household_recipes WHERE id = ?').get('r3').recipe_json).ingredientNormalizations, undefined);
   sqlite.close();
 });
 
@@ -161,5 +207,59 @@ test('generic edit/re-import cannot silently erase a reviewed override and prove
   const detail = await getCommunity(db, { id: 'r1', householdId: 'our-home' });
   assert.equal(detail.body.provenance.sourceUrl, 'https://example.test/original');
   assert.deepEqual(detail.body.provenance.evidence, { marker: 'immutable' });
+  sqlite.close();
+});
+
+test('generic recipe mutation and payload-bound receipt commit atomically', async (t) => {
+  const setup = await fixture(t);
+  if (!setup) return;
+  const { sqlite, db } = setup;
+  const store = await createD1RecipeMutationStore(db);
+  db.failReceipt = true;
+  await assert.rejects(() => store.mutate({
+    mutationId: 'atomic-create', op: 'recipe.create', householdId: 'our-home',
+    author: { sub: 'owner', name: 'Owner', picture: null },
+    payload: { id: 'atomic-r2', recipe: { name: 'Atomic soup', recipeIngredient: ['1 onion'] } },
+  }), /injected_receipt_failure/);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM household_recipes WHERE id = 'atomic-r2'").get().count, 0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM household_recipe_mutations WHERE mutation_id = 'atomic-create'").get().count, 0);
+  db.failReceipt = false;
+
+  const created = await store.mutate({
+    mutationId: 'atomic-create', op: 'recipe.create', householdId: 'our-home',
+    author: { sub: 'owner', name: 'Owner', picture: null },
+    payload: { id: 'atomic-r2', recipe: { name: 'Atomic soup', recipeIngredient: ['1 onion'] } },
+  });
+  assert.equal(created.status, 200);
+  const collision = await store.mutate({
+    mutationId: 'atomic-create', op: 'recipe.create', householdId: 'our-home',
+    author: { sub: 'owner', name: 'Owner', picture: null },
+    payload: { id: 'atomic-r3', recipe: { name: 'Different soup', recipeIngredient: ['1 leek'] } },
+  });
+  assert.deepEqual({ status: collision.status, error: collision.error }, { status: 409, error: 'mutation_receipt_collision' });
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM household_recipes WHERE id = 'atomic-r3'").get().count, 0);
+  sqlite.close();
+});
+
+test('ingredient correction authority is target-scoped and never truncated at 51, 100, or more recipes', async (t) => {
+  const setup = await fixture(t);
+  if (!setup) return;
+  const { sqlite, db, ingredientId } = setup;
+  const insert = sqlite.prepare(`INSERT INTO household_recipes
+    (id, household_id, added_by_sub, added_by_name, added_by_picture, recipe_json, created_at, updated_at)
+    VALUES (?, 'our-home', 'owner', 'Owner', NULL, ?, ?, ?)`);
+  for (let index = 0; index < 120; index += 1) {
+    insert.run(`extra-${index}`, JSON.stringify({ name: `Extra ${index}`, recipeIngredient: ['1 egg'] }), 100 + index, 100 + index);
+  }
+  const result = await (await createD1RecipeMutationStore(db)).mutate({
+    mutationId: 'review-large-household', op: 'recipe.ingredient.review', householdId: 'our-home',
+    author: { sub: 'partner', name: 'Partner' },
+    payload: { id: 'r1', ingredientId, expectedUpdatedAt: 1000, correction },
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.authorityMode, 'merge');
+  assert.deepEqual(result.recipes.map((item) => item.id), ['r1']);
+  assert.equal(result.recipes[0].recipe.ingredientNormalizations[0].name, 'basil');
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM household_recipes WHERE household_id = 'our-home'").get().count, 121);
   sqlite.close();
 });

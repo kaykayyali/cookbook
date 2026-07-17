@@ -20,6 +20,10 @@ import { createCookbookTour } from './cookbook-tour.js';
 import { createThemeRecommendation } from './theme-recommendation.js';
 import { showRecipeSchema, wireSchemaModal, exportRecipesToFile } from './schema-modal.js';
 import { interactionFeedback } from './interaction-feedback.js';
+import {
+  reconcileReviewedRecipesInCart,
+  reconcileReviewedShoppingChecked,
+} from './ingredient-corrections.js';
 
 export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cookRuntime = null, onSignedIn, onSignedOut }) {
   interactionFeedback.init();
@@ -114,6 +118,26 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
   if (!tourStarted) summerTheme.maybeShow();
   return {
     renderShared: () => { week.render(); pantry.render(); cart.render(); engagement.render(); },
-    renderActive: panels.renderActive,
+    renderActive: (_recipes, meta = {}) => {
+      const before = Array.isArray(state.cart) ? state.cart : [];
+      const beforeChecked = state.shoppingChecked && typeof state.shoppingChecked === 'object'
+        ? state.shoppingChecked : {};
+      const reconciled = reconcileReviewedRecipesInCart(before, state.recipes);
+      const reconciledChecked = reconcileReviewedShoppingChecked(beforeChecked, before, reconciled);
+      state.cart = reconciled;
+      state.shoppingChecked = reconciledChecked;
+      reconciled.forEach((selection, index) => {
+        if (JSON.stringify(selection) !== JSON.stringify(before[index])) {
+          void runtime.mutate('cart.upsertSelection', { selection });
+        }
+      });
+      Object.keys(reconciledChecked).forEach((key) => {
+        if (reconciledChecked[key] === true && beforeChecked[key] !== true && !key.startsWith('pantry-transfer:')) {
+          void runtime.mutate('shopping.setChecked', { key, checked: true });
+        }
+      });
+      detail.reconcileRecipes(meta);
+      panels.renderActive();
+    },
   };
 }

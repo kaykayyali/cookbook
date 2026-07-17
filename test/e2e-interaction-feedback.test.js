@@ -1,12 +1,13 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { applyWorkspaceOperation } from '../docs/js/lib/workspace-sync.js';
+import { launchE2eBrowser } from './helpers/playwright-browser.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -32,12 +33,10 @@ const workspaceFixture = (revision = 0) => ({
 });
 
 async function launchBrowser() {
-  try { return await chromium.launch({ channel: 'chrome', headless: true }); }
-  catch { return chromium.launch({ headless: true }); }
+  return launchE2eBrowser(chromium, { headless: true });
 }
 
 before(async () => {
-  execFileSync(process.execPath, [join(ROOT, 'scripts', 'build.js')], { cwd: ROOT, stdio: 'pipe' });
   mkdirSync(ARTIFACTS, { recursive: true });
   server = createServer((request, response) => {
     const requestPath = request.url.split('?')[0] === '/' ? '/index.html' : request.url.split('?')[0];

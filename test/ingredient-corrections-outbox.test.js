@@ -94,6 +94,23 @@ test('server conflict remains actionable and discard restores authoritative unre
   repo.close();
 });
 
+test('target-scoped correction acknowledgement merges authority without dropping 100+ existing recipes', async () => {
+  const repo = await openOfflineDb({ indexedDB, name: dbName() });
+  const extras = Array.from({ length: 120 }, (_, index) => ({ id: `extra-${index}`, _id: `extra-${index}`, _updatedAt: index + 1, name: `Extra ${index}`, recipeIngredient: ['1 egg'] }));
+  const initial = [recipe, ...extras];
+  const manager = createRecipeOutbox({
+    repo, authSub: 'kay', householdId: 'home', initial, isOnline: () => true,
+    send: async (request) => ({ ok: true, authorityMode: 'merge', recipes: [applyRecipeOperation([recipe], request)[0]] }),
+  });
+  await manager.init();
+  assert.equal(await manager.mutate('recipe.ingredient.review', payload), true);
+  assert.equal(await manager.drain(), true);
+  assert.equal(manager.current().length, 121);
+  assert.equal(manager.current().find((item) => item.id === 'r1').ingredientNormalizations[0].name, 'basil');
+  assert.ok(manager.current().some((item) => item.id === 'extra-119'));
+  repo.close();
+});
+
 test('local persistence failure rolls back reviewed correction and never calls remote authority', async () => {
   let sends = 0;
   const repo = {

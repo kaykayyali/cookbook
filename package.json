@@ -4,11 +4,12 @@
   "description": "Mobile-first recipe manager with schema.org/Recipe JSON-LD support",
   "type": "module",
   "scripts": {
-    "test": "node --test",
+    "test": "npm run build && node --test --test-concurrency=4",
     "build": "node scripts/build.js",
     "build:watch": "node scripts/build.js --watch",
     "dev": "npm run build && wrangler pages dev docs",
-    "test:e2e": "node --test test/e2e-smoke.test.js test/e2e-week-cooking.test.js test/e2e-recipe-detail.test.js test/e2e-pantry-item-modal.test.js test/e2e-interaction-feedback.test.js test/e2e-ingredient-corrections.test.js"
+    "test:e2e": "npm run build && node --test --test-concurrency=1 test/e2e-smoke.test.js test/e2e-week-cooking.test.js test/e2e-recipe-detail.test.js test/e2e-pantry-item-modal.test.js test/e2e-interaction-feedback.test.js test/e2e-ingredient-corrections.test.js",
+    "capture:issue22": "npm run build && node scripts/capture-issue22-evidence.js"
   },
   "keywords": [
     "recipe",

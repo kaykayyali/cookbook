@@ -18,6 +18,7 @@ import {
   FAMILY_UNITS,
   applyReviewedIngredientCorrection,
   effectiveIngredientRecords,
+  ingredientEditorProjection,
   validateIngredientCorrection,
 } from '../lib/ingredient-corrections.js';
 import { COUNT_LABELS } from '../lib/cart.js';
@@ -124,6 +125,7 @@ export function initDetail({
   let correction = null;
   let correctionOpener = null;
   let correctionPending = false;
+  let suspendedDetailState = null;
   const pendingAudits = new Set();
 
   function openRecipe(r, ctx = { source: 'local' }) {
@@ -275,13 +277,14 @@ export function initDetail({
     correction = { recipeId: String(recipe._id || recipe.id), ingredientId, record };
     correctionOpener = sourceElement || document.activeElement;
     correctionPending = false;
-    correctionElement('name').value = record.name;
-    correctionElement('state').value = AMOUNT_STATES.includes(record.amountState) ? record.amountState : 'unknown';
-    correctionElement('amount').value = record.amount || (record.quantityState === 'range' && record.quantityMin != null ? `${record.quantityMin} to ${record.quantity}` : record.quantity ?? '');
-    correctionElement('family').value = record.measurementFamily || 'count';
-    setSelectOptions(correctionElement('countLabel'), COUNT_LABELS, record.countLabel || '', { '': 'None', leaf: 'Leaf', bunch: 'Bunch' });
+    const draft = ingredientEditorProjection(record);
+    correctionElement('name').value = draft.name;
+    correctionElement('state').value = draft.amountState;
+    correctionElement('amount').value = draft.amount || '';
+    correctionElement('family').value = draft.measurementFamily || 'count';
+    setSelectOptions(correctionElement('countLabel'), COUNT_LABELS, draft.countLabel || '', { '': 'None', leaf: 'Leaf', bunch: 'Bunch' });
     renderCorrectionDependencies();
-    correctionElement('unit').value = (FAMILY_UNITS[correctionElement('family').value] || []).includes(record.sourceUnit) ? record.sourceUnit : FAMILY_UNITS[correctionElement('family').value][0];
+    correctionElement('unit').value = draft.sourceUnit || FAMILY_UNITS[correctionElement('family').value][0];
     const raw = document.getElementById('ingredient-correction-raw');
     if (raw) raw.textContent = record.raw;
     renderProvenance(recipe._provenance);
@@ -292,6 +295,17 @@ export function initDetail({
     if (pending) pending.textContent = '';
     const modal = correctionElement('modal');
     const overlay = correctionElement('overlay');
+    const detailModal = document.getElementById('detail-modal');
+    if (detailModal && detailModal !== modal) {
+      suspendedDetailState = {
+        inert: detailModal.hasAttribute?.('inert') === true,
+        ariaHidden: detailModal.getAttribute?.('aria-hidden'),
+        ariaModal: detailModal.getAttribute?.('aria-modal'),
+      };
+      detailModal.setAttribute?.('inert', '');
+      detailModal.setAttribute?.('aria-hidden', 'true');
+      detailModal.removeAttribute?.('aria-modal');
+    }
     if (modal) {
       modal.hidden = false; modal.removeAttribute('inert'); modal.removeAttribute('aria-hidden'); modal.removeAttribute('aria-busy'); modal.setAttribute('aria-modal', 'true');
     }
@@ -309,6 +323,16 @@ export function initDetail({
       modal.setAttribute('inert', ''); modal.setAttribute('aria-hidden', 'true'); modal.removeAttribute('aria-modal'); modal.hidden = true;
     }
     if (overlay) overlay.hidden = true;
+    const detailModal = document.getElementById('detail-modal');
+    if (detailModal && suspendedDetailState) {
+      if (suspendedDetailState.inert) detailModal.setAttribute?.('inert', '');
+      else detailModal.removeAttribute?.('inert');
+      if (suspendedDetailState.ariaHidden == null) detailModal.removeAttribute?.('aria-hidden');
+      else detailModal.setAttribute?.('aria-hidden', suspendedDetailState.ariaHidden);
+      if (suspendedDetailState.ariaModal == null) detailModal.removeAttribute?.('aria-modal');
+      else detailModal.setAttribute?.('aria-modal', suspendedDetailState.ariaModal);
+    }
+    suspendedDetailState = null;
     const restore = correctionOpener;
     correction = null;
     correctionOpener = null;
@@ -438,6 +462,22 @@ export function initDetail({
       if (html) note.innerHTML = html;
     }
     renderAddButtonState();
+  }
+
+  function reconcileRecipes(meta = {}) {
+    if (!current?.r) return false;
+    const id = String(current.r._id || current.r.id || '');
+    const latest = (state.recipes || []).find((recipe) => String(recipe._id || recipe.id || '') === id);
+    if (!latest) { closeSheet(); return true; }
+    current.r = latest;
+    if (correction && (meta.discarded || meta.refreshed || meta.authoritative)) {
+      const latestRecord = effectiveIngredientRecords(latest).find((record) => record.id === correction.ingredientId);
+      const changed = !latestRecord || JSON.stringify(latestRecord) !== JSON.stringify(correction.record);
+      if (changed && !correctionPending) closeCorrection({ restoreFocus: false });
+      else if (latestRecord) correction.record = latestRecord;
+    }
+    renderIngredients();
+    return true;
   }
 
   function renderAddButtonState() {
@@ -775,8 +815,9 @@ export function initDetail({
       });
       ings.addEventListener('keydown', (event) => {
         if (!['Enter', ' '].includes(event.key)) return;
+        if (event.target.closest?.('button, a[href], input, select, textarea, [role="button"], [role="switch"]')) return;
         const item = event.target.closest('.detail-ing-item');
-        if (!item) return;
+        if (!item || event.target !== item) return;
         event.preventDefault();
         item.click();
       });
@@ -819,7 +860,7 @@ export function initDetail({
   wireDetail();
   return {
     open, close: closeSheet, restore, _renderIngredients: renderIngredients, _addToCart: addToCartHandler,
-    openCorrection, closeCorrection,
+    openCorrection, closeCorrection, reconcileRecipes,
     _waitForAudits: () => Promise.allSettled([...pendingAudits]),
   };
 }

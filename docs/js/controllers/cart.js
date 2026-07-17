@@ -18,6 +18,7 @@ import { toast } from '../lib/dom.js';
 import { cartGroupsHTML, emptyCartHTML } from '../components/cart.js';
 import { regeneratePlanRangeCart } from '../lib/plan-range.js';
 import { addToPantry, normalizePantryEntry } from '../lib/pantry.js';
+import { effectiveIngredientRecords, recipeEffectiveSignature } from '../lib/ingredient-corrections.js';
 
 const uid = () => globalThis.crypto?.randomUUID?.() || `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const TRANSFER_PREFIX = 'pantry-transfer:';
@@ -66,13 +67,18 @@ export function initCart({
   function activeRecipeSet() {
     return (state.cart || []).map((selection) => {
       const source = (state.recipes || []).find((recipe) => String(recipe._id || recipe.id) === selection.recipeId);
+      const effective = source ? effectiveIngredientRecords(source) : (selection.ingredients || []);
+      const reviewedAuthority = effective.some((ingredient) => ingredient.reviewStatus === 'reviewed');
       return {
         recipeId: selection.recipeId,
         recipeName: source?.name || selection.recipeName,
         recipeYield: source?.recipeYield || selection.sourceServings,
         ingredients: source
-          ? (source.recipeIngredient || []).filter((line) => typeof line === 'string' && line.trim())
+          ? effective.map((ingredient) => ingredient.raw).filter((line) => typeof line === 'string' && line.trim())
           : (selection.ingredients || []).map((ingredient) => ingredient.raw).filter(Boolean),
+        effectiveIngredients: reviewedAuthority ? effective : null,
+        effectiveSignature: source && reviewedAuthority ? recipeEffectiveSignature(source) : '',
+        reviewedAuthority,
         recipe: source || { recipeId: selection.recipeId, recipeName: selection.recipeName, recipeYield: selection.sourceServings },
       };
     }).filter((entry) => entry.ingredients.length);
@@ -87,21 +93,30 @@ export function initCart({
     const generation = mutationGeneration();
     const current = state.cart.every((selection) => selection.normalizationVersion === NORMALIZATION_VERSION);
     if (current && state.normalizationAudit.signature === signature) return false;
-    const request = set.map(({ recipeId, recipeName, recipeYield, ingredients }) => ({ recipeId, recipeName, recipeYield, ingredients }));
-    let normalizedSet;
-    try {
-      normalizedSet = await normalizeIngredients(request);
-      const valid = Array.isArray(normalizedSet) && normalizedSet.length === set.length
-        && normalizedSet.every((result, index) => result?.recipeId === set[index].recipeId
-          && Array.isArray(result.ingredients) && result.ingredients.length === set[index].ingredients.length
-          && result.ingredients.every((item, itemIndex) => isNormalizedIngredient(item)
-            && item.raw === set[index].ingredients[itemIndex]
-            && typeof item.displayName === 'string' && typeof item.countLabel === 'string' && typeof item.category === 'string'));
-      if (!valid) throw new Error('invalid_normalization');
-    } catch {
-      normalizedSet = set.map((entry) => ({ recipeId: entry.recipeId, ingredients: normalizeIngredientsLocal(entry.ingredients) }));
+    const auditSet = set.filter((entry) => !entry.reviewedAuthority);
+    const request = auditSet.map(({ recipeId, recipeName, recipeYield, ingredients }) => ({ recipeId, recipeName, recipeYield, ingredients }));
+    let auditedByRecipe = new Map();
+    if (request.length) {
+      try {
+        const audited = await normalizeIngredients(request);
+        const valid = Array.isArray(audited) && audited.length === auditSet.length
+          && audited.every((result, index) => result?.recipeId === auditSet[index].recipeId
+            && Array.isArray(result.ingredients) && result.ingredients.length === auditSet[index].ingredients.length
+            && result.ingredients.every((item, itemIndex) => isNormalizedIngredient(item)
+              && item.raw === auditSet[index].ingredients[itemIndex]
+              && typeof item.displayName === 'string' && typeof item.countLabel === 'string' && typeof item.category === 'string'));
+        if (!valid) throw new Error('invalid_normalization');
+        auditedByRecipe = new Map(audited.map((result) => [result.recipeId, result.ingredients]));
+      } catch {
+        auditedByRecipe = new Map(auditSet.map((entry) => [entry.recipeId, normalizeIngredientsLocal(entry.ingredients)]));
+      }
     }
+    const normalizedSet = set.map((entry) => ({
+      recipeId: entry.recipeId,
+      ingredients: entry.reviewedAuthority ? entry.effectiveIngredients : auditedByRecipe.get(entry.recipeId) || [],
+    }));
     if (generation !== mutationGeneration()) return false;
+    const selectionsToPersist = [];
     normalizedSet.forEach((result, index) => {
       const entry = set[index];
       state.normalizations[entry.recipeId] = {
@@ -110,15 +125,18 @@ export function initCart({
         ingredients: result.ingredients.map((item) => ({ ...item })),
       };
       state.cart = addRecipeSelection(state.cart, entry.recipe, result.ingredients);
-      if (mutate) void mutate('cart.upsertSelection', {
-        selection: state.cart.find((item) => item.recipeId === entry.recipeId),
-      });
+      const selection = state.cart.find((item) => item.recipeId === entry.recipeId);
+      if (entry.effectiveSignature && selection) selection.effectiveSignature = entry.effectiveSignature;
+      if (selection) selectionsToPersist.push(selection);
     });
     pruneLocalTransferMarkers();
     state.normalizationAudit = { signature };
     persist();
     render({ skipAudit: true });
     if (onChange) onChange();
+    if (mutate) selectionsToPersist.forEach((selection) => {
+      void mutate('cart.upsertSelection', { selection });
+    });
     return true;
   }
 

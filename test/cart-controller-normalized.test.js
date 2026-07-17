@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 if (!globalThis.localStorage) globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
 if (!globalThis.document) globalThis.document = { getElementById: () => null };
 const { initCart } = await import('../docs/js/controllers/cart.js');
+const { applyReviewedIngredientCorrection, ingredientEvidence } = await import('../docs/js/lib/ingredient-corrections.js');
 
 function dom() {
   const listeners = {};
@@ -179,6 +180,38 @@ test('item removal during an in-flight normalization is not undone by a stale re
   resolve([{ recipeId: 'r1', ingredients: [{ raw: '2 eggs', name: 'egg', displayName: 'Eggs', countLabel: '', category: 'dairy-eggs', quantity: 2, unit: 'count', kind: 'indivisible', confidence: .95 }] }]);
   await pending;
   assert.deepEqual(state.cart[0].ingredients, []);
+});
+
+test('whole-cart audit preserves reviewed authority and sends only unreviewed recipes to normalization', async () => {
+  const { document } = dom();
+  const rawReviewed = { _id: 'reviewed', name: 'Reviewed', recipeYield: '1', recipeIngredient: ['to 4 basil leaves'] };
+  const reviewed = applyReviewedIngredientCorrection(rawReviewed, {
+    ingredientId: ingredientEvidence(rawReviewed)[0].id,
+    correction: { name: 'basil', amountState: 'numeric', amount: '2 to 4', measurementFamily: 'count', sourceUnit: 'count', countLabel: 'leaf' },
+    reviewer: { sub: 'member', name: 'Member' }, reviewedAt: 10,
+  }).recipe;
+  const unreviewed = { _id: 'plain', name: 'Plain', recipeYield: '1', recipeIngredient: ['1 onion'] };
+  const state = {
+    recipesLoaded: true,
+    recipes: [reviewed, unreviewed],
+    cart: [
+      { recipeId: 'reviewed', recipeName: 'Reviewed', sourceServings: 1, targetServings: 1, normalizationVersion: 2, ingredients: ingredientEvidence(reviewed) },
+      { recipeId: 'plain', recipeName: 'Plain', sourceServings: 1, targetServings: 1, normalizationVersion: 1, ingredients: [] },
+    ],
+    pantry: [], shoppingChecked: {}, normalizations: {}, normalizationAudit: {},
+  };
+  const requests = [];
+  const ctrl = initCart({ state, document, normalizeIngredients: async (recipes) => {
+    requests.push(recipes);
+    return recipes.map((recipe) => ({
+      recipeId: recipe.recipeId,
+      ingredients: [{ raw: recipe.ingredients[0], name: 'onion', displayName: 'Onion', countLabel: '', category: 'produce', quantity: 1, unit: 'count', kind: 'indivisible', confidence: .99 }],
+    }));
+  } });
+  await ctrl._refreshNormalization();
+  assert.deepEqual(requests.map((request) => request.map((recipe) => recipe.recipeId)), [['plain']]);
+  assert.equal(state.cart.find((item) => item.recipeId === 'reviewed').ingredients[0].name, 'basil');
+  assert.equal(state.cart.find((item) => item.recipeId === 'reviewed').ingredients[0].reviewStatus, 'reviewed');
 });
 
 test('recipe removal invalidates whole-set audit but serving changes do not', () => {
