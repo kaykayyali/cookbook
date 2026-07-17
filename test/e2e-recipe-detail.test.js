@@ -99,7 +99,7 @@ async function createRecipePage(viewport) {
             name: 'Forty Ingredient Pizza',
             recipeCategory: ['Dinner', 'Weeknight'],
             recipeCuisine: ['Italian', 'American'],
-            recipeYield: ['4', '1 10-inch pizza'],
+            recipeYield: ['4 servings', '1 10-inch pizza'],
             recipeIngredient: INGREDIENTS,
             recipeInstructions: [
               { '@type': 'HowToStep', position: 1, text: 'Mix the dough.' },
@@ -141,7 +141,12 @@ async function createRecipePage(viewport) {
   });
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
   await page.locator('button[data-panel="recipes"]').click();
-  await page.locator(`.recipe-card[data-id="${RECIPE_ID}"]`).click();
+  const card = page.locator(`.recipe-card[data-id="${RECIPE_ID}"]`);
+  assert.deepEqual(await card.locator('.badge').allTextContents(), [
+    'Dinner · Weeknight',
+    'Italian · American',
+  ]);
+  await card.click();
   await page.locator('#detail-modal.open').waitFor();
   return { context, page, browserErrors };
 }

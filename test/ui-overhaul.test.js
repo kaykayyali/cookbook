@@ -35,16 +35,34 @@ test('recipe cards use compact household identity and a four-ingredient preview'
   assert.match(fallback, /class="household-avatar household-initial"[^>]*>G</);
 });
 
-test('recipe category metadata formats imported list values for people', () => {
-  const card = recipeCardHTML({ ...recipe, recipeCuisine: ['Italian', 'American'] }, []);
-  assert.match(card, /Italian · American/);
+test('recipe cards format category and cuisine arrays with readable separators', () => {
+  const card = recipeCardHTML({
+    ...recipe,
+    recipeCategory: ['Dinner', 'Weeknight'],
+    recipeCuisine: ['Italian', 'American'],
+  }, []);
+  assert.match(card, /<span class="badge badge-accent">Dinner · Weeknight<\/span>/);
+  assert.match(card, /<span class="badge">Italian · American<\/span>/);
+  assert.doesNotMatch(card, /Dinner,Weeknight|Italian,American/);
 });
 
-test('recipe yield copy avoids duplicate servings and spells out a single whole item', () => {
-  const meta = metaRowHTML({ recipeYield: ['4', '1 10-inch pizza'] });
-  assert.match(meta, /<span class="k">Serves<\/span><span class="v">4 · One 10-inch pizza<\/span>/);
-  assert.doesNotMatch(meta, /Serves<\/span><span class="v">4 servings/);
-});
+for (const [recipeYield, label, value] of [
+  ['4 servings', 'Serves', '4'],
+  ['1 serving', 'Serves', '1'],
+  [4, 'Serves', '4'],
+  ['Serves 6 hungry people', 'Serves', '6 hungry people'],
+  ['Makes 1 pizza', 'Makes', 'One pizza'],
+  ['1 10-inch pizza', 'Yield', 'One 10-inch pizza'],
+  [['4 servings', '1 10-inch pizza'], 'Serves', '4 · One 10-inch pizza'],
+  [[4, 'Makes 1 pizza'], 'Serves', '4 · Makes one pizza'],
+  ['About 12 cookies', 'Yield', 'About 12 cookies'],
+]) {
+  test(`recipe yield ${JSON.stringify(recipeYield)} renders as ${label} ${value}`, () => {
+    const meta = metaRowHTML({ recipeYield });
+    assert.match(meta, new RegExp(`<span class="k">${label}<\\/span><span class="v">${value}<\\/span>`));
+    assert.doesNotMatch(meta, /Serves<\/span><span class="v">(?:Serves|Makes)/);
+  });
+}
 
 test('overhaul stylesheet establishes readable surfaces and 44px mobile actions', () => {
   const css = readFileSync(new URL('../docs/css/app.css', import.meta.url), 'utf8');

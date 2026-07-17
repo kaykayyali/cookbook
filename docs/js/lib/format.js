@@ -52,3 +52,44 @@ export function formatListValue(value, { numericServings = false } = {}) {
   }
   return parts.join(' · ');
 }
+
+function parseRecipeYieldPart(part) {
+  const explicit = part.match(/^(serves?|makes?)\s+(.+)$/i);
+  if (explicit) {
+    return {
+      kind: explicit[1].toLowerCase().startsWith('serve') ? 'serves' : 'makes',
+      value: explicit[2].trim(),
+    };
+  }
+
+  const servings = part.match(/^(\d+(?:\.\d+)?)\s*(?:servings?|people|portions?)?$/i);
+  if (servings) return { kind: 'serves', value: servings[1] };
+  return { kind: 'yield', value: part };
+}
+
+function spellSingleItem(value, capitalized) {
+  return value.replace(/^1\s+(?=\S)/, capitalized ? 'One ' : 'one ');
+}
+
+/**
+ * Give imported schema.org recipeYield values a semantic label and readable
+ * value without assuming every yield describes servings.
+ * @param {string|number|(string|number)[]} value
+ * @returns {{label: string, value: string}|null}
+ */
+export function formatRecipeYield(value) {
+  const parts = (Array.isArray(value) ? value : [value])
+    .filter((part) => part !== null && part !== undefined && String(part).trim())
+    .map((part) => parseRecipeYieldPart(String(part).trim()));
+  if (!parts.length) return null;
+
+  const first = parts[0];
+  const label = first.kind === 'serves' ? 'Serves' : first.kind === 'makes' ? 'Makes' : 'Yield';
+  const formatted = parts.map((part, index) => {
+    const itemValue = spellSingleItem(part.value, index === 0 || part.kind === 'yield');
+    if (index === 0 || part.kind === 'yield' || part.kind === first.kind) return itemValue;
+    const prefix = part.kind === 'serves' ? 'Serves' : 'Makes';
+    return `${prefix} ${spellSingleItem(part.value, false)}`;
+  });
+  return { label, value: formatted.join(' · ') };
+}

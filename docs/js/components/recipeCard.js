@@ -48,7 +48,7 @@ export function recipeCardHTML(r, pantry, { currentUserSub = null, history = nul
     <article class="card recipe-card card-fold-${e}" data-id="${esc(r._id)}">
       <div class="card-stripe"></div>
       <div class="card-body">
-        <span class="badge ${e === 'complete' ? 'badge-success' : 'badge-accent'}">${esc(r.recipeCategory || 'Recipe')}</span>
+        <span class="badge ${e === 'complete' ? 'badge-success' : 'badge-accent'}">${esc(formatListValue(r.recipeCategory) || 'Recipe')}</span>
         ${r.recipeCuisine ? `<span class="badge">${esc(formatListValue(r.recipeCuisine))}</span>` : ''}
         <div class="card-head">
           <h3 class="card-title">${esc(r.name)}</h3>
