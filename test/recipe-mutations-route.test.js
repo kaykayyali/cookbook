@@ -32,3 +32,38 @@ test('recipe mutation route binds authenticated author and stable mutation ID', 
   assert.equal(captured.author.sub, 'kay');
   assert.equal(captured.householdId, 'our-home');
 });
+
+test('ingredient review route forwards correction under household authority and ignores forged reviewer identity', async () => {
+  let captured;
+  const body = {
+    mutationId: 'review-1', op: 'recipe.ingredient.review',
+    author: { sub: 'attacker', name: 'Attacker' },
+    payload: {
+      id: 'r1', ingredientId: 'ingredient-stable-0', expectedUpdatedAt: 1000,
+      correction: { name: 'basil', amountState: 'qualitative' },
+    },
+  };
+  const ctx = context({
+    request: new Request('https://cookbook.test/api/recipe-mutations', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    }),
+  });
+  ctx.data.recipeMutationStore = { mutate: async (request) => { captured = request; return { status: 200, recipes: [] }; } };
+  assert.equal((await onRequestPost(ctx)).status, 200);
+  assert.equal(captured.op, 'recipe.ingredient.review');
+  assert.deepEqual(captured.author, { sub: 'kay', name: 'Kaysser', picture: null });
+  assert.equal(captured.payload.correction.name, 'basil');
+});
+
+test('recipe mutation route rejects malformed top-level ingredient-review bodies before persistence', async () => {
+  let calls = 0;
+  const ctx = context({
+    request: new Request('https://cookbook.test/api/recipe-mutations', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mutationId: 'review-bad', op: 'recipe.ingredient.review', payload: [] }),
+    }),
+  });
+  ctx.data.recipeMutationStore = { mutate: async () => { calls += 1; return { status: 200, recipes: [] }; } };
+  assert.equal((await onRequestPost(ctx)).status, 400);
+  assert.equal(calls, 0);
+});
