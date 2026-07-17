@@ -228,12 +228,37 @@ test('a household plans every meal period and remembers cooking without waiting 
   assert.deepEqual(await tonight.locator('.week-meal-slot').allTextContents(), ['Breakfast', 'Lunch', 'Dinner']);
   assert.deepEqual(await tonight.locator('.week-meal-controls > span').allTextContents(), ['2', '2', '2']);
   assert.equal(await tonight.getByText('Repeat', { exact: true }).count(), 0);
-  const removeBox = await tonight.locator('.week-meal-remove').first().boundingBox();
-  assert.ok(removeBox.width >= 44 && removeBox.height >= 44, 'remove control must be touch-safe');
+  while (serverState.workspace.revision < 3) await pause(20);
+  await page.waitForFunction(async () => {
+    const selector = '.week-day.is-tonight .week-meal-remove';
+    const controls = [...document.querySelectorAll(selector)];
+    if (controls.length !== 3 || document.body.dataset.panel !== 'week') return false;
+    await document.fonts?.ready;
+    const first = controls[0];
+    const before = first.getBoundingClientRect();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    if (!first.isConnected || first !== document.querySelector(selector)) return false;
+    const after = first.getBoundingClientRect();
+    const style = getComputedStyle(first);
+    return style.display !== 'none' && style.visibility !== 'hidden'
+      && before.width > 0 && before.height > 0
+      && Math.abs(before.x - after.x) < 0.25
+      && Math.abs(before.y - after.y) < 0.25
+      && Math.abs(before.width - after.width) < 0.25
+      && Math.abs(before.height - after.height) < 0.25;
+  }, null, { timeout: 60_000 });
+  const removeControl = tonight.locator('.week-meal-remove').first();
+  await removeControl.waitFor({ state: 'visible', timeout: 60_000 });
+  const removeBox = await removeControl.boundingBox();
+  assert.ok(removeBox, 'remove control must remain attached and measurable after Week synchronization settles');
+  assert.ok(removeBox.width >= 44 && removeBox.height >= 44,
+    `remove control must be touch-safe: ${JSON.stringify(removeBox)}`);
 
+  await page.waitForTimeout(80);
   const clickCount = await page.evaluate(() => window.__clickCount);
   await tonight.locator('[data-action="servings-up"]').first().click();
-  assert.equal(await page.evaluate(() => window.__clickCount), clickCount + 1, 'enabled buttons make one interface click');
+  await page.waitForTimeout(450);
+  assert.equal(await page.evaluate(() => window.__clickCount), clickCount + 3, 'initiating tone and two-tone successful outcome both remain reachable');
 
   const breakfast = tonight.locator('.week-meal', { hasText: 'Breakfast' });
   const cookedStarted = Date.now();

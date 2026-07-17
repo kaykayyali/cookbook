@@ -19,6 +19,7 @@ import {
 } from '../lib/pantry.js';
 import { save as persist } from '../lib/store.js';
 import { toast } from '../lib/dom.js';
+import { interactionFeedback as defaultFeedback } from '../lib/interaction-feedback.js';
 
 const PANTRY_CATEGORIES = [
   ['produce', 'Produce'],
@@ -55,7 +56,7 @@ export function pantryCategory(item) {
  * Pantry controller. The workspace runtime remains the only shared-state source;
  * this controller publishes optimistic edits through its existing mutation path.
  */
-export function initPantry({ state, document = globalThis.document, onChange = null, mutate = null }) {
+export function initPantry({ state, document = globalThis.document, onChange = null, mutate = null, feedback = defaultFeedback }) {
   state.pantry = normalizePantry(state.pantry);
   let query = '';
   let category = 'all';
@@ -105,7 +106,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     if (!state.pantry.length) {
       grid.innerHTML = '<div class="pantry-empty"><span aria-hidden="true">🫙</span><strong>Your pantry is ready.</strong><p>Add a few things you usually cook with.</p></div>';
     } else if (!visible.length) {
-      grid.innerHTML = '<div class="pantry-empty"><span aria-hidden="true">✨</span><strong>Nothing here yet.</strong><p>Try another search or category.</p><button class="btn btn-ghost btn-sm" data-action="clear-pantry-filters">Show everything</button></div>';
+      grid.innerHTML = '<div class="pantry-empty"><span aria-hidden="true">✨</span><strong>Nothing here yet.</strong><p>Try another search or category.</p><button class="btn btn-ghost btn-sm" data-action="clear-pantry-filters" data-feedback="select">Show everything</button></div>';
     } else {
       grid.innerHTML = PANTRY_CATEGORIES.map(([id, label]) => {
         const items = visible.filter((item) => pantryCategory(item) === id);
@@ -138,7 +139,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
         ? state.pantry.length
         : state.pantry.filter((item) => pantryCategory(item) === id).length;
       const active = category === id;
-      return `<button type="button" class="pantry-filter${active ? ' is-active' : ''}" data-category="${id}" aria-pressed="${active}">${label}<span>${count}</span></button>`;
+      return `<button type="button" class="pantry-filter${active ? ' is-active' : ''}" data-category="${id}" data-feedback="select" aria-pressed="${active}">${label}<span>${count}</span></button>`;
     }).join('');
   }
 
@@ -251,13 +252,14 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     }
   }
 
-  function openEditor(recordId = null, raw = '') {
+  function openEditor(recordId = null, raw = '', { sourceEvent = null, target = null } = {}) {
     const modal = get('pantry-item-modal');
     const overlay = get('pantry-item-overlay');
     if (!modal) return false;
     const record = recordId ? byId(recordId) : normalizePantryEntry(raw, { updatedAt: Date.now() });
     if (recordId && !record) {
       toast('That Pantry item is no longer available.');
+      feedback.emit('blocked', { target, interaction: deferredInteraction(sourceEvent, target) });
       return false;
     }
     editorId = recordId;
@@ -281,11 +283,14 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       name: '', quantity: '', family: 'unknown', unit: '', raw: raw.trim(),
     }, record);
     modal.hidden = false;
+    modal.removeAttribute?.('aria-hidden');
+    modal.removeAttribute?.('inert');
     modal.classList?.add('open');
     if (overlay) {
       overlay.hidden = false;
       overlay.classList?.add('open');
     }
+    if (sourceEvent) feedback.emit('select', { target, sourceEvent });
     globalThis.setTimeout?.(() => get('pantry-item-name')?.focus?.(), 0);
     return true;
   }
@@ -294,7 +299,12 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     if (editorPending && !force) return false;
     const modal = get('pantry-item-modal');
     const overlay = get('pantry-item-overlay');
-    if (modal) { modal.hidden = true; modal.classList?.remove('open'); }
+    if (modal) {
+      modal.hidden = true;
+      modal.setAttribute?.('aria-hidden', 'true');
+      modal.setAttribute?.('inert', '');
+      modal.classList?.remove('open');
+    }
     if (overlay) { overlay.hidden = true; overlay.classList?.remove('open'); }
     const focusTarget = editorReturnId
       ? (document.querySelector?.(`[data-pantry-id="${globalThis.CSS?.escape?.(editorReturnId) || editorReturnId}"]`)
@@ -330,16 +340,29 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     setStatus(message);
   }
 
+  function deferredInteraction(sourceEvent, target) {
+    const interaction = feedback.contextFromEvent?.(sourceEvent, target) || null;
+    return interaction ? { ...interaction, deferred: true } : null;
+  }
+
+  function emitBlocked(target, interaction) {
+    feedback.emit('blocked', { target, interaction });
+  }
+
   async function saveEditor(event) {
     event?.preventDefault?.();
     if (editorPending) return false;
+    const target = event?.submitter || get('pantry-item-save');
+    const outcome = deferredInteraction(event, target);
     const current = editorId ? byId(editorId) : editorOriginal;
     if (editorId && !current) {
       setError('This item was removed by another household member. Your edits are still here.');
+      emitBlocked(target, outcome);
       return false;
     }
     if (editorId && editorChanged(current)) {
       setError('This item changed in the shared Pantry. Close and reopen it to review the latest version.');
+      emitBlocked(target, outcome);
       return false;
     }
     let candidate;
@@ -347,6 +370,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       candidate = pantryRecordFromEditor(editorValues(), current, { updatedAt: Date.now() });
     } catch (error) {
       setError(error?.message || 'Check the item details and try again.');
+      emitBlocked(target, outcome);
       return false;
     }
     setError('');
@@ -375,6 +399,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       setError(error?.message === 'pantry_record_conflict'
         ? 'Cannot save this change because it would combine this item with another Pantry item. Keep both items separate by changing the name or amount type.'
         : error?.message || 'Check the item details and try again.');
+      emitBlocked(target, outcome);
       return false;
     }
     state.pantry = next;
@@ -390,6 +415,7 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       publish();
       setEditorPending(false);
       setError('This change could not be saved. Your edits are still here; try again when sync recovers.');
+      emitBlocked(target, outcome);
       return false;
     }
     const wasEdit = Boolean(editorId);
@@ -397,12 +423,13 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       const sourceInput = get('pantry-input');
       if (sourceInput) sourceInput.value = '';
     }
+    feedback.emit('success', { target, interaction: outcome });
     closeEditor({ force: true });
     toast(wasEdit ? `Updated "${item.displayName}"` : `Added "${item.displayName}"`);
     return true;
   }
 
-  function changeFamily() {
+  function changeFamily(event = null) {
     const family = get('pantry-item-family')?.value || 'unknown';
     const quantity = get('pantry-item-quantity');
     const previousUnit = lastEditorUnit;
@@ -415,9 +442,12 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     if (family === 'unknown') setStatus('Not sure keeps the original text but clears the trusted amount.');
     else setStatus(family === 'fluid' || family === 'solid'
       ? 'Solid and Fluid use the Pantry water-equivalent conversion.' : '');
+    feedback.emit(family === 'unknown' ? 'toggle-off' : 'toggle-on', {
+      target: get('pantry-item-family'), sourceEvent: event,
+    });
   }
 
-  function changeUnit() {
+  function changeUnit(event = null) {
     const select = get('pantry-item-unit');
     const quantity = get('pantry-item-quantity');
     const nextUnit = select?.value || '';
@@ -426,22 +456,29 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       try { quantity.value = String(convertPantryEditorAmount(amount, lastEditorUnit, nextUnit)); } catch { /* validation owns invalid text */ }
     }
     lastEditorUnit = nextUnit;
+    feedback.emit('select', { target: select, sourceEvent: event });
   }
 
-  async function confirmRemove() {
+  async function confirmRemove(event = null) {
+    const target = event?.target?.closest?.('[data-action="confirm-pantry-remove"]')
+      || event?.target || get('pantry-item-remove');
+    const outcome = deferredInteraction(event, target);
     if (!editorId || editorPending) return false;
     const removed = byId(editorId);
     if (!removed) {
       setError('This item was already removed by another household member.');
+      emitBlocked(target, outcome);
       return false;
     }
     if (editorChanged(removed)) {
       setError('This item changed in the shared Pantry. Close and reopen it before removing it.');
+      emitBlocked(target, outcome);
       return false;
     }
     const before = state.pantry;
     const next = removeFromPantry(before, { id: removed.id });
     const expectedFingerprint = pantryRecordFingerprint(removed);
+    feedback.emit('destructive', { target, sourceEvent: event });
     setEditorPending(true, 'Removing on this device…');
     state.pantry = next;
     publish();
@@ -456,22 +493,29 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       publish();
       setEditorPending(false);
       setError('This item could not be removed because it changed or sync failed. It has been restored; review it and try again.');
+      emitBlocked(target, outcome);
       return false;
     }
+    feedback.emit('success', { target, interaction: outcome });
     closeEditor({ force: true });
     toast(`Removed "${removed.displayName}".`, {
       actionLabel: 'Undo',
-      onAction: async () => {
+      onAction: async (sourceEvent) => {
+        const undoTarget = sourceEvent?.currentTarget || sourceEvent?.target || null;
+        const undoOutcome = deferredInteraction(sourceEvent, undoTarget);
+        feedback.emit('commit', { target: undoTarget, sourceEvent });
         const undoBefore = state.pantry;
         let restored;
         try {
           restored = restorePantryRecord(undoBefore, removed);
         } catch {
           toast(`Cannot restore "${removed.displayName}" because the shared Pantry changed. Review the current item first.`);
+          emitBlocked(undoTarget, undoOutcome);
           return;
         }
         if (restored.alreadyPresent) {
           toast(`"${removed.displayName}" is already restored in the Pantry.`);
+          feedback.emit('success', { target: undoTarget, interaction: undoOutcome });
           return;
         }
         state.pantry = restored.pantry;
@@ -486,8 +530,10 @@ export function initPantry({ state, document = globalThis.document, onChange = n
           if (state.pantry === restored.pantry) state.pantry = undoBefore;
           publish();
           toast(`Could not restore "${removed.displayName}" because the shared Pantry changed. Review the current item and try again.`);
+          emitBlocked(undoTarget, undoOutcome);
           return;
         }
+        feedback.emit('success', { target: undoTarget, interaction: undoOutcome });
         toast(`Restored "${removed.displayName}".`);
         document.querySelector?.(`[data-pantry-id="${globalThis.CSS?.escape?.(removed.id) || removed.id}"]`)?.focus?.();
       },
@@ -522,14 +568,14 @@ export function initPantry({ state, document = globalThis.document, onChange = n
     grid?.addEventListener?.('click', (event) => {
       if (event.target.closest('[data-action="clear-pantry-filters"]')) { clearFilters(); return; }
       const row = event.target.closest('.pantry-tag');
-      if (row?.dataset.pantryId) openEditor(row.dataset.pantryId);
+      if (row?.dataset.pantryId) openEditor(row.dataset.pantryId, '', { sourceEvent: event, target: row });
     });
     const addButton = get('pantry-add-btn');
     const input = get('pantry-input');
-    const addFromInput = () => openEditor(null, input?.value || '');
+    const addFromInput = (event = null) => openEditor(null, input?.value || '', { sourceEvent: event, target: addButton });
     addButton?.addEventListener?.('click', addFromInput);
     input?.addEventListener?.('keydown', (event) => {
-      if (event.key === 'Enter') { event.preventDefault(); addFromInput(); }
+      if (event.key === 'Enter') { event.preventDefault(); addFromInput(event); }
     });
     get('pantry-search')?.addEventListener?.('input', (event) => setQuery(event.target.value));
     get('pantry-filters')?.addEventListener?.('click', (event) => {
@@ -537,8 +583,12 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       if (button) setCategory(button.dataset.category);
     });
     get('pantry-item-form')?.addEventListener?.('submit', saveEditor);
-    get('pantry-item-family')?.addEventListener?.('change', changeFamily);
-    get('pantry-item-unit')?.addEventListener?.('change', changeUnit);
+    const family = get('pantry-item-family');
+    const unit = get('pantry-item-unit');
+    family?.addEventListener?.('pointerdown', (event) => feedback.contextFromEvent?.(event, family));
+    unit?.addEventListener?.('pointerdown', (event) => feedback.contextFromEvent?.(event, unit));
+    family?.addEventListener?.('change', changeFamily);
+    unit?.addEventListener?.('change', changeUnit);
     get('pantry-item-close')?.addEventListener?.('click', closeEditor);
     get('pantry-item-overlay')?.addEventListener?.('click', () => { if (!editorPending) closeEditor(); });
     get('pantry-item-remove')?.addEventListener?.('click', () => {
@@ -549,13 +599,18 @@ export function initPantry({ state, document = globalThis.document, onChange = n
       }
       setStatus('This removes only this exact Pantry record. You can undo after removing it.');
     });
-    get('pantry-remove-confirm')?.addEventListener?.('click', (event) => {
+    const removeConfirm = get('pantry-remove-confirm');
+    removeConfirm?.addEventListener?.('pointerdown', (event) => {
+      const confirm = event.target.closest?.('[data-action="confirm-pantry-remove"]');
+      if (confirm) feedback.contextFromEvent?.(event, confirm);
+    });
+    removeConfirm?.addEventListener?.('click', (event) => {
       if (event.target.closest('[data-action="cancel-pantry-remove"]')) {
         get('pantry-remove-confirm').hidden = true;
         setStatus('');
         get('pantry-item-remove')?.focus?.();
       } else if (event.target.closest('[data-action="confirm-pantry-remove"]')) {
-        void confirmRemove();
+        void confirmRemove(event);
       }
     });
     document.addEventListener?.('keydown', trapEditorFocus);
@@ -579,5 +634,5 @@ export function initPantry({ state, document = globalThis.document, onChange = n
 function pantryTagHTML(item, category = pantryCategory(item)) {
   const name = item.displayName || item.name;
   const amount = formatPantryAmount(item);
-  return `<button type="button" class="pantry-tag" data-pantry-id="${esc(item.id)}" data-pantry-name="${esc(item.name)}" data-category="${category}" aria-label="Edit ${esc(name)}, ${esc(amount)}"><span class="pantry-category-dot" aria-hidden="true"></span><span class="pantry-tag-copy"><span>${esc(name)}</span><small>${esc(amount)}</small></span><span class="pantry-tag-edit" aria-hidden="true">›</span></button>`;
+  return `<button type="button" class="pantry-tag" data-pantry-id="${esc(item.id)}" data-pantry-name="${esc(item.name)}" data-category="${category}" data-feedback="select" aria-label="Edit ${esc(name)}, ${esc(amount)}"><span class="pantry-category-dot" aria-hidden="true"></span><span class="pantry-tag-copy"><span>${esc(name)}</span><small>${esc(amount)}</small></span><span class="pantry-tag-edit" aria-hidden="true">›</span></button>`;
 }

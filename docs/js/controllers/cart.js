@@ -216,7 +216,7 @@ export function initCart({
       check.textContent = completed ? '' : '✓';
       check.setAttribute('aria-pressed', String(!completed));
     }
-    schedule(() => setItemCompleted(name, !completed), 280);
+    schedule(() => setItemCompleted(name, !completed), 140);
     return true;
   }
 

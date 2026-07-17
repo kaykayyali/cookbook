@@ -62,7 +62,7 @@ after(async () => {
 });
 
 async function createPantryPage(viewport = { width: 1440, height: 900 }, options = {}) {
-  const context = await browser.newContext({ viewport, reducedMotion: 'reduce' });
+  const context = await browser.newContext({ viewport, reducedMotion: 'reduce', hasTouch: Boolean(options.touch) });
   const token = [
     Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url'),
     Buffer.from(JSON.stringify({ sub: 'kay' })).toString('base64url'),
@@ -73,6 +73,13 @@ async function createPantryPage(viewport = { width: 1440, height: 900 }, options
     localStorage.setItem('cb_email', 'kay@example.test');
     localStorage.setItem('cb_tour_cookbook_v1_kay', 'complete');
     localStorage.setItem('cb_summer_theme_recommendation_v1:kay', '1');
+    window.__pantryFeedbackEvents = [];
+    window.__pantryHaptics = [];
+    Object.defineProperty(navigator, 'vibrate', {
+      configurable: true,
+      value: (pattern) => { window.__pantryHaptics.push(pattern); return true; },
+    });
+    document.addEventListener('cookbook:feedback', (event) => window.__pantryFeedbackEvents.push(event.detail));
   }, { tokenValue: token });
   if (options.disableIndexedDb) {
     await context.addInitScript(() => {
@@ -159,13 +166,18 @@ test('desktop Pantry row opens an immediately editable item modal', { timeout: 6
   try {
     const beforePath = join(EVIDENCE, 'issue-20-before-desktop.png');
     if (!existsSync(beforePath)) await page.screenshot({ path: beforePath, fullPage: true });
-    await page.locator('[data-pantry-id="pantry-olive-oil"]').click();
     const modal = page.locator('#pantry-item-modal');
+    assert.equal(await modal.getAttribute('aria-hidden'), 'true');
+    assert.equal(await modal.getAttribute('inert'), '');
+    assert.equal((await modal.ariaSnapshot()).trim(), '', 'closed Pantry editor contributes no accessibility tree');
+    await page.locator('[data-pantry-id="pantry-olive-oil"]').click();
     assert.equal(await modal.count(), 1, 'clicking the Pantry row should expose an item editor modal');
     await modal.waitFor({ state: 'visible' });
     assert.equal(await modal.getAttribute('role'), 'dialog');
     assert.equal(await modal.getAttribute('aria-modal'), 'true');
     assert.equal(await modal.getAttribute('aria-labelledby'), 'pantry-item-title');
+    assert.equal(await modal.getAttribute('aria-hidden'), null);
+    assert.equal(await modal.getAttribute('inert'), null);
     assert.equal(await page.locator('#pantry-item-name').inputValue(), 'Olive Oil');
     assert.equal(await page.locator('#pantry-item-family').inputValue(), 'fluid');
     assert.equal(await page.locator('#pantry-item-quantity').inputValue(), '2');
@@ -188,8 +200,11 @@ test('desktop edit converts, persists by stable ID, removes exactly, and undoes'
   const { context, page, browserErrors, mutations, workspace } = await createPantryPage();
   try {
     const target = page.locator('[data-pantry-id="pantry-olive-oil"]');
+    await page.evaluate(() => { window.__pantryFeedbackEvents.length = 0; });
     await target.click();
+    assert.deepEqual((await page.evaluate(() => window.__pantryFeedbackEvents)).map(({ type }) => type), ['select']);
     await page.locator('#pantry-item-family').selectOption('solid');
+    assert.equal((await page.evaluate(() => window.__pantryFeedbackEvents)).at(-1).type, 'toggle-on');
     assert.equal(await page.locator('#pantry-item-quantity').inputValue(), '16', '2 cups becomes 16 water-equivalent ounces');
     assert.deepEqual(await page.locator('#pantry-item-unit option').evaluateAll((options) => options.map(({ value }) => value)), [
       'ounce', 'pound', 'gram', 'kilogram',
@@ -214,6 +229,8 @@ test('desktop edit converts, persists by stable ID, removes exactly, and undoes'
     assert.equal(mutations[0].payload.item.normalizationVersion, 1);
     assert.ok(mutations[0].payload.item.updatedAt > 100, 'correction advances updatedAt');
     assert.equal(workspace().pantry.find(({ id }) => id === 'pantry-olive-oil').name, 'avocado oil');
+    assert.deepEqual((await page.evaluate(() => window.__pantryFeedbackEvents)).map(({ type }) => type),
+      ['select', 'toggle-on', 'commit', 'success']);
 
     await updatedRow.click();
     await page.keyboard.press('Escape');
@@ -236,6 +253,8 @@ test('desktop edit converts, persists by stable ID, removes exactly, and undoes'
     assert.notEqual(await page.evaluate(() => document.activeElement?.dataset.pantryId), 'pantry-olive-oil', 'removal never focuses the deleted record');
     assert.ok(await page.evaluate(() => Boolean(document.activeElement?.dataset.pantryId)), 'removal focuses a remaining Pantry record');
     assert.deepEqual({ op: mutations[1].op, id: mutations[1].payload.id }, { op: 'pantry.remove', id: 'pantry-olive-oil' });
+    assert.deepEqual((await page.evaluate(() => window.__pantryFeedbackEvents)).slice(-2).map(({ type }) => type),
+      ['destructive', 'success']);
 
     const undoResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/workspace'
       && response.request().method() === 'PATCH');
@@ -246,6 +265,8 @@ test('desktop edit converts, persists by stable ID, removes exactly, and undoes'
     assert.equal(mutations[2].payload.expectedAbsent, true);
     assert.equal(mutations[2].payload.item.id, 'pantry-olive-oil');
     assert.equal(await page.evaluate(() => document.activeElement?.dataset.pantryId), 'pantry-olive-oil', 'Undo returns focus to the restored record');
+    assert.deepEqual((await page.evaluate(() => window.__pantryFeedbackEvents)).slice(-2).map(({ type }) => type),
+      ['commit', 'success']);
     assert.deepEqual(browserErrors, []);
   } finally {
     await context.close();
@@ -282,6 +303,9 @@ test('two production tabs block stale remove after the other tab updates the sam
     assert.equal(mutations.filter(({ op }) => op === 'pantry.remove').length, 1, 'same-record change prevents remove rebase');
     assert.equal(await first.locator('#pantry-item-modal').isVisible(), true, 'the conflict keeps the editor open');
     assert.match(await first.locator('#pantry-item-error').textContent(), /could not be removed.*changed.*restored.*review.*try again/i);
+    assert.equal(await first.locator('#pantry-item-error').getAttribute('role'), 'alert');
+    assert.deepEqual((await first.evaluate(() => window.__pantryFeedbackEvents)).slice(-2).map(({ type }) => type),
+      ['destructive', 'blocked']);
   } finally {
     await context.close();
   }
@@ -315,6 +339,8 @@ test('production Undo collision keeps remotely recreated stable ID and shows act
     })), [{ id: removed.id, expectedAbsent: true }]);
     assert.equal(mutations.some(({ op }) => op === 'pantry.add'), false);
     assert.match(await page.locator('#toast').textContent(), /could not restore.*shared Pantry changed/i);
+    assert.deepEqual((await page.evaluate(() => window.__pantryFeedbackEvents)).slice(-2).map(({ type }) => type),
+      ['commit', 'blocked']);
   } finally {
     await context.close();
   }
@@ -368,19 +394,24 @@ test('production Escape during pending failure is refused and preserves the draf
     await page.locator('#pantry-item-error').filter({ hasText: /could not be saved/i }).waitFor();
     assert.equal(await page.locator('#pantry-item-modal').isVisible(), true);
     assert.equal(await page.locator('#pantry-item-name').inputValue(), 'Draft Oil');
+    assert.equal(await page.locator('#pantry-item-error').getAttribute('role'), 'alert');
+    assert.equal(await page.locator('#pantry-item-status').getAttribute('role'), 'status');
+    assert.deepEqual((await page.evaluate(() => window.__pantryFeedbackEvents)).slice(-2).map(({ type }) => type),
+      ['commit', 'blocked']);
   } finally {
     releasePatch?.();
     await context.close();
   }
 });
 
-test('mobile add-new is accessible, trapped, safe-area sized, and authoritative', { timeout: 60_000 }, async () => {
-  const { context, page, browserErrors, mutations, workspace } = await createPantryPage({ width: 402, height: 874 });
+test('mobile add-new is accessible, trapped, safe-area sized, semantically touch-provenant, and authoritative', { timeout: 60_000 }, async () => {
+  const { context, page, browserErrors, mutations, workspace } = await createPantryPage({ width: 402, height: 874 }, { touch: true });
   try {
     const input = page.locator('#pantry-input');
     const addButton = page.locator('#pantry-add-btn');
     await input.fill('3 bottles sparkling water');
-    await addButton.click();
+    await page.evaluate(() => { window.__pantryFeedbackEvents.length = 0; window.__pantryHaptics.length = 0; });
+    await addButton.tap();
     const modal = page.locator('#pantry-item-modal');
     await modal.waitFor({ state: 'visible' });
     assert.equal(await page.locator('#pantry-item-title').textContent(), 'Add Pantry item');
@@ -388,6 +419,11 @@ test('mobile add-new is accessible, trapped, safe-area sized, and authoritative'
     assert.equal(await page.locator('#pantry-item-family').inputValue(), 'count');
     assert.equal(await page.locator('#pantry-item-quantity').inputValue(), '3');
     assert.equal(await page.locator('#pantry-item-unit').inputValue(), 'bottle');
+    assert.deepEqual((await page.evaluate(() => window.__pantryFeedbackEvents)).map(({ type }) => type), ['select']);
+    assert.deepEqual(await modal.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { transitionDuration: style.transitionDuration, animationDuration: style.animationDuration };
+    }), { transitionDuration: '0s', animationDuration: '0s' });
 
     await page.locator('#pantry-item-close').focus();
     await page.keyboard.press('Shift+Tab');
@@ -417,7 +453,7 @@ test('mobile add-new is accessible, trapped, safe-area sized, and authoritative'
 
     const addResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/workspace'
       && response.request().method() === 'PATCH');
-    await page.locator('#pantry-item-save').click();
+    await page.locator('#pantry-item-save').tap();
     await addResponse;
     await modal.waitFor({ state: 'hidden' });
     const added = workspace().pantry.find(({ name }) => name === 'sparkling water');
@@ -426,6 +462,10 @@ test('mobile add-new is accessible, trapped, safe-area sized, and authoritative'
     assert.equal(mutations[0].op, 'pantry.add');
     assert.equal(mutations[0].payload.item.countLabel, 'bottle');
     assert.equal(await input.inputValue(), '', 'accepted add clears the source field');
+    const saveFeedback = (await page.evaluate(() => window.__pantryFeedbackEvents)).slice(-2);
+    assert.deepEqual(saveFeedback.map(({ type }) => type), ['commit', 'success']);
+    assert.ok(saveFeedback.every(({ modality, touchOrigin }) => modality === 'touch' && touchOrigin), JSON.stringify(saveFeedback));
+    assert.ok((await page.evaluate(() => window.__pantryHaptics.length)) >= 3, 'open, commit, and success stay haptically reachable');
     assert.deepEqual(browserErrors, []);
   } finally {
     await context.close();

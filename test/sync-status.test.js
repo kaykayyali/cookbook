@@ -10,13 +10,15 @@ function setup() {
     <button data-discard hidden>Discard</button>
   </div>`);
   const scheduled = [];
+  const feedbackEvents = [];
   const presenter = createSyncStatusPresenter({
     banner: dom.window.document.getElementById('sync'),
     messageSelector: '[data-message]', retrySelector: '[data-retry]', discardSelector: '[data-discard]',
     schedule: (fn, ms) => { const task = { fn, ms, cancelled: false }; scheduled.push(task); return task; },
     cancel: (task) => { task.cancelled = true; }, delayMs: 2_000, noun: 'change',
+    feedback: { emit: (type) => feedbackEvents.push(type) },
   });
-  return { dom, presenter, scheduled };
+  return { dom, presenter, scheduled, feedbackEvents };
 }
 
 test('normal pending and syncing states stay silent until one debounced timeout', () => {
@@ -57,4 +59,16 @@ test('uncertain failures expose Retry without an unsafe Discard action', () => {
   presenter.update({ status: 'blocked', pending: 1, sequence: 3, discardable: false });
   assert.equal(banner.querySelector('[data-retry]').hidden, false);
   assert.equal(banner.querySelector('[data-discard]').hidden, true);
+});
+
+test('the same recoverable failure is announced once until its sequence changes', () => {
+  const { presenter, feedbackEvents } = setup();
+  presenter.update({ status: 'failed', pending: 2, sequence: 7 });
+  presenter.update({ status: 'failed', pending: 2, sequence: 7 });
+  assert.deepEqual(feedbackEvents, ['blocked']);
+  presenter.update({ status: 'failed', pending: 2, sequence: 8 });
+  assert.deepEqual(feedbackEvents, ['blocked', 'blocked']);
+  presenter.update({ status: 'synced', pending: 0 });
+  presenter.update({ status: 'failed', pending: 2, sequence: 8 });
+  assert.deepEqual(feedbackEvents, ['blocked', 'blocked', 'blocked']);
 });

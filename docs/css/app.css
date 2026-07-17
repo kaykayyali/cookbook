@@ -298,6 +298,8 @@
 	.ready-toggle {
 		display: inline-flex;
 		align-items: center;
+		min-height: 44px;
+		padding-inline: var(--space-1);
 		gap: 7px;
 		cursor: pointer;
 		font-size: var(--text-sm);
@@ -310,6 +312,7 @@
 		width: auto;
 		accent-color: var(--color-accent);
 	}
+	.ready-toggle[hidden] { display: none; }
 
 	/* ════════════════════════════════════════════════════════
      PANELS
@@ -622,6 +625,10 @@
 	}
 	.detail-modal.open {
 		transform: translateY(0);
+	}
+	.detail-modal[hidden],
+	#detail-overlay[hidden] {
+		display: none;
 	}
 
 	.detail-header {
@@ -2245,6 +2252,26 @@
 		.pick-for-us-section { padding: var(--space-4); }
 		.week-add { gap: var(--space-2); }
 		.week-add .btn { width: 100%; }
+		.week-meal-controls .icon-btn-sm,
+		.cart-serving-controls .icon-btn-sm {
+			width: 44px;
+			height: 44px;
+			min-width: 44px;
+			min-height: 44px;
+		}
+		.week-meal-controls .btn-sm { min-height: 44px; }
+		.pantry-remove,
+		.cart-check,
+		.cart-item-menu > summary,
+		.cart-recipe-menu > summary {
+			width: 44px;
+			height: 44px;
+			min-width: 44px;
+			min-height: 44px;
+		}
+		.cart-row { grid-template-columns: 44px minmax(0, 1fr) auto 44px; }
+		.cart-recipe { grid-template-columns: minmax(0, 1fr) auto 44px; }
+		.detail-ing-item { min-height: 44px; }
 		.recipe-card .card-body { padding: var(--space-4); }
 		.card-toolbar .icon-btn { min-width: 44px; min-height: 44px; }
 		.detail-modal { left: 0; }

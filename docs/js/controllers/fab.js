@@ -43,6 +43,7 @@ export function initFab({
     if (!dd || !btn) return;
     dd.removeAttribute('hidden');
     btn.setAttribute('aria-expanded', 'true');
+    if (btn.dataset) setTimeout(() => { btn.dataset.feedback = 'toggle-off'; }, 0);
     document.addEventListener('click', closeOutside, { capture: true });
   }
 
@@ -52,6 +53,7 @@ export function initFab({
     if (!dd || !btn) return;
     dd.setAttribute('hidden', '');
     btn.setAttribute('aria-expanded', 'false');
+    if (btn.dataset) setTimeout(() => { btn.dataset.feedback = 'toggle-on'; }, 0);
     document.removeEventListener('click', closeOutside, { capture: true });
   }
 

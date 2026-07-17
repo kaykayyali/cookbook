@@ -156,10 +156,12 @@ async function createRecipePage(viewport) {
   });
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
   await page.waitForFunction(() => document.body.dataset.panel === 'week', null, { timeout: 60_000 });
-  await page.locator('button[data-panel="recipes"]').click();
+  const recipesNav = page.locator('button[data-panel="recipes"]');
+  await recipesNav.click();
   await page.waitForFunction(() => document.body.dataset.panel === 'recipes', null, { timeout: 60_000 });
+  assert.equal(await recipesNav.evaluate((element) => element.classList.contains('active')), true, 'Recipes navigation is active');
   const card = page.locator(`.recipe-card[data-id="${RECIPE_ID}"]`);
-  await card.locator('.badge').first().waitFor({ state: 'visible', timeout: 60_000 });
+  await card.waitFor({ state: 'visible', timeout: 60_000 });
   assert.deepEqual(await card.locator('.badge').allTextContents(), [
     'Dinner · Weeknight',
     'Italian · American',

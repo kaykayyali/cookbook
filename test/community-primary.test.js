@@ -32,6 +32,8 @@ test('primary recipe cards identify the household author compactly and only show
   assert.doesNotMatch(ownerHtml, />added by Ada</);
   assert.match(ownerHtml, /data-action="edit"/);
   assert.match(ownerHtml, /data-action="delete"/);
+  assert.match(ownerHtml, /<article[^>]*tabindex="0"/);
+  assert.doesNotMatch(ownerHtml, /<article[^>]*role="button"/, 'toolbar buttons cannot be nested inside a button role');
 
   const readerHtml = recipeCardHTML(recipe, [], { currentUserSub: 'reader-1' });
   assert.match(readerHtml, /aria-label="Added by Ada"/);

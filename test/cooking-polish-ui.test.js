@@ -33,7 +33,8 @@ test('reminders are opt-in and configurable', () => {
   assert.match(html, /opt.?in|optional|toggle|setting/i);
 });
 
-test('Settings exposes a device-local interface sound toggle', () => {
-  assert.match(html, /id="interface-sound-toggle"/);
-  assert.match(html, /button click sounds/i);
+test('Settings exposes independent device-local sound and haptic toggles', () => {
+  assert.match(html, /id="feedback-sounds-toggle"/);
+  assert.match(html, /id="feedback-haptics-toggle"/);
+  assert.match(html, /interaction feedback/i);
 });

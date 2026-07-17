@@ -44,10 +44,10 @@ export function toast(msg, { actionLabel = '', onAction = null, duration = 4200 
     action.type = 'button';
     action.dataset.toastAction = '';
     action.textContent = actionLabel;
-    listener = () => {
+    listener = (event) => {
       if (activeToast?.action !== action) return;
       dismissToast();
-      void onAction();
+      void onAction(event);
     };
     action.addEventListener('click', listener);
     t.replaceChildren(copy, action);

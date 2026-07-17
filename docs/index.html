@@ -105,13 +105,14 @@
 				<p>schema.org / Recipe</p>
 			</div>
 			<div class="sidebar-nav">
-				<button class="nav-item active" data-panel="week">
+				<button class="nav-item active" data-panel="week" data-feedback="select">
 					<svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18M8 14h.01M12 14h.01M16 14h.01"/></svg>
 					<span class="nav-tab-label">Week</span>
 				</button>
 				<button
 					class="nav-item"
 					data-panel="recipes"
+					data-feedback="select"
 				>
 					<svg
 						width="16"
@@ -131,6 +132,7 @@
 				<button
 					class="nav-item"
 					data-panel="pantry"
+					data-feedback="select"
 				>
 					<svg
 						width="16"
@@ -147,6 +149,7 @@
 				<button
 					class="nav-item"
 					data-panel="cart"
+					data-feedback="select"
 				>
 					<svg
 						width="16"
@@ -175,6 +178,7 @@
 				<button
 					class="nav-item"
 					data-panel="settings"
+					data-feedback="select"
 				>
 					<svg
 						width="16"
@@ -338,7 +342,7 @@
 				<div class="panel-header week-header">
 					<div><p class="week-eyebrow">Our kitchen</p><h2>This week</h2><p>Tonight first, then the next six dinners.</p></div>
 				</div>
-				<div id="workspace-status" class="workspace-status" role="status" hidden>We couldn't save that change. <button class="btn btn-ghost btn-sm" data-action="retry-workspace">Retry</button></div>
+				<div id="workspace-status" class="workspace-status" role="status" hidden>We couldn't save that change. <button class="btn btn-ghost btn-sm" data-action="retry-workspace" data-feedback="commit">Retry</button></div>
 				<section class="pick-for-us-section" aria-labelledby="pick-for-us-title">
 					<div><h3 id="pick-for-us-title">Pick for us</h3><p>Three honest ideas from your recipes and shared memories.</p></div>
 					<div class="suggestion-grid" id="pick-for-us" aria-live="polite"></div>
@@ -395,7 +399,7 @@
 							autocomplete="off"
 						/>
 						<datalist id="pantry-suggestions"></datalist>
-						<button class="btn btn-primary" id="pantry-add-btn">Add item</button>
+						<button class="btn btn-primary" id="pantry-add-btn" data-feedback="select">Add item</button>
 					</div>
 					<p class="pantry-hint">Add an amount when it’s useful. Bought shopping amounts add up here; Pantry never changes your shopping list.</p>
 				</div>
@@ -429,6 +433,7 @@
 					<button
 						class="btn btn-ghost btn-sm"
 						id="cart-clear-btn"
+						data-feedback="destructive"
 					>
 						Clear list
 					</button>
@@ -437,13 +442,13 @@
 					<input class="input" type="search" id="shopping-filter" placeholder="Filter this list" aria-label="Filter shopping list" />
 					<div class="shopping-manual-add">
 						<input class="input" id="shopping-manual-input" placeholder="Add anything — 2 bottles, foil, milk" autocomplete="off" />
-						<button class="btn btn-primary" id="shopping-manual-add">Add item</button>
+						<button class="btn btn-primary" id="shopping-manual-add" data-feedback="commit">Add item</button>
 					</div>
 					<div class="plan-shop-tools">
 						<div><strong>Shop this plan</strong><small>Includes recipe dinners, keeps manual items, and skips open, dining-out, and skipped meals.</small></div>
 						<label>From <input class="input" type="date" id="plan-shop-start" /></label>
 						<label>To <input class="input" type="date" id="plan-shop-end" /></label>
-						<button class="btn btn-secondary" id="plan-shop-generate">Update from plan</button>
+						<button class="btn btn-secondary" id="plan-shop-generate" data-feedback="commit">Update from plan</button>
 					</div>
 				</div>
 				<div
@@ -482,15 +487,16 @@
 				</div>
 
 				<div class="settings-section">
-					<p class="settings-section-label">Interface sounds</p>
-					<p class="settings-hint">A quiet click makes controls feel responsive. This preference stays on this device.</p>
-					<label class="ready-toggle"><input id="interface-sound-toggle" type="checkbox" class="checkbox" /> Button click sounds</label>
+					<p class="settings-section-label">Interaction feedback</p>
+					<p class="settings-hint">Quiet, semantic cues for meaningful actions. These preferences stay on this device.</p>
+					<label class="ready-toggle"><input id="feedback-sounds-toggle" type="checkbox" class="checkbox" /> Sounds</label>
+					<label class="ready-toggle" id="feedback-haptics-setting"><input id="feedback-haptics-toggle" type="checkbox" class="checkbox" /> Haptics</label>
 				</div>
 
 				<div class="settings-section" data-tour-section="guide">
 					<p class="settings-section-label">Guide</p>
 					<p class="settings-hint">Walk through planning, recipes, pantry hints, and the shared shopping list.</p>
-					<button class="btn btn-secondary" id="settings-tour-btn" type="button">Take the tour again</button>
+					<button class="btn btn-secondary" id="settings-tour-btn" type="button" data-feedback="select">Take the tour again</button>
 				</div>
 
 				<div class="settings-section">
@@ -499,12 +505,14 @@
 						<button
 							class="btn btn-ghost"
 							id="settings-import-btn"
+							data-feedback="commit"
 						>
 							Import from file
 						</button>
 						<button
 							class="btn btn-ghost"
 							id="settings-export-btn"
+							data-feedback="commit"
 						>
 							Export all recipes
 						</button>
@@ -538,6 +546,7 @@
 				<button
 					class="fab-dropdown-item"
 					data-fab-action="manual"
+					data-feedback="commit"
 					role="menuitem"
 				>
 					Enter Manually
@@ -549,6 +558,7 @@
 				<button
 						class="fab-dropdown-item"
 						data-fab-action="url"
+						data-feedback="commit"
 						role="menuitem"
 					>
 						Extract from URL
@@ -560,6 +570,7 @@
 					<button
 						class="fab-dropdown-item"
 						data-fab-action="image"
+						data-feedback="commit"
 						role="menuitem"
 					>
 						Capture from image
@@ -568,6 +579,7 @@
 			<button
 				class="fab"
 				id="fab-new"
+				data-feedback="toggle-on"
 				aria-label="New recipe"
 				aria-haspopup="menu"
 				aria-expanded="false"
@@ -594,6 +606,8 @@
 			aria-modal="true"
 			aria-labelledby="pantry-item-title"
 			aria-describedby="pantry-item-description"
+			aria-hidden="true"
+			inert
 			hidden
 		>
 			<header class="pantry-item-header">
@@ -602,7 +616,7 @@
 					<h2 id="pantry-item-title">Edit Pantry item</h2>
 					<p id="pantry-item-description">Correct the shared amount without losing the original text.</p>
 				</div>
-				<button class="pantry-item-close" id="pantry-item-close" type="button" aria-label="Close Pantry item editor">×</button>
+				<button class="pantry-item-close" id="pantry-item-close" type="button" data-feedback="toggle-off" aria-label="Close Pantry item editor">×</button>
 			</header>
 			<form id="pantry-item-form" class="pantry-item-form" novalidate>
 				<div class="pantry-item-body">
@@ -640,14 +654,14 @@
 					<div class="pantry-remove-confirm" id="pantry-remove-confirm" hidden>
 						<p><strong>Remove this exact item?</strong><span>Other same-name Pantry records will stay.</span></p>
 						<div>
-							<button class="btn btn-ghost" data-action="cancel-pantry-remove" type="button">Keep item</button>
+							<button class="btn btn-ghost" data-action="cancel-pantry-remove" data-feedback="toggle-off" type="button">Keep item</button>
 							<button class="btn pantry-danger-button" data-action="confirm-pantry-remove" type="button">Remove item</button>
 						</div>
 					</div>
 				</div>
 				<footer class="pantry-item-footer">
-					<button class="btn btn-ghost pantry-remove-action" id="pantry-item-remove" type="button">Remove from Pantry</button>
-					<button class="btn btn-primary" id="pantry-item-save" type="submit">Save item</button>
+					<button class="btn btn-ghost pantry-remove-action" id="pantry-item-remove" type="button" data-feedback="select">Remove from Pantry</button>
+					<button class="btn btn-primary" id="pantry-item-save" type="submit" data-feedback="commit">Save item</button>
 				</footer>
 			</form>
 		</section>
@@ -656,12 +670,16 @@
 		<div
 			class="overlay"
 			id="detail-overlay"
+			hidden
 		></div>
 		<div
 			class="detail-modal"
 			id="detail-modal"
 			role="dialog"
 			aria-label="Recipe detail"
+			aria-hidden="true"
+			inert
+			hidden
 		>
 			<div class="detail-header">
 				<div class="detail-header-left">
@@ -686,6 +704,7 @@
 				<button
 					class="detail-close"
 					id="detail-close-btn"
+					data-feedback="select"
 				>
 					<svg
 						width="14"
@@ -740,11 +759,12 @@
 				</div>
 			</div>
 			<div class="detail-footer">
-				<button class="btn btn-primary btn-sm" id="dm-mark-cooked-btn">Mark cooked</button>
-				<button class="btn btn-secondary btn-sm" id="dm-cook-mode-btn">Cook mode</button>
+				<button class="btn btn-primary btn-sm" id="dm-mark-cooked-btn" data-feedback="commit">Mark cooked</button>
+				<button class="btn btn-secondary btn-sm" id="dm-cook-mode-btn" data-feedback="select">Cook mode</button>
 				<button
 					class="btn btn-ghost btn-sm"
 					id="dm-add-all-btn"
+					data-feedback="commit"
 				>
 					Add recipe to cart
 				</button>
@@ -753,6 +773,7 @@
 					<button
 						class="btn btn-ghost btn-sm"
 						id="dm-edit-btn"
+						data-feedback="commit"
 					>
 						<svg
 							width="13"
@@ -791,6 +812,7 @@
 				<h3 id="drawer-title">New Recipe</h3>
 				<button
 					class="drawer-close"
+					data-feedback="select"
 					id="drawer-close-btn"
 					aria-label="Close"
 				>
@@ -1083,18 +1105,21 @@
 				<button
 					class="btn btn-ghost"
 					id="drawer-cancel-btn"
+					data-feedback="select"
 				>
 					Cancel
 				</button>
 				<button
 					class="btn btn-ghost btn-sm"
 					id="view-schema-btn"
+					data-feedback="select"
 				>
 					View JSON-LD
 				</button>
 				<button
 					class="btn btn-primary"
 					id="save-recipe-btn"
+					data-feedback="commit"
 				>
 					Save Recipe
 				</button>
@@ -1113,11 +1138,13 @@
 						<button
 							class="schema-copy"
 							id="schema-copy-btn"
+							data-feedback="commit"
 						>
 							Copy
 						</button>
 						<button
 							id="schema-close-btn"
+							data-feedback="select"
 							aria-label="Close"
 						>
 							<svg
@@ -1150,6 +1177,7 @@
 					<h4>Import from URL</h4>
 					<button
 						id="url-close-btn"
+						data-feedback="select"
 						aria-label="Close"
 					>
 						<svg
@@ -1194,6 +1222,7 @@
 								type="button"
 								class="btn btn-secondary btn-md"
 								id="url-paste-btn"
+								data-feedback="commit"
 							>
 								Paste
 							</button>
@@ -1203,6 +1232,7 @@
 								type="button"
 								class="btn btn-primary btn-md"
 								id="url-extract-btn"
+								data-feedback="commit"
 							>
 								Extract recipe
 							</button>
@@ -1229,6 +1259,7 @@
 					<h4>Capture from image</h4>
 					<button
 						id="image-capture-close-btn"
+						data-feedback="select"
 						aria-label="Close"
 					>
 						<svg
@@ -1262,6 +1293,7 @@
 							type="button"
 							class="btn btn-primary btn-md"
 							id="image-capture-submit"
+							data-feedback="commit"
 						>
 							Create draft
 						</button>
@@ -1287,6 +1319,7 @@
 					<button
 						id="cook-close"
 						data-action="close"
+						data-feedback="select"
 						aria-label="Close cooking mode"
 						class="btn btn-ghost btn-sm"
 					>✕</button>
@@ -1294,12 +1327,12 @@
 				<div id="cooking-mode-step" class="cooking-mode-step" style="font-size:1.5rem;line-height:1.5;padding:1rem 0"></div>
 				<div id="cooking-mode-ingredients" class="cooking-mode-ingredients" style="margin-top:0.5rem"></div>
 				<div id="cooking-mode-controls" class="cooking-mode-controls">
-					<button id="cook-prev" data-action="prev" class="btn btn-secondary btn-md" aria-label="Previous step">Back</button>
+					<button id="cook-prev" data-action="prev" data-feedback="select" class="btn btn-secondary btn-md" aria-label="Previous step">Back</button>
 					<span id="cook-step-count" aria-live="polite" style="margin:0 1rem"></span>
-					<button id="cook-next" data-action="next" class="btn btn-primary btn-md" aria-label="Next step">Next</button>
+					<button id="cook-next" data-action="next" data-feedback="select" class="btn btn-primary btn-md" aria-label="Next step">Next</button>
 				</div>
 				<div class="cooking-mode-footer" style="margin-top:0.5rem;display:flex;gap:.5rem;align-items:center">
-					<button id="cook-wake-toggle" data-action="toggle-wake" class="btn btn-ghost btn-sm" aria-pressed="false">Keep awake</button>
+					<button id="cook-wake-toggle" data-action="toggle-wake" data-feedback="toggle-on" class="btn btn-ghost btn-sm" aria-pressed="false">Keep awake</button>
 					<span id="cook-timer" aria-live="polite"></span>
 				</div>
 			</div>
@@ -1326,22 +1359,22 @@
 		<div id="sync-status" class="pwa-banner" role="status" aria-live="polite" hidden>
 			<span data-sync-message>Syncing saved changes…</span>
 			<span class="sync-status-actions">
-				<button class="btn btn-primary btn-sm" data-action="retry-sync" type="button" hidden>Retry</button>
-				<button class="btn btn-ghost btn-sm" data-action="discard-sync" type="button" hidden>Discard</button>
+				<button class="btn btn-primary btn-sm" data-action="retry-sync" data-feedback="commit" type="button" hidden>Retry</button>
+				<button class="btn btn-ghost btn-sm" data-action="discard-sync" data-feedback="destructive" type="button" hidden>Discard</button>
 			</span>
 		</div>
 		<div id="recipe-sync-status" class="pwa-banner" role="status" aria-live="polite" hidden>
 			<span data-recipe-sync-message>Syncing saved recipe changes…</span>
 			<span class="sync-status-actions">
-				<button class="btn btn-primary btn-sm" data-action="retry-recipe-sync" type="button" hidden>Retry</button>
-				<button class="btn btn-ghost btn-sm" data-action="discard-recipe-sync" type="button" hidden>Discard</button>
+				<button class="btn btn-primary btn-sm" data-action="retry-recipe-sync" data-feedback="commit" type="button" hidden>Retry</button>
+				<button class="btn btn-ghost btn-sm" data-action="discard-recipe-sync" data-feedback="destructive" type="button" hidden>Discard</button>
 			</span>
 		</div>
 		<div id="cook-sync-status" class="pwa-banner" role="status" aria-live="polite" hidden>
 			<span data-cook-sync-message>Syncing saved cooking changes…</span>
 			<span class="sync-status-actions">
-				<button class="btn btn-primary btn-sm" data-action="retry-cook-sync" type="button" hidden>Retry</button>
-				<button class="btn btn-ghost btn-sm" data-action="discard-cook-sync" type="button" hidden>Discard</button>
+				<button class="btn btn-primary btn-sm" data-action="retry-cook-sync" data-feedback="commit" type="button" hidden>Retry</button>
+				<button class="btn btn-ghost btn-sm" data-action="discard-cook-sync" data-feedback="destructive" type="button" hidden>Discard</button>
 			</span>
 		</div>
 		<div

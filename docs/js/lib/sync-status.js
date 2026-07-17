@@ -1,3 +1,5 @@
+import { interactionFeedback as defaultFeedback } from './interaction-feedback.js';
+
 const plural = (count, noun) => `${noun}${count === 1 ? '' : 's'}`;
 
 export function createSyncStatusPresenter({
@@ -9,9 +11,11 @@ export function createSyncStatusPresenter({
   noun = 'change',
   schedule = globalThis.setTimeout,
   cancel = globalThis.clearTimeout,
+  feedback = defaultFeedback,
 } = {}) {
   let timer = null;
   let latest = { status: 'synced', pending: 0 };
+  let lastBlockedSignature = null;
 
   const message = () => banner?.querySelector?.(messageSelector);
   const recoveryControls = (visible, discardable = visible) => {
@@ -45,6 +49,7 @@ export function createSyncStatusPresenter({
     update(value = {}) {
       latest = { ...value, status: value.status || value.state || 'synced' };
       const count = Number(latest.pending) || 0;
+      if (latest.status !== 'failed' && latest.status !== 'blocked') lastBlockedSignature = null;
       if (latest.status === 'synced' || !count) {
         clearTimer();
         hide();
@@ -56,6 +61,11 @@ export function createSyncStatusPresenter({
         const target = message();
         if (target) target.textContent = `A saved ${noun} needs attention (${count} pending).`;
         recoveryControls(true, latest.discardable !== false);
+        const signature = `${latest.sequence ?? ''}:${count}`;
+        if (signature !== lastBlockedSignature) {
+          lastBlockedSignature = signature;
+          feedback.emit('blocked', { target: banner });
+        }
         return;
       }
       scheduleDelayed();

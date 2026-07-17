@@ -9,7 +9,7 @@ import { toSchema, parseImport } from '../lib/schema.js';
 import { save as persist } from '../lib/store.js';
 import { theme as defaultTheme } from '../lib/theme.js';
 import { importRecipes as importToServer } from '../lib/api.js';
-import { clickSound as defaultClickSound } from '../lib/click-sound.js';
+import { interactionFeedback as defaultFeedback } from '../lib/interaction-feedback.js';
 
 const THEME_PALETTES = {
   light:  { bg: '#fbf7f1', accent: '#b34a1c', border: '#d2c4ac' },
@@ -51,7 +51,7 @@ export function initSettings({
   onChange = null,
   getStoredTheme = defaultTheme.getStored,
   theme: themeDep = defaultTheme,
-  interfaceSounds = defaultClickSound,
+  feedback = defaultFeedback,
   onSignedIn = null,
   onSignedOut = null,
 } = {}) {
@@ -114,7 +114,7 @@ export function initSettings({
       const p = THEME_PALETTES[name];
       const active = name === current;
       const cls = `theme-swatch${active ? ' is-active' : ''}`;
-      return `<button type="button" data-theme="${name}" class="${cls}" role="radio" `
+      return `<button type="button" data-theme="${name}" data-feedback="select" class="${cls}" role="radio" `
         + `aria-checked="${active}" aria-label="${name.charAt(0).toUpperCase() + name.slice(1)}" `
         + `style="--swatch-bg:${p.bg};--swatch-accent:${p.accent};--swatch-border:${p.border}"></button>`;
     }).join('');
@@ -174,10 +174,28 @@ export function initSettings({
     }
     const authZone = document.getElementById('settings-auth-zone');
     if (authZone) authZone.addEventListener('click', handleAuthClick);
-    const soundToggle = document.getElementById('interface-sound-toggle');
+    const soundToggle = document.getElementById('feedback-sounds-toggle');
     if (soundToggle) {
-      soundToggle.checked = interfaceSounds.enabled();
-      soundToggle.addEventListener('change', () => interfaceSounds.setEnabled(soundToggle.checked));
+      soundToggle.checked = feedback.sounds.enabled();
+      soundToggle.addEventListener('change', (event) => {
+        if (!soundToggle.checked) feedback.emit('toggle-off', { target: soundToggle, sourceEvent: event });
+        feedback.sounds.setEnabled(soundToggle.checked);
+        if (soundToggle.checked) feedback.emit('toggle-on', { target: soundToggle, sourceEvent: event });
+      });
+    }
+    const hapticSetting = document.getElementById('feedback-haptics-setting');
+    const hapticToggle = document.getElementById('feedback-haptics-toggle');
+    const hapticsSupported = feedback.haptics.supported();
+    if (hapticSetting) hapticSetting.hidden = !hapticsSupported;
+    if (hapticToggle) {
+      hapticToggle.disabled = !hapticsSupported;
+      hapticToggle.checked = hapticsSupported && feedback.haptics.enabled();
+      hapticToggle.addEventListener('change', (event) => {
+        const interaction = feedback.contextFromEvent?.(event, hapticToggle) || null;
+        if (!hapticToggle.checked) feedback.emit('toggle-off', { target: hapticToggle, sourceEvent: event, interaction });
+        feedback.haptics.setEnabled(hapticToggle.checked, { interaction });
+        if (hapticToggle.checked) feedback.emit('toggle-on', { target: hapticToggle, sourceEvent: event, interaction });
+      });
     }
     renderThemePicker();
     settingsRendered = true;

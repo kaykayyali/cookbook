@@ -112,10 +112,10 @@ test('Pantry editor visibly rejects blank names and invalid trusted amounts', ()
 
 function editorDom() {
   const dom = new JSDOM(`<!doctype html><body>
-    <input id="pantry-input"><button id="pantry-add-btn">Add item</button>
+    <input id="pantry-input"><button id="pantry-add-btn" data-feedback="select">Add item</button>
     <input id="pantry-search"><div id="pantry-filters"></div><p id="pantry-summary"></p><div id="pantry-grid"></div>
     <div id="pantry-item-overlay" hidden></div>
-    <section id="pantry-item-modal" role="dialog" aria-modal="true" hidden>
+    <section id="pantry-item-modal" role="dialog" aria-modal="true" aria-hidden="true" inert hidden>
       <h2 id="pantry-item-title"></h2><button id="pantry-item-close" type="button">Close</button>
       <form id="pantry-item-form">
         <input id="pantry-item-name"><input id="pantry-item-quantity" type="number">
@@ -123,8 +123,8 @@ function editorDom() {
         <select id="pantry-item-unit"></select><output id="pantry-item-raw"></output>
         <ul id="pantry-item-raw-evidence" hidden></ul>
         <p id="pantry-item-error"></p><p id="pantry-item-status"></p>
-        <button id="pantry-item-save" type="submit">Save</button>
-        <button id="pantry-item-remove" type="button">Remove from Pantry</button>
+        <button id="pantry-item-save" type="submit" data-feedback="commit">Save</button>
+        <button id="pantry-item-remove" type="button" data-feedback="select">Remove from Pantry</button>
         <div id="pantry-remove-confirm" hidden><button data-action="cancel-pantry-remove" type="button">Cancel</button><button data-action="confirm-pantry-remove" type="button">Remove</button></div>
       </form>
     </section>
@@ -365,4 +365,71 @@ test('remote update or deletion blocks stale modal save without losing the draft
     assert.equal(dom.window.document.getElementById('pantry-item-name').value, 'My local draft', remoteChange);
     assert.equal(dom.window.document.getElementById('pantry-item-modal').hidden, false, remoteChange);
   }
+});
+
+test('Pantry modal routes family, save, remove, blocked, and Undo semantics through injected feedback', async () => {
+  const dom = editorDom();
+  globalThis.document = dom.window.document;
+  globalThis.window = dom.window;
+  globalThis.localStorage = dom.window.localStorage;
+  const target = oliveOil();
+  const state = { pantry: [target], recipes: [] };
+  const events = [];
+  const interaction = { trusted: true, modality: 'touch', touchOrigin: true, deferred: false };
+  const feedback = {
+    contextFromEvent: () => interaction,
+    emit: (type, options = {}) => events.push({ type, options }),
+  };
+  const controller = initPantry({
+    state,
+    document: dom.window.document,
+    mutate: async () => true,
+    feedback,
+  });
+  controller.render();
+
+  const row = dom.window.document.querySelector(`[data-pantry-id="${target.id}"]`);
+  assert.equal(row.dataset.feedback, 'select', 'opening a Pantry record is a semantic selection');
+  click(dom.window, row);
+  assert.equal(events.at(-1).type, 'select');
+  events.length = 0;
+  const family = dom.window.document.getElementById('pantry-item-family');
+  family.value = 'unknown';
+  family.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  family.value = 'fluid';
+  family.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  dom.window.document.getElementById('pantry-item-quantity').value = '2';
+  assert.deepEqual(events.map(({ type }) => type), ['toggle-off', 'toggle-on']);
+
+  const save = dom.window.document.getElementById('pantry-item-save');
+  assert.equal(save.dataset.feedback, 'commit', 'Save exposes the immediate commit semantic declaratively');
+  dom.window.document.getElementById('pantry-item-form')
+    .dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick();
+  assert.equal(events.at(-1).type, 'success');
+  assert.deepEqual(events.at(-1).options.interaction, { ...interaction, deferred: true });
+
+  controller.openEditor(target.id);
+  click(dom.window, dom.window.document.getElementById('pantry-item-remove'));
+  const confirm = dom.window.document.querySelector('[data-action="confirm-pantry-remove"]');
+  assert.equal(confirm.dataset.feedback, undefined, 'confirmed removal is emitted once by the controller');
+  click(dom.window, confirm);
+  assert.equal(events.at(-1).type, 'destructive', 'destructive feedback begins only after confirmation');
+  await tick();
+  assert.equal(events.at(-1).type, 'success');
+
+  const undo = dom.window.document.querySelector('#toast [data-toast-action]');
+  click(dom.window, undo);
+  assert.equal(events.at(-1).type, 'commit', 'Undo emits one immediate compensating commit');
+  await tick();
+  assert.equal(events.at(-1).type, 'success');
+  assert.deepEqual(events.at(-1).options.interaction, { ...interaction, deferred: true });
+
+  controller.openEditor(target.id);
+  state.pantry = [];
+  dom.window.document.getElementById('pantry-item-form')
+    .dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick();
+  assert.equal(events.at(-1).type, 'blocked', 'stale shared-state conflicts emit one blocked outcome');
+  assert.match(dom.window.document.getElementById('pantry-item-error').textContent, /removed by another/i);
 });

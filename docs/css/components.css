@@ -639,9 +639,9 @@
 		transform-origin: center;
 		will-change: max-height, min-height, padding, opacity, transform;
 	}
-	.cart-row.is-completing { animation: cart-row-complete 280ms cubic-bezier(.22, 1, .36, 1) both; }
-	.cart-row.is-restoring { animation: cart-row-restore 220ms var(--ease-out) both; }
-	.cart-row.is-completing .cart-check { animation: cart-check-pop 220ms cubic-bezier(.34, 1.56, .64, 1) both; }
+	.cart-row.is-completing { animation: cart-row-complete 140ms cubic-bezier(.22, 1, .36, 1) both; }
+	.cart-row.is-restoring { animation: cart-row-restore 140ms var(--ease-out) both; }
+	.cart-row.is-completing .cart-check { animation: cart-check-pop 140ms cubic-bezier(.34, 1.56, .64, 1) both; }
 	@keyframes cart-row-complete {
 		0% { max-height: 96px; min-height: 44px; opacity: 1; transform: translateX(0) scale(1); }
 		38% { max-height: 96px; min-height: 44px; opacity: 1; transform: translateX(4px) scale(.995); background: color-mix(in oklab, var(--color-success) 10%, transparent); }
@@ -784,6 +784,10 @@
 	@media (max-width: 36rem) {
 		.cook-ratings { grid-template-columns: minmax(0, 1fr); }
 		.cook-star-rating > button { flex: 1; }
+		.detail-modal .btn-sm,
+		.detail-modal .detail-close,
+		.detail-modal .detail-pantry-note button,
+		.detail-modal .cook-history-actions button { min-width: 44px; min-height: 44px; }
 	}
 
 	.week-grid {
@@ -830,6 +834,22 @@
 		.week-meal-controls { width: 100%; }
 		.shopping-manual-add, .plan-shop-tools { grid-template-columns: minmax(0, 1fr); }
 		#cart-clear-btn { min-height: 44px; }
+	}
+	#feedback-haptics-setting[hidden] { display: none; }
+	[data-feedback] {
+		transition: transform var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out),
+			border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+		-webkit-tap-highlight-color: transparent;
+	}
+	[data-feedback].is-feedback-pressed {
+		transform: translateY(1px) scale(.985);
+		filter: saturate(.92);
+		opacity: .9;
+	}
+	[data-feedback].has-feedback-success { box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-success) 34%, transparent); }
+	[data-feedback].has-feedback-blocked { box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-danger) 34%, transparent); }
+	@media (prefers-reduced-motion: reduce) {
+		[data-feedback].is-feedback-pressed { transform: none; filter: none; opacity: .82; }
 	}
 }
 .field-uncertain {

@@ -79,6 +79,7 @@ export function initCookingMode({
     if (wt) {
       wt.setAttribute('aria-pressed', String(wakeLockEnabled));
       wt.textContent = wakeLockEnabled ? 'Stay awake ✓' : 'Keep awake';
+      if (wt.dataset) setTimeout(() => { wt.dataset.feedback = wakeLockEnabled ? 'toggle-off' : 'toggle-on'; }, 0);
     }
   }
 
