@@ -130,10 +130,18 @@ export function provenanceStatement(db, { draft, recipeId, importedAt }) {
   return db.prepare(`INSERT INTO recipe_import_provenance (
       recipe_id, household_id, import_draft_id, source_type, source_url, imported_at,
       extractor_method, extractor_version, evidence_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE EXISTS (
+        SELECT 1 FROM recipe_import_drafts
+         WHERE id = ? AND household_id = ? AND status IN ('pending', 'extracted')
+      )
+        AND EXISTS (
+          SELECT 1 FROM household_recipes WHERE id = ? AND household_id = ?
+        )`)
     .bind(
       recipeId, draft.household_id, draft.id, draft.source_type, sourceUrl, importedAt,
       snapshot.extractorMethod, snapshot.extractorVersion, boundedEvidenceJson(sanitizeEvidence(evidence)),
+      draft.id, draft.household_id, recipeId, draft.household_id,
     );
 }
 

@@ -105,6 +105,18 @@ function requireHousehold(householdId) {
   return null;
 }
 
+function affectedRows(result) {
+  return Number(result?.meta?.changes || 0);
+}
+
+async function draftWriteConflict(db, { id, householdId }) {
+  const current = await db.prepare(`${DRAFT_SELECT} WHERE id = ? AND household_id = ?`)
+    .bind(id, householdId).first();
+  if (!current) return { status: 404, body: { error: 'draft_not_found' } };
+  if (TERMINAL_STATES.has(current.status)) return { status: 409, body: { error: 'draft_terminal' } };
+  return { status: 409, body: { error: 'draft_conflict' } };
+}
+
 export async function createDraft(db, {
   householdId, actorSub, input, serverProvenance = null, now = Date.now(),
 }) {
@@ -175,9 +187,11 @@ export async function updateDraftRecipe(db, { id, householdId, actorSub, recipe,
   if (!existing) return { status: 404, body: { error: 'draft_not_found' } };
   if (TERMINAL_STATES.has(existing.status)) return { status: 409, body: { error: 'draft_terminal' } };
   const recipeJson = JSON.stringify(recipe);
-  await db.prepare(
-    `UPDATE recipe_import_drafts SET recipe_json = ?, status = 'extracted', updated_at = ? WHERE id = ? AND household_id = ?`
+  const result = await db.prepare(
+    `UPDATE recipe_import_drafts SET recipe_json = ?, status = 'extracted', updated_at = ?
+     WHERE id = ? AND household_id = ? AND status IN ('pending', 'extracted')`
   ).bind(recipeJson, now, id, householdId).run();
+  if (affectedRows(result) !== 1) return draftWriteConflict(db, { id, householdId });
   return { status: 200, body: { ...draftFromRow(existing), status: 'extracted', recipe, updatedAt: now } };
 }
 
@@ -191,11 +205,14 @@ export async function updateDraftExtraction(db, { id, householdId, extracted, co
   const editableExtraction = extracted?.recipe && typeof extracted.recipe === 'object'
     ? { recipe: extracted.recipe }
     : {};
-  await db.prepare(
-    `UPDATE recipe_import_drafts SET extracted_json = ?, confidence_json = ?, duplicate_ids_json = ?, status = 'extracted', updated_at = ? WHERE id = ? AND household_id = ?`
+  const result = await db.prepare(
+    `UPDATE recipe_import_drafts
+     SET extracted_json = ?, confidence_json = ?, duplicate_ids_json = ?, status = 'extracted', updated_at = ?
+     WHERE id = ? AND household_id = ? AND status IN ('pending', 'extracted')`
   ).bind(
     JSON.stringify(editableExtraction), JSON.stringify(confidence || {}), JSON.stringify(duplicateIds || []), now, id, householdId,
   ).run();
+  if (affectedRows(result) !== 1) return draftWriteConflict(db, { id, householdId });
   return { status: 200, body: {
     ...draftFromRow(existing), status: 'extracted', extracted: editableExtraction, confidence, duplicateIds, updatedAt: now,
   } };
@@ -222,17 +239,29 @@ export async function confirmDraft(db, {
   const displayPicture = typeof actorPicture === 'string' && actorPicture ? actorPicture : null;
 
   try {
-    await db.batch([
+    const results = await db.batch([
       db.prepare(
         `INSERT INTO household_recipes (
            id, household_id, added_by_sub, added_by_name, added_by_picture, recipe_json, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(recipeId, householdId, actorSub, displayName, displayPicture, recipeJson, now, now),
+         ) SELECT ?, ?, ?, ?, ?, ?, ?, ?
+           WHERE EXISTS (
+             SELECT 1 FROM recipe_import_drafts
+              WHERE id = ? AND household_id = ? AND status IN ('pending', 'extracted')
+           )`
+      ).bind(recipeId, householdId, actorSub, displayName, displayPicture, recipeJson, now, now, id, householdId),
       provenanceStatement(db, { draft: existing, recipeId, importedAt: existing.created_at ?? now }),
       db.prepare(
-        `UPDATE recipe_import_drafts SET recipe_json = ?, status = 'confirmed', confirmed_at = ?, updated_at = ? WHERE id = ? AND household_id = ?`
-      ).bind(recipeJson, now, now, id, householdId),
+        `UPDATE recipe_import_drafts SET recipe_json = ?, status = 'confirmed', confirmed_at = ?, updated_at = ?
+          WHERE EXISTS (
+            SELECT 1 FROM recipe_import_provenance
+             WHERE recipe_id = ? AND import_draft_id = ?
+          )
+            AND id = ? AND household_id = ? AND status IN ('pending', 'extracted')`
+      ).bind(recipeJson, now, now, recipeId, id, id, householdId),
     ]);
+    if (!results.every((result) => affectedRows(result) === 1)) {
+      return draftWriteConflict(db, { id, householdId });
+    }
   } catch (error) {
     const collision = await db.prepare('SELECT id FROM household_recipes WHERE id = ?').bind(recipeId).first();
     if (collision) return { status: 409, body: { error: 'recipe_id_collision' } };
@@ -249,9 +278,11 @@ export async function rejectDraft(db, { id, householdId, actorSub, now = Date.no
     .bind(id, householdId).first();
   if (!existing) return { status: 404, body: { error: 'draft_not_found' } };
   if (TERMINAL_STATES.has(existing.status)) return { status: 409, body: { error: 'draft_terminal' } };
-  await db.prepare(
-    `UPDATE recipe_import_drafts SET status = 'rejected', updated_at = ? WHERE id = ? AND household_id = ?`
+  const result = await db.prepare(
+    `UPDATE recipe_import_drafts SET status = 'rejected', updated_at = ?
+     WHERE id = ? AND household_id = ? AND status IN ('pending', 'extracted')`
   ).bind(now, id, householdId).run();
+  if (affectedRows(result) !== 1) return draftWriteConflict(db, { id, householdId });
   return { status: 200, body: { status: 'rejected', updatedAt: now } };
 }
 

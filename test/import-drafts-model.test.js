@@ -8,6 +8,7 @@ import {
   listDrafts,
   getDraft,
   updateDraftRecipe,
+  updateDraftExtraction,
   confirmDraft,
   rejectDraft,
   detectDuplicates,
@@ -40,6 +41,106 @@ function stubDb({ all = [], first = [] } = {}) {
   return {
     db: { prepare: (sql) => statement(sql), batch: async (stmts) => Promise.all(stmts.map((s) => s.run())) },
     calls,
+  };
+}
+
+async function sqliteRaceFixture(t) {
+  let DatabaseSync;
+  try { ({ DatabaseSync } = await import('node:sqlite')); }
+  catch { t.skip('node:sqlite is unavailable on this supported Node version'); return null; }
+  const sqlite = new DatabaseSync(':memory:');
+  sqlite.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE households (id TEXT PRIMARY KEY);
+    CREATE TABLE household_recipes (
+      id TEXT PRIMARY KEY, household_id TEXT NOT NULL, added_by_sub TEXT NOT NULL,
+      added_by_name TEXT NOT NULL, added_by_picture TEXT, recipe_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE recipe_import_drafts (
+      id TEXT PRIMARY KEY, household_id TEXT NOT NULL, created_by_sub TEXT NOT NULL,
+      status TEXT NOT NULL, source_type TEXT NOT NULL, source_urls_json TEXT NOT NULL,
+      image_refs_json TEXT NOT NULL, extracted_json TEXT NOT NULL, recipe_json TEXT,
+      confidence_json TEXT NOT NULL, duplicate_ids_json TEXT NOT NULL, notes TEXT NOT NULL,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, confirmed_at INTEGER
+    );
+    CREATE TABLE recipe_import_provenance (
+      recipe_id TEXT PRIMARY KEY, household_id TEXT NOT NULL, import_draft_id TEXT NOT NULL UNIQUE,
+      source_type TEXT NOT NULL, source_url TEXT, imported_at INTEGER NOT NULL,
+      extractor_method TEXT NOT NULL, extractor_version TEXT NOT NULL, evidence_json TEXT NOT NULL,
+      FOREIGN KEY (recipe_id) REFERENCES household_recipes(id) ON DELETE CASCADE
+    );
+    CREATE TABLE recipe_import_draft_provenance (
+      import_draft_id TEXT PRIMARY KEY, extractor_method TEXT NOT NULL,
+      extractor_version TEXT NOT NULL, evidence_json TEXT NOT NULL, created_at INTEGER NOT NULL,
+      FOREIGN KEY (import_draft_id) REFERENCES recipe_import_drafts(id) ON DELETE CASCADE
+    );
+    INSERT INTO households VALUES ('our-home');
+    INSERT INTO recipe_import_drafts VALUES (
+      'race-draft', 'our-home', 'kay', 'extracted', 'image', '[]', '["page.png"]',
+      '{"recipe":{"name":"Original"}}', '{"name":"Original"}', '{}', '[]', '', 1, 1, NULL
+    );
+    INSERT INTO recipe_import_draft_provenance VALUES (
+      'race-draft', 'workers-ai-vision', 'image-extractor-v1',
+      '{"outcome":"image_extraction_completed"}', 1
+    );
+  `);
+
+  let readGate = null;
+  const db = {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...bound) { values = bound; return this; },
+        async first() {
+          const row = sqlite.prepare(sql).get(...values) || null;
+          if (readGate && sql.includes('FROM recipe_import_drafts AS d')) {
+            const gate = readGate;
+            readGate = null;
+            gate.reachedResolve();
+            await gate.release;
+          }
+          return row;
+        },
+        async all() { return { results: sqlite.prepare(sql).all(...values) }; },
+        async run() {
+          const result = sqlite.prepare(sql).run(...values);
+          return { meta: { changes: Number(result.changes) } };
+        },
+      };
+    },
+    async batch(statements) {
+      sqlite.exec('BEGIN IMMEDIATE');
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        sqlite.exec('COMMIT');
+        return results;
+      } catch (error) {
+        sqlite.exec('ROLLBACK');
+        throw error;
+      }
+    },
+  };
+
+  function blockNextDraftRead() {
+    let reachedResolve;
+    let releaseResolve;
+    const reached = new Promise((resolve) => { reachedResolve = resolve; });
+    const release = new Promise((resolve) => { releaseResolve = resolve; });
+    readGate = { reachedResolve, release };
+    return { reached, release: releaseResolve };
+  }
+
+  return {
+    db,
+    sqlite,
+    blockNextDraftRead,
+    state: () => ({ ...sqlite.prepare(
+      'SELECT status, recipe_json, confirmed_at FROM recipe_import_drafts WHERE id = ?'
+    ).get('race-draft') }),
+    recipeCount: () => sqlite.prepare('SELECT COUNT(*) AS count FROM household_recipes').get().count,
+    provenanceCount: () => sqlite.prepare('SELECT COUNT(*) AS count FROM recipe_import_provenance').get().count,
   };
 }
 
@@ -212,6 +313,106 @@ test('confirmDraft collision is failure-visible and atomically leaves draft and 
   assert.equal(sqlite.prepare('SELECT status FROM recipe_import_drafts WHERE id = ?').get('draft-collision').status, 'extracted');
   assert.equal(sqlite.prepare('SELECT recipe_json FROM household_recipes WHERE id = ?').get('forced-collision').recipe_json, '{"name":"Existing"}');
   assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM recipe_import_provenance').get().count, 0);
+});
+
+test('stale extraction update cannot reopen a draft confirmed after its read', async (t) => {
+  const fixture = await sqliteRaceFixture(t);
+  if (!fixture) return;
+  t.after(() => fixture.sqlite.close());
+  const gate = fixture.blockNextDraftRead();
+  const staleUpdate = updateDraftExtraction(fixture.db, {
+    id: 'race-draft', householdId: 'our-home',
+    extracted: { recipe: { name: 'Stale extraction' } }, confidence: {}, duplicateIds: [], now: 3,
+  });
+  await gate.reached;
+  const confirmed = await confirmDraft(fixture.db, {
+    id: 'race-draft', householdId: 'our-home', actorSub: 'kay', recipe: { name: 'Published' },
+    now: 2, recipeIdFactory: () => 'confirmed-recipe',
+  });
+  gate.release();
+
+  assert.deepEqual(confirmed, {
+    status: 200, body: { status: 'confirmed', recipeId: 'confirmed-recipe', updatedAt: 2 },
+  });
+  assert.deepEqual(await staleUpdate, { status: 409, body: { error: 'draft_terminal' } });
+  assert.deepEqual(fixture.state(), {
+    status: 'confirmed', recipe_json: '{"name":"Published"}', confirmed_at: 2,
+  });
+  assert.equal(fixture.recipeCount(), 1);
+  assert.equal(fixture.provenanceCount(), 1);
+});
+
+test('stale rejection cannot replace a confirmation committed after its read', async (t) => {
+  const fixture = await sqliteRaceFixture(t);
+  if (!fixture) return;
+  t.after(() => fixture.sqlite.close());
+  const gate = fixture.blockNextDraftRead();
+  const staleReject = rejectDraft(fixture.db, {
+    id: 'race-draft', householdId: 'our-home', actorSub: 'kay', now: 3,
+  });
+  await gate.reached;
+  const confirmed = await confirmDraft(fixture.db, {
+    id: 'race-draft', householdId: 'our-home', actorSub: 'kay', recipe: { name: 'Published' },
+    now: 2, recipeIdFactory: () => 'confirmed-recipe',
+  });
+  gate.release();
+
+  assert.equal(confirmed.status, 200);
+  assert.deepEqual(await staleReject, { status: 409, body: { error: 'draft_terminal' } });
+  assert.equal(fixture.state().status, 'confirmed');
+  assert.equal(fixture.recipeCount(), 1);
+  assert.equal(fixture.provenanceCount(), 1);
+});
+
+test('two stale confirmations publish exactly one recipe and loser returns a terminal conflict', async (t) => {
+  const fixture = await sqliteRaceFixture(t);
+  if (!fixture) return;
+  t.after(() => fixture.sqlite.close());
+  const gate = fixture.blockNextDraftRead();
+  const staleConfirm = confirmDraft(fixture.db, {
+    id: 'race-draft', householdId: 'our-home', actorSub: 'kay', recipe: { name: 'Stale' },
+    now: 3, recipeIdFactory: () => 'stale-recipe',
+  });
+  await gate.reached;
+  const winner = await confirmDraft(fixture.db, {
+    id: 'race-draft', householdId: 'our-home', actorSub: 'kay', recipe: { name: 'Winner' },
+    now: 2, recipeIdFactory: () => 'winning-recipe',
+  });
+  gate.release();
+
+  assert.deepEqual(winner, {
+    status: 200, body: { status: 'confirmed', recipeId: 'winning-recipe', updatedAt: 2 },
+  });
+  assert.deepEqual(await staleConfirm, { status: 409, body: { error: 'draft_terminal' } });
+  assert.deepEqual(fixture.state(), {
+    status: 'confirmed', recipe_json: '{"name":"Winner"}', confirmed_at: 2,
+  });
+  assert.equal(fixture.recipeCount(), 1);
+  assert.equal(fixture.provenanceCount(), 1);
+});
+
+test('stale reviewed-recipe update cannot reopen a rejected draft', async (t) => {
+  const fixture = await sqliteRaceFixture(t);
+  if (!fixture) return;
+  t.after(() => fixture.sqlite.close());
+  const gate = fixture.blockNextDraftRead();
+  const staleUpdate = updateDraftRecipe(fixture.db, {
+    id: 'race-draft', householdId: 'our-home', actorSub: 'kay',
+    recipe: { name: 'Stale review' }, now: 3,
+  });
+  await gate.reached;
+  const rejected = await rejectDraft(fixture.db, {
+    id: 'race-draft', householdId: 'our-home', actorSub: 'kay', now: 2,
+  });
+  gate.release();
+
+  assert.deepEqual(rejected, { status: 200, body: { status: 'rejected', updatedAt: 2 } });
+  assert.deepEqual(await staleUpdate, { status: 409, body: { error: 'draft_terminal' } });
+  assert.deepEqual(fixture.state(), {
+    status: 'rejected', recipe_json: '{"name":"Original"}', confirmed_at: null,
+  });
+  assert.equal(fixture.recipeCount(), 0);
+  assert.equal(fixture.provenanceCount(), 0);
 });
 
 test('rejectDraft marks rejected without publishing', async () => {
