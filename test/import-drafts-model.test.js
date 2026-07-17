@@ -120,7 +120,7 @@ test('updateDraftRecipe stores reviewed recipe and preserves extracted confidenc
 
 test('confirmDraft publishes to household_recipes and marks confirmed', async () => {
   const { db, calls } = stubDb({ first: [
-    { id: 'd1', household_id: 'our-home', status: 'extracted', recipe_json: '{"name":"Soup"}', created_by_sub: 'kay', image_refs_json: '[]', extracted_json: '{}', confidence_json: '{}', duplicate_ids_json: '[]', source_urls_json: '[]', source_type: 'image', created_at: 1, updated_at: 1 },
+    { id: 'd1', household_id: 'our-home', status: 'extracted', recipe_json: '{"name":"Soup"}', created_by_sub: 'kay', image_refs_json: '[]', extracted_json: '{"recipe":{"name":"Soup"}}', confidence_json: '{}', duplicate_ids_json: '[]', source_urls_json: '[]', source_type: 'image', created_at: 1, updated_at: 1, draft_extractor_method: 'workers-ai-vision', draft_extractor_version: 'image-extractor-v1', draft_evidence_json: '{"outcome":"image_extraction_completed"}', draft_provenance_created_at: 1 },
   ] });
   const result = await confirmDraft(db, {
     id: 'd1', householdId: 'our-home', actorSub: 'kay',
@@ -163,12 +163,20 @@ test('confirmDraft collision is failure-visible and atomically leaves draft and 
       extractor_method TEXT NOT NULL, extractor_version TEXT NOT NULL, evidence_json TEXT NOT NULL,
       FOREIGN KEY (recipe_id) REFERENCES household_recipes(id) ON DELETE CASCADE
     );
+    CREATE TABLE recipe_import_draft_provenance (
+      import_draft_id TEXT PRIMARY KEY, extractor_method TEXT NOT NULL,
+      extractor_version TEXT NOT NULL, evidence_json TEXT NOT NULL, created_at INTEGER NOT NULL,
+      FOREIGN KEY (import_draft_id) REFERENCES recipe_import_drafts(id) ON DELETE CASCADE
+    );
     INSERT INTO households VALUES ('our-home');
     INSERT INTO household_recipes VALUES ('forced-collision', 'our-home', 'original', 'Original', NULL, '{"name":"Existing"}', 1, 1);
     INSERT INTO recipe_import_drafts VALUES (
       'draft-collision', 'our-home', 'kay', 'extracted', 'url', '["https://example.com/source"]',
-      '[]', '{"extractorMethod":"json-ld","extractorVersion":"url-extractor-v1","evidence":{"recipe":{"name":"Imported"}}}',
+      '[]', '{"recipe":{"name":"Imported"}}',
       '{"name":"Imported"}', '{}', '[]', '', 2, 2, NULL
+    );
+    INSERT INTO recipe_import_draft_provenance VALUES (
+      'draft-collision', 'json-ld', 'url-extractor-v1', '{"recipe":{"name":"Imported"}}', 2
     );
   `);
   const db = {

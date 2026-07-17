@@ -198,12 +198,12 @@ export async function onRequestPost(context) {
 				input: {
 					sourceType: "url",
 					sourceUrls: [body.url],
-					extracted: {
-						recipe: out.recipe || out.partial,
-						extractorMethod: out.extractorMethod,
-						extractorVersion: out.extractorVersion,
-						evidence: out.evidence,
-					},
+					extracted: { recipe: out.recipe || out.partial },
+				},
+				serverProvenance: {
+					extractorMethod: out.extractorMethod,
+					extractorVersion: out.extractorVersion,
+					evidence: out.evidence,
 				},
 				now: Date.now(),
 			});

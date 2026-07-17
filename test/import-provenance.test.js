@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { confirmDraft, ensureImportDraftsSchema } from '../functions/_lib/import-drafts.js';
 import { editRecipe, getCommunity, listCommunity } from '../functions/_lib/community.js';
 import { extractRecipe } from '../functions/_lib/extract.js';
-import { boundedEvidenceJson } from '../functions/_lib/import-provenance.js';
+import { boundedEvidenceJson, normalizeServerProvenance } from '../functions/_lib/import-provenance.js';
 import { onRequestPost as extractRoute } from '../functions/api/extract.js';
 
 const migrationUrl = new URL('../docs/superpowers/migrations/0011_recipe_import_provenance.sql', import.meta.url);
@@ -87,8 +87,12 @@ test('confirming an import persists exact source metadata and bounded original e
   const { db, calls } = stubDb({ first: [{
     id: 'draft-1', household_id: 'our-home', status: 'extracted', created_by_sub: 'kay',
     source_type: 'url', source_urls_json: JSON.stringify([EXACT_URL]), image_refs_json: '[]',
-    extracted_json: JSON.stringify(extracted), confidence_json: '{}', duplicate_ids_json: '[]',
+    extracted_json: JSON.stringify({ recipe: extracted.recipe }), confidence_json: '{}', duplicate_ids_json: '[]',
     recipe_json: JSON.stringify(extracted.recipe), created_at: 1500, updated_at: 1600,
+    draft_extractor_method: extracted.extractorMethod,
+    draft_extractor_version: extracted.extractorVersion,
+    draft_evidence_json: JSON.stringify(extracted.evidence),
+    draft_provenance_created_at: 1500,
   }] });
 
   const result = await confirmDraft(db, {
@@ -107,6 +111,15 @@ test('confirming an import persists exact source metadata and bounded original e
   assert.ok(evidenceJson, 'original extraction evidence is retained');
   assert.doesNotThrow(() => JSON.parse(evidenceJson), 'bounded evidence remains valid JSON');
   assert.ok(new TextEncoder().encode(evidenceJson).byteLength <= 32_768, 'evidence is UTF-8 byte-bounded before D1 persistence');
+});
+
+test('server provenance rejects placeholder method, version, and empty evidence', () => {
+  assert.throws(() => normalizeServerProvenance({
+    extractorMethod: 'unknown', extractorVersion: 'legacy', evidence: {},
+  }), /invalid_server_provenance/);
+  assert.throws(() => normalizeServerProvenance({
+    extractorMethod: 'json-ld', extractorVersion: 'url-extractor-v1', evidence: {},
+  }), /invalid_server_provenance/);
 });
 
 test('provenance evidence byte bounding preserves useful valid JSON for multibyte input', () => {
@@ -128,8 +141,12 @@ test('confirming a current image import persists its versioned OCR evidence with
     id: 'draft-image', household_id: 'our-home', status: 'extracted', created_by_sub: 'kay',
     source_type: 'image', source_urls_json: '[]',
     image_refs_json: JSON.stringify(['data:image/png;base64,b25l']),
-    extracted_json: JSON.stringify(extracted), confidence_json: '{}', duplicate_ids_json: '[]',
+    extracted_json: JSON.stringify({ recipe: extracted.recipe }), confidence_json: '{}', duplicate_ids_json: '[]',
     recipe_json: JSON.stringify(extracted.recipe), created_at: 1700, updated_at: 1800,
+    draft_extractor_method: extracted.extractorMethod,
+    draft_extractor_version: extracted.extractorVersion,
+    draft_evidence_json: JSON.stringify(extracted.evidence),
+    draft_provenance_created_at: 1700,
   }] });
 
   const result = await confirmDraft(db, {
@@ -275,13 +292,16 @@ test('recoverable partial URL extraction persists truthful metadata and bounded 
     const body = await response.json();
     assert.equal(body.partial.name, 'Partial Soup');
     assert.ok(body.importDraftId);
-    const insert = calls.find((call) => call.op === 'run' && call.sql.includes('INSERT INTO recipe_import_drafts'));
-    const extracted = JSON.parse(insert.values[6]);
-    assert.equal(extracted.extractorMethod, 'json-ld-partial');
-    assert.equal(extracted.extractorVersion, 'url-extractor-v1');
-    assert.equal(extracted.evidence.jsonLd.name, 'Partial Soup');
-    assert.notDeepEqual(extracted.evidence, {});
-    assert.equal(JSON.stringify(extracted.evidence).includes('<script'), false);
+    const draftInsert = calls.find((call) => call.op === 'run' && call.sql.includes('INSERT INTO recipe_import_drafts'));
+    const extracted = JSON.parse(draftInsert.values[6]);
+    assert.equal(extracted.recipe.name, 'Partial Soup');
+    const snapshotInsert = calls.find((call) => call.op === 'run' && call.sql.includes('INSERT INTO recipe_import_draft_provenance'));
+    assert.equal(snapshotInsert.values[1], 'json-ld-partial');
+    assert.equal(snapshotInsert.values[2], 'url-extractor-v1');
+    const evidence = JSON.parse(snapshotInsert.values[3]);
+    assert.equal(evidence.jsonLd.name, 'Partial Soup');
+    assert.notDeepEqual(evidence, {});
+    assert.equal(JSON.stringify(evidence).includes('<script'), false);
   } finally {
     globalThis.fetch = originalFetch;
   }

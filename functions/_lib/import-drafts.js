@@ -2,7 +2,15 @@
 // import-drafts.js — recipe image capture draft lifecycle (pure, deps injected)
 // ════════════════════════════════════════════════════════
 
-import { ensureImportProvenanceSchema, provenanceStatement } from './import-provenance.js';
+import {
+  DRAFT_PROVENANCE_SELECT,
+  draftProvenanceStatement,
+  draftServerProvenanceFromRow,
+  ensureImportDraftProvenanceSchema,
+  ensureImportProvenanceSchema,
+  normalizeServerProvenance,
+  provenanceStatement,
+} from './import-provenance.js';
 
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS recipe_import_drafts (
@@ -38,6 +46,9 @@ const sourceUrl = (value) => {
 };
 const VALID_SOURCES = new Set(['image', 'url']);
 const TERMINAL_STATES = new Set(['confirmed', 'rejected']);
+const DRAFT_SELECT = `SELECT d.*, ${DRAFT_PROVENANCE_SELECT}
+  FROM recipe_import_drafts AS d
+  LEFT JOIN recipe_import_draft_provenance AS dp ON dp.import_draft_id = d.id`;
 
 export function normalizeDraftInput(input, now = Date.now()) {
   if (!input || typeof input !== 'object') throw new Error('invalid_draft_input');
@@ -60,7 +71,9 @@ export function normalizeDraftInput(input, now = Date.now()) {
     imageRefs: imageRefs.slice(0, 20),
     sourceUrls: sourceUrls.slice(0, 10),
     notes: text(input.notes, 2000),
-    extracted: input.extracted || {},
+    extracted: input.extracted?.recipe && typeof input.extracted.recipe === 'object'
+      ? { recipe: input.extracted.recipe }
+      : {},
     confidence: input.confidence || {},
   };
 }
@@ -83,6 +96,7 @@ function draftFromRow(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     confirmedAt: row.confirmed_at || null,
+    serverProvenance: draftServerProvenanceFromRow(row),
   };
 }
 
@@ -91,13 +105,15 @@ function requireHousehold(householdId) {
   return null;
 }
 
-export async function createDraft(db, { householdId, actorSub, input, now = Date.now() }) {
+export async function createDraft(db, {
+  householdId, actorSub, input, serverProvenance = null, now = Date.now(),
+}) {
   const blocked = requireHousehold(householdId);
   if (blocked) return blocked;
   if (!actorSub) return { status: 403, body: { error: 'household_required' } };
   const normalized = normalizeDraftInput(input, now);
   const id = globalThis.crypto?.randomUUID?.() || `draft-${now}-${Math.random().toString(36).slice(2)}`;
-  await db.prepare(
+  const insert = db.prepare(
     `INSERT INTO recipe_import_drafts
      (id, household_id, created_by_sub, status, source_type, source_urls_json, image_refs_json,
       extracted_json, confidence_json, duplicate_ids_json, notes, created_at, updated_at, confirmed_at)
@@ -107,17 +123,36 @@ export async function createDraft(db, { householdId, actorSub, input, now = Date
     JSON.stringify(normalized.sourceUrls), JSON.stringify(normalized.imageRefs),
     JSON.stringify(normalized.extracted), JSON.stringify(normalized.confidence),
     normalized.notes, now, now,
-  ).run();
-  return { status: 201, body: draftFromRow({ id, household_id: householdId, created_by_sub: actorSub, status: 'pending', source_type: normalized.sourceType, source_urls_json: JSON.stringify(normalized.sourceUrls), image_refs_json: JSON.stringify(normalized.imageRefs), extracted_json: JSON.stringify(normalized.extracted), confidence_json: JSON.stringify(normalized.confidence), duplicate_ids_json: '[]', notes: normalized.notes, created_at: now, updated_at: now, confirmed_at: null }) };
+  );
+  const snapshot = serverProvenance ? normalizeServerProvenance(serverProvenance) : null;
+  if (snapshot) {
+    await db.batch([
+      insert,
+      draftProvenanceStatement(db, { draftId: id, provenance: snapshot, createdAt: now }),
+    ]);
+  } else {
+    await insert.run();
+  }
+  return { status: 201, body: draftFromRow({
+    id, household_id: householdId, created_by_sub: actorSub, status: 'pending',
+    source_type: normalized.sourceType, source_urls_json: JSON.stringify(normalized.sourceUrls),
+    image_refs_json: JSON.stringify(normalized.imageRefs), extracted_json: JSON.stringify(normalized.extracted),
+    confidence_json: JSON.stringify(normalized.confidence), duplicate_ids_json: '[]', notes: normalized.notes,
+    created_at: now, updated_at: now, confirmed_at: null,
+    draft_extractor_method: snapshot?.extractorMethod,
+    draft_extractor_version: snapshot?.extractorVersion,
+    draft_evidence_json: snapshot ? JSON.stringify(snapshot.evidence) : null,
+    draft_provenance_created_at: snapshot ? now : null,
+  }) };
 }
 
 export async function listDrafts(db, { householdId, status = null, limit = 50 }) {
   const blocked = requireHousehold(householdId);
   if (blocked) return blocked;
-  let sql = 'SELECT * FROM recipe_import_drafts WHERE household_id = ?';
+  let sql = `${DRAFT_SELECT} WHERE household_id = ?`;
   const values = [householdId];
   if (status) { sql += ' AND status = ?'; values.push(status); }
-  sql += ' ORDER BY created_at DESC, id DESC LIMIT ?';
+  sql += ' ORDER BY d.created_at DESC, d.id DESC LIMIT ?';
   values.push(limit);
   const result = await db.prepare(sql).bind(...values).all();
   return { status: 200, body: { drafts: (result?.results || []).map(draftFromRow) } };
@@ -126,7 +161,7 @@ export async function listDrafts(db, { householdId, status = null, limit = 50 })
 export async function getDraft(db, { id, householdId }) {
   const blocked = requireHousehold(householdId);
   if (blocked) return blocked;
-  const row = await db.prepare('SELECT * FROM recipe_import_drafts WHERE id = ? AND household_id = ?')
+  const row = await db.prepare(`${DRAFT_SELECT} WHERE id = ? AND household_id = ?`)
     .bind(id, householdId).first();
   if (!row) return { status: 404, body: { error: 'draft_not_found' } };
   return { status: 200, body: draftFromRow(row) };
@@ -135,7 +170,7 @@ export async function getDraft(db, { id, householdId }) {
 export async function updateDraftRecipe(db, { id, householdId, actorSub, recipe, now = Date.now() }) {
   const blocked = requireHousehold(householdId);
   if (blocked) return blocked;
-  const existing = await db.prepare('SELECT * FROM recipe_import_drafts WHERE id = ? AND household_id = ?')
+  const existing = await db.prepare(`${DRAFT_SELECT} WHERE id = ? AND household_id = ?`)
     .bind(id, householdId).first();
   if (!existing) return { status: 404, body: { error: 'draft_not_found' } };
   if (TERMINAL_STATES.has(existing.status)) return { status: 409, body: { error: 'draft_terminal' } };
@@ -149,16 +184,21 @@ export async function updateDraftRecipe(db, { id, householdId, actorSub, recipe,
 export async function updateDraftExtraction(db, { id, householdId, extracted, confidence, duplicateIds, now = Date.now() }) {
   const blocked = requireHousehold(householdId);
   if (blocked) return blocked;
-  const existing = await db.prepare('SELECT * FROM recipe_import_drafts WHERE id = ? AND household_id = ?')
+  const existing = await db.prepare(`${DRAFT_SELECT} WHERE id = ? AND household_id = ?`)
     .bind(id, householdId).first();
   if (!existing) return { status: 404, body: { error: 'draft_not_found' } };
   if (TERMINAL_STATES.has(existing.status)) return { status: 409, body: { error: 'draft_terminal' } };
+  const editableExtraction = extracted?.recipe && typeof extracted.recipe === 'object'
+    ? { recipe: extracted.recipe }
+    : {};
   await db.prepare(
     `UPDATE recipe_import_drafts SET extracted_json = ?, confidence_json = ?, duplicate_ids_json = ?, status = 'extracted', updated_at = ? WHERE id = ? AND household_id = ?`
   ).bind(
-    JSON.stringify(extracted || {}), JSON.stringify(confidence || {}), JSON.stringify(duplicateIds || []), now, id, householdId,
+    JSON.stringify(editableExtraction), JSON.stringify(confidence || {}), JSON.stringify(duplicateIds || []), now, id, householdId,
   ).run();
-  return { status: 200, body: { ...draftFromRow(existing), status: 'extracted', extracted, confidence, duplicateIds, updatedAt: now } };
+  return { status: 200, body: {
+    ...draftFromRow(existing), status: 'extracted', extracted: editableExtraction, confidence, duplicateIds, updatedAt: now,
+  } };
 }
 
 export async function confirmDraft(db, {
@@ -166,10 +206,13 @@ export async function confirmDraft(db, {
 }) {
   const blocked = requireHousehold(householdId);
   if (blocked) return blocked;
-  const existing = await db.prepare('SELECT * FROM recipe_import_drafts WHERE id = ? AND household_id = ?')
+  const existing = await db.prepare(`${DRAFT_SELECT} WHERE id = ? AND household_id = ?`)
     .bind(id, householdId).first();
   if (!existing) return { status: 404, body: { error: 'draft_not_found' } };
   if (TERMINAL_STATES.has(existing.status)) return { status: 409, body: { error: 'draft_terminal' } };
+  if (!draftServerProvenanceFromRow(existing)) {
+    return { status: 409, body: { error: 'immutable_provenance_missing' } };
+  }
 
   const recipeId = typeof recipeIdFactory === 'function'
     ? recipeIdFactory()
@@ -202,7 +245,7 @@ export async function confirmDraft(db, {
 export async function rejectDraft(db, { id, householdId, actorSub, now = Date.now() }) {
   const blocked = requireHousehold(householdId);
   if (blocked) return blocked;
-  const existing = await db.prepare('SELECT * FROM recipe_import_drafts WHERE id = ? AND household_id = ?')
+  const existing = await db.prepare(`${DRAFT_SELECT} WHERE id = ? AND household_id = ?`)
     .bind(id, householdId).first();
   if (!existing) return { status: 404, body: { error: 'draft_not_found' } };
   if (TERMINAL_STATES.has(existing.status)) return { status: 409, body: { error: 'draft_terminal' } };
@@ -235,5 +278,6 @@ export async function detectDuplicates(db, { householdId, recipeName }) {
 export async function ensureImportDraftsSchema(db) {
   const statements = SCHEMA.split(';').map((sql) => sql.trim()).filter(Boolean);
   await db.batch(statements.map((sql) => db.prepare(sql)));
+  await ensureImportDraftProvenanceSchema(db);
   await ensureImportProvenanceSchema(db);
 }

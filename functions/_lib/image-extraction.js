@@ -4,6 +4,7 @@ import { boundedJsonValue, utf8ByteLength } from './bounded-json.js';
 export const IMAGE_EXTRACTOR_METHOD = 'workers-ai-vision';
 export const IMAGE_EXTRACTOR_VERSION = 'image-extractor-v1';
 const EVIDENCE_CAP = 16_384;
+export const IMAGE_TEXT_PROMPT_CAP = 32_768;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -49,6 +50,28 @@ function pageEvidence(pageTexts) {
   return boundedJsonValue(bounded, EVIDENCE_CAP);
 }
 
+export function boundedPagePrompt(pageTexts, maxBytes = IMAGE_TEXT_PROMPT_CAP) {
+  const encodedPages = pageTexts.map((text) => encoder.encode(text));
+  const candidateFor = (quota) => encodedPages
+    .map((bytes, index) => `Page ${index + 1}:\n${decoder.decode(bytes.slice(0, quota))}`)
+    .join('\n\n');
+  let low = 0;
+  let high = Math.max(0, ...encodedPages.map((bytes) => bytes.byteLength));
+  let bounded = candidateFor(0);
+  if (utf8ByteLength(bounded) > maxBytes) throw new Error('too_many_image_pages');
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = candidateFor(middle);
+    if (utf8ByteLength(candidate) <= maxBytes) {
+      bounded = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return bounded;
+}
+
 function decodeImage(ref) {
   const match = /^data:image\/[a-z0-9.+-]+;base64,([a-z0-9+/=]+)$/i.exec(ref || '');
   if (!match) throw new Error('invalid_image_reference');
@@ -64,7 +87,7 @@ export async function extractRecipeFromImages({ imageRefs, runVision, runText })
       const text = String(await runVision(bytes, index + 1) || '').trim();
       pages.push(text);
     }
-    const pageText = pages.map((text, index) => `Page ${index + 1}:\n${text}`).join('\n\n');
+    const pageText = boundedPagePrompt(pages);
     const raw = await runText(pageText);
     const recipe = parseLLMRecipe(typeof raw === 'string' ? raw : raw?.response);
     if (!recipe) throw new Error('uncertain_extraction');

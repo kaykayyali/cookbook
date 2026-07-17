@@ -18,6 +18,24 @@ export const PROVENANCE_TABLE_SQL = `CREATE TABLE IF NOT EXISTS recipe_import_pr
   FOREIGN KEY (household_id) REFERENCES households(id) ON DELETE CASCADE
 )`;
 
+export const DRAFT_PROVENANCE_TABLE_SQL = `CREATE TABLE IF NOT EXISTS recipe_import_draft_provenance (
+  import_draft_id    TEXT PRIMARY KEY,
+  extractor_method  TEXT NOT NULL CHECK (length(extractor_method) > 0 AND extractor_method <> 'unknown'),
+  extractor_version TEXT NOT NULL CHECK (length(extractor_version) > 0 AND extractor_version <> 'legacy'),
+  evidence_json      TEXT NOT NULL CHECK (length(evidence_json) > 2 AND evidence_json <> '{}'),
+  created_at         INTEGER NOT NULL,
+  FOREIGN KEY (import_draft_id) REFERENCES recipe_import_drafts(id) ON DELETE CASCADE
+)`;
+
+export const DRAFT_PROVENANCE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS idx_import_draft_provenance_created
+  ON recipe_import_draft_provenance(created_at DESC, import_draft_id)`;
+
+export const DRAFT_PROVENANCE_SELECT = `
+  dp.extractor_method AS draft_extractor_method,
+  dp.extractor_version AS draft_extractor_version,
+  dp.evidence_json AS draft_evidence_json,
+  dp.created_at AS draft_provenance_created_at`;
+
 export const PROVENANCE_SOURCE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS idx_recipe_import_provenance_source_url
   ON recipe_import_provenance(household_id, source_url, imported_at DESC)`;
 
@@ -48,22 +66,65 @@ function summarizeImageRefs(raw) {
   });
 }
 
+const INLINE_DATA = /data:image\/[a-z0-9.+-]+;base64,|;base64,/i;
+
+function sanitizeEvidence(value, depth = 0) {
+  if (depth > 8) return '[depth-limited]';
+  if (typeof value === 'string') return INLINE_DATA.test(value) ? '[inline-data-removed]' : value;
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.slice(0, 100).map((item) => sanitizeEvidence(item, depth + 1));
+  if (!value || typeof value !== 'object') return null;
+  return Object.fromEntries(Object.entries(value).slice(0, 100).map(([key, item]) => [
+    String(key).slice(0, 200), sanitizeEvidence(item, depth + 1),
+  ]));
+}
+
 export function boundedEvidenceJson(value, maxLength = MAX_EVIDENCE_JSON_LENGTH) {
   return boundedJsonString(value, maxLength);
 }
 
+export function normalizeServerProvenance(value) {
+  const extractorMethod = typeof value?.extractorMethod === 'string' ? value.extractorMethod.trim().slice(0, 200) : '';
+  const extractorVersion = typeof value?.extractorVersion === 'string' ? value.extractorVersion.trim().slice(0, 200) : '';
+  if (!extractorMethod || extractorMethod === 'unknown' || !extractorVersion || extractorVersion === 'legacy') {
+    throw new Error('invalid_server_provenance');
+  }
+  const evidenceJson = boundedEvidenceJson(sanitizeEvidence(value.evidence ?? {}));
+  const evidence = parseJson(evidenceJson, {});
+  if (!evidence || Array.isArray(evidence) || typeof evidence !== 'object' || !Object.keys(evidence).length) {
+    throw new Error('invalid_server_provenance');
+  }
+  return { extractorMethod, extractorVersion, evidence };
+}
+
+export function draftProvenanceStatement(db, { draftId, provenance, createdAt }) {
+  const normalized = normalizeServerProvenance(provenance);
+  return db.prepare(`INSERT INTO recipe_import_draft_provenance
+      (import_draft_id, extractor_method, extractor_version, evidence_json, created_at)
+    VALUES (?, ?, ?, ?, ?)`)
+    .bind(
+      draftId, normalized.extractorMethod, normalized.extractorVersion,
+      boundedEvidenceJson(normalized.evidence), createdAt,
+    );
+}
+
+export function draftServerProvenanceFromRow(row) {
+  if (!row?.draft_extractor_method) return null;
+  return {
+    extractorMethod: row.draft_extractor_method,
+    extractorVersion: row.draft_extractor_version,
+    evidence: parseJson(row.draft_evidence_json || '{}', {}),
+    createdAt: row.draft_provenance_created_at,
+  };
+}
+
 export function provenanceStatement(db, { draft, recipeId, importedAt }) {
-  const extracted = parseJson(draft.extracted_json || '{}', {});
+  const snapshot = draftServerProvenanceFromRow(draft);
+  if (!snapshot) throw new Error('immutable_provenance_missing');
   const sourceUrls = parseJson(draft.source_urls_json || '[]', []);
   const sourceUrl = draft.source_type === 'url' && typeof sourceUrls[0] === 'string' ? sourceUrls[0] : null;
-  const extractorMethod = typeof extracted.extractorMethod === 'string' && extracted.extractorMethod
-    ? extracted.extractorMethod
-    : draft.source_type === 'image' ? 'workers-ai-vision' : 'unknown';
-  const extractorVersion = typeof extracted.extractorVersion === 'string' && extracted.extractorVersion
-    ? extracted.extractorVersion
-    : 'legacy';
   const evidence = {
-    originalExtraction: extracted,
+    originalEvidence: snapshot.evidence,
     sourceReferences: draft.source_type === 'image' ? summarizeImageRefs(draft.image_refs_json) : [],
   };
   return db.prepare(`INSERT INTO recipe_import_provenance (
@@ -72,7 +133,7 @@ export function provenanceStatement(db, { draft, recipeId, importedAt }) {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(
       recipeId, draft.household_id, draft.id, draft.source_type, sourceUrl, importedAt,
-      extractorMethod, extractorVersion, boundedEvidenceJson(evidence),
+      snapshot.extractorMethod, snapshot.extractorVersion, boundedEvidenceJson(sanitizeEvidence(evidence)),
     );
 }
 
@@ -94,5 +155,12 @@ export async function ensureImportProvenanceSchema(db) {
     db.prepare(PROVENANCE_TABLE_SQL),
     db.prepare(PROVENANCE_SOURCE_INDEX_SQL),
     db.prepare(PROVENANCE_RECIPE_INDEX_SQL),
+  ]);
+}
+
+export async function ensureImportDraftProvenanceSchema(db) {
+  await db.batch([
+    db.prepare(DRAFT_PROVENANCE_TABLE_SQL),
+    db.prepare(DRAFT_PROVENANCE_INDEX_SQL),
   ]);
 }

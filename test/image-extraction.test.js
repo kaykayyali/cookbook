@@ -58,6 +58,29 @@ test('oversized OCR evidence fairly preserves every page in order under the UTF-
   assert.equal(serialized.includes('data:image'), false);
 });
 
+test('OCR aggregation fairly bounds every huge page before the text model call', async () => {
+  let prompt = '';
+  const markers = ['PAGE-ONE-PROMPT', 'PAGE-TWO-PROMPT', 'PAGE-THREE-PROMPT'];
+  const result = await extractRecipeFromImages({
+    imageRefs: [
+      'data:image/png;base64,b25l',
+      'data:image/png;base64,dHdv',
+      'data:image/png;base64,dGhyZWU=',
+    ],
+    runVision: async (_bytes, page) => `${markers[page - 1]} ${'🍲'.repeat(40_000)}`,
+    runText: async (text) => {
+      prompt = text;
+      return JSON.stringify({ name: 'Soup', recipeIngredient: ['water'], recipeInstructions: ['Boil'] });
+    },
+  });
+
+  assert.equal(result.recipe.name, 'Soup');
+  assert.ok(new TextEncoder().encode(prompt).byteLength <= 32_768, 'text-model prompt must be byte-bounded');
+  assert.ok(prompt.indexOf(markers[0]) < prompt.indexOf(markers[1]));
+  assert.ok(prompt.indexOf(markers[1]) < prompt.indexOf(markers[2]));
+  for (const marker of markers) assert.match(prompt, new RegExp(marker));
+});
+
 test('failed vision remains a recoverable draft result', async () => {
   const result = await extractRecipeFromImages({
     imageRefs: ['data:image/jpeg;base64,b25l'],
