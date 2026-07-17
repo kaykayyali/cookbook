@@ -22,12 +22,14 @@ export const PROVENANCE_SOURCE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS idx_recip
 export const PROVENANCE_RECIPE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS idx_recipe_import_provenance_household
   ON recipe_import_provenance(household_id, recipe_id)`;
 
-export const PROVENANCE_SELECT = `
+export const PROVENANCE_SUMMARY_SELECT = `
   p.source_type AS provenance_source_type,
   p.source_url AS provenance_source_url,
   p.imported_at AS provenance_imported_at,
   p.extractor_method AS provenance_extractor_method,
-  p.extractor_version AS provenance_extractor_version,
+  p.extractor_version AS provenance_extractor_version`;
+
+export const PROVENANCE_SELECT = `${PROVENANCE_SUMMARY_SELECT},
   p.evidence_json AS provenance_evidence_json`;
 
 function parseJson(value, fallback) {

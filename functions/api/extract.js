@@ -180,14 +180,16 @@ export async function onRequestPost(context) {
 		`[Route Extract] Initializing pipeline for user: ${email} targeting URL: ${targetUrl}`,
 	);
 
-	// 5. Execute Extraction Core
+	// 5. Verify persistence prerequisites before fetching the page or invoking AI.
+	if (!env.DB?.prepare) return misconfigured("db_binding");
+	const householdId = data?.household?.household?.id;
+	const actorSub = data?.auth?.sub;
+	if (!householdId) return json(403, { error: "household_required" });
+
+	// 6. Execute Extraction Core
 	const { status, body: out } = await handleExtract(body, env, realDeps(env));
 	let responseBody = out;
 	if (out.recipe || out.partial) {
-		if (!env.DB?.prepare) return misconfigured("db_binding");
-		const householdId = data?.household?.household?.id;
-		const actorSub = data?.auth?.sub;
-		if (!householdId) return json(403, { error: "household_required" });
 		try {
 			await ensureImportDraftsSchema(env.DB);
 			const draft = await createDraft(env.DB, {

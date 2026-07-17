@@ -117,6 +117,11 @@ test('recipes expose nullable provenance and can be queried by exact source URL'
   const query = importedDb.calls.find((call) => call.op === 'all');
   assert.match(query.sql, /recipe_import_provenance/);
   assert.match(query.sql, /source_url = \?/);
+  assert.doesNotMatch(
+    query.sql,
+    /p\.evidence_json|provenance_evidence_json/,
+    'bulk list queries must not read the bounded evidence blob',
+  );
   assert.ok(query.values.includes(EXACT_URL));
 
   const manualDb = stubDb({ all: [{ results: [importedRow({
@@ -143,6 +148,12 @@ test('editing recipe fields leaves provenance intact and detail reload exposes o
   assert.equal(reloaded.body.recipe.name, 'Renamed Soup');
   assert.equal(reloaded.body.provenance.sourceUrl, EXACT_URL);
   assert.deepEqual(reloaded.body.provenance.evidence, { recipe: { name: 'Original Soup' } });
+  const detailQuery = getDb.calls.find((call) => call.op === 'first');
+  assert.match(
+    detailQuery.sql,
+    /p\.evidence_json AS provenance_evidence_json/,
+    'detail queries must still read original evidence',
+  );
 });
 
 test('URL extractor identifies its method/version and returns bounded non-HTML evidence', async () => {

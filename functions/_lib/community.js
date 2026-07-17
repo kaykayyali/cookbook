@@ -5,6 +5,7 @@
 import {
   ensureImportProvenanceSchema,
   PROVENANCE_SELECT,
+  PROVENANCE_SUMMARY_SELECT,
   provenanceFromRow,
 } from './import-provenance.js';
 
@@ -153,8 +154,10 @@ export function validateRecipe(recipe) {
   return null;
 }
 
-const COLS = `r.id, r.household_id, r.added_by_sub, r.added_by_name, r.added_by_picture,
-  r.recipe_json, r.created_at, r.updated_at, ${PROVENANCE_SELECT}`;
+const RECIPE_COLS = `r.id, r.household_id, r.added_by_sub, r.added_by_name, r.added_by_picture,
+  r.recipe_json, r.created_at, r.updated_at`;
+const LIST_COLS = `${RECIPE_COLS}, ${PROVENANCE_SUMMARY_SELECT}`;
+const DETAIL_COLS = `${RECIPE_COLS}, ${PROVENANCE_SELECT}`;
 const RECIPE_FROM = `household_recipes AS r
   LEFT JOIN recipe_import_provenance AS p
     ON p.recipe_id = r.id AND p.household_id = r.household_id`;
@@ -202,7 +205,7 @@ export async function listCommunity(db, { householdId, cursor, limit, sourceUrl 
   }
   values.push(lim + 1);
   const results = await db.prepare(
-    `SELECT ${COLS} FROM ${RECIPE_FROM}
+    `SELECT ${LIST_COLS} FROM ${RECIPE_FROM}
      WHERE ${conditions.join(' AND ')}
      ORDER BY r.created_at DESC, r.id DESC
      LIMIT ?`,
@@ -224,7 +227,7 @@ export async function listCommunity(db, { householdId, cursor, limit, sourceUrl 
 export async function getCommunity(db, { id, householdId } = {}) {
   if (!householdId) return householdRequired();
   const row = await db.prepare(
-    `SELECT ${COLS} FROM ${RECIPE_FROM} WHERE r.id = ? AND r.household_id = ?`,
+    `SELECT ${DETAIL_COLS} FROM ${RECIPE_FROM} WHERE r.id = ? AND r.household_id = ?`,
   ).bind(id, householdId).first();
   if (!row) return { status: 404, body: { error: 'not_found' } };
   return { status: 200, body: rowToRecipe(row, { includeEvidence: true }) };
