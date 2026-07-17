@@ -368,13 +368,31 @@ export function ingredientEditorProjection(record) {
   return { ...base, amount: String(record?.quantity), measurementFamily: 'weight', sourceUnit: 'oz' };
 }
 
-export function recipeEffectiveSignature(recipe) {
-  return JSON.stringify(effectiveIngredientRecords(recipe).map((item) => ({
+function effectiveSignature(records) {
+  return JSON.stringify(records.map((item) => ({
     id: item.id, raw: item.raw, name: item.name, amountState: item.amountState,
     quantity: item.quantity, quantityMin: item.quantityMin, quantityState: item.quantityState,
     unit: item.unit, measurementFamily: item.measurementFamily, sourceUnit: item.sourceUnit,
     countLabel: item.countLabel, reviewVersion: item.reviewVersion || 0, reviewedAt: item.reviewedAt || 0,
   })));
+}
+
+export function recipeEffectiveSignature(recipe) {
+  return effectiveSignature(effectiveIngredientRecords(recipe));
+}
+
+export function applyIngredientTombstones(ingredients, removedIngredientNames) {
+  const normalizedNames = [...new Set((Array.isArray(removedIngredientNames) ? removedIngredientNames : [])
+    .map(canonicalName).filter(Boolean))];
+  const removed = new Set(normalizedNames);
+  return {
+    removedIngredientNames: normalizedNames,
+    ingredients: (Array.isArray(ingredients) ? ingredients : []).filter((ingredient) => {
+      const effectiveName = canonicalName(ingredient?.name);
+      const rawName = canonicalName(normalizeIngredient(ingredient?.raw).name);
+      return !removed.has(effectiveName) && !removed.has(rawName);
+    }).map(clone),
+  };
 }
 
 export function reconcileReviewedRecipesInCart(cart, recipes) {
@@ -388,14 +406,39 @@ export function reconcileReviewedRecipesInCart(cart, recipes) {
       return clone(selection);
     }
     if (selection.effectiveSignature === signature) return clone(selection);
-    const removed = new Set((selection.removedIngredientNames || []).map(canonicalName));
-    const ingredients = effective.filter((ingredient) => {
-      const rawName = canonicalName(normalizeIngredient(ingredient.raw).name);
-      return !removed.has(ingredient.name) && !removed.has(rawName);
-    }).map(clone);
-    return { ...clone(selection), recipeName: String(recipe.name || selection.recipeName), ingredients,
-      effectiveSignature: signature };
+    const projected = applyIngredientTombstones(effective, selection.removedIngredientNames);
+    const reconciled = { ...clone(selection), recipeName: String(recipe.name || selection.recipeName),
+      ingredients: projected.ingredients, effectiveSignature: signature };
+    if (projected.removedIngredientNames.length || Object.hasOwn(selection, 'removedIngredientNames')) {
+      reconciled.removedIngredientNames = projected.removedIngredientNames;
+    }
+    return reconciled;
   });
+}
+
+export function reviewedShoppingCheckedKeys(shoppingChecked, previous, next) {
+  const checked = shoppingChecked && typeof shoppingChecked === 'object' ? shoppingChecked : {};
+  const migrated = new Set();
+  const nextByRaw = new Map();
+  for (const ingredient of Array.isArray(next?.ingredients) ? next.ingredients : []) {
+    const raw = String(ingredient?.raw || '');
+    const rows = nextByRaw.get(raw) || [];
+    rows.push(ingredient);
+    nextByRaw.set(raw, rows);
+  }
+  const occurrences = new Map();
+  for (const ingredient of Array.isArray(previous?.ingredients) ? previous.ingredients : []) {
+    const raw = String(ingredient?.raw || '');
+    const occurrence = occurrences.get(raw) || 0;
+    occurrences.set(raw, occurrence + 1);
+    const replacement = nextByRaw.get(raw)?.[occurrence];
+    const previousName = canonicalName(ingredient?.name);
+    const nextName = canonicalName(replacement?.name);
+    if (!previousName || !nextName || previousName === nextName) continue;
+    if (checked[previousName] === true) migrated.add(nextName);
+    if (checked[`pantry-transfer:${previousName}`] === true) migrated.add(`pantry-transfer:${nextName}`);
+  }
+  return [...migrated].sort(compareText);
 }
 
 export function reconcileReviewedShoppingChecked(shoppingChecked, previousCart, reconciledCart) {
@@ -406,25 +449,7 @@ export function reconcileReviewedShoppingChecked(shoppingChecked, previousCart, 
   for (const previous of Array.isArray(previousCart) ? previousCart : []) {
     const next = nextByRecipe.get(String(previous?.recipeId || ''));
     if (!next) continue;
-    const nextByRaw = new Map();
-    for (const ingredient of Array.isArray(next.ingredients) ? next.ingredients : []) {
-      const raw = String(ingredient?.raw || '');
-      const rows = nextByRaw.get(raw) || [];
-      rows.push(ingredient);
-      nextByRaw.set(raw, rows);
-    }
-    const occurrences = new Map();
-    for (const ingredient of Array.isArray(previous.ingredients) ? previous.ingredients : []) {
-      const raw = String(ingredient?.raw || '');
-      const occurrence = occurrences.get(raw) || 0;
-      occurrences.set(raw, occurrence + 1);
-      const replacement = nextByRaw.get(raw)?.[occurrence];
-      const previousName = canonicalName(ingredient?.name);
-      const nextName = canonicalName(replacement?.name);
-      if (!previousName || !nextName || previousName === nextName) continue;
-      if (checked[previousName] === true) checked[nextName] = true;
-      if (checked[`pantry-transfer:${previousName}`] === true) checked[`pantry-transfer:${nextName}`] = true;
-    }
+    for (const key of reviewedShoppingCheckedKeys(checked, previous, next)) checked[key] = true;
   }
   return checked;
 }
@@ -456,19 +481,30 @@ export function effectiveIngredientLines(recipe) {
 }
 
 export function buildRecipeUsageIndex(recipes) {
-  const index = new Map();
+  const byRecipe = new Map();
   for (const recipe of Array.isArray(recipes) ? recipes : []) {
     const id = String(recipe?._id || recipe?.id || '');
     const recipeName = String(recipe?.name || 'Untitled');
-    const recipeIdentity = `${id || 'derived'}:${hash128(`${recipeName}\u0000${recipeEffectiveSignature(recipe)}`)}`;
+    const effective = effectiveIngredientRecords(recipe);
+    const signature = effectiveSignature(effective);
+    const recipeIdentity = id ? `id:${id}` : `derived:${hash128(`${recipeName}\u0000${signature}`)}`;
     const unique = new Map();
-    for (const ingredient of effectiveIngredientRecords(recipe)) {
+    for (const ingredient of effective) {
       const current = unique.get(ingredient.name);
       if (!current || compareText(JSON.stringify(ingredient), JSON.stringify(current)) < 0) unique.set(ingredient.name, ingredient);
     }
+    const candidate = { recipeId: id || recipeIdentity, recipeIdentity, recipeName, unique };
+    const current = byRecipe.get(recipeIdentity);
+    const candidateKey = `${recipeName}\u0000${signature}`;
+    if (!current || compareText(candidateKey, current.key) < 0) byRecipe.set(recipeIdentity, { key: candidateKey, candidate });
+  }
+
+  const index = new Map();
+  for (const { candidate } of byRecipe.values()) {
+    const { recipeId, recipeIdentity, recipeName, unique } = candidate;
     for (const ingredient of unique.values()) {
       if (!index.has(ingredient.name)) index.set(ingredient.name, []);
-      index.get(ingredient.name).push({ recipeId: id || recipeIdentity, recipeIdentity, recipeName, ingredient: clone(ingredient) });
+      index.get(ingredient.name).push({ recipeId, recipeIdentity, recipeName, ingredient: clone(ingredient) });
     }
   }
   for (const uses of index.values()) uses.sort((a, b) => compareText(a.recipeName, b.recipeName)

@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { aggregateCart } from '../docs/js/lib/cart.js';
+import { aggregateCart, normalizeIngredient } from '../docs/js/lib/cart.js';
 import { PANTRY_RAW_EVIDENCE_LIMITS } from '../docs/js/lib/pantry.js';
+import { applyReviewedIngredientCorrection, ingredientEvidence } from '../docs/js/lib/ingredient-corrections.js';
 import { applyWorkspaceMutation, emptyWorkspace, workspaceFromRow } from '../functions/_lib/workspace.js';
 
 const egg = {
@@ -234,6 +235,27 @@ test('selection replacement and plan regeneration prune stale transfer markers',
   assert.equal(workspace.shoppingChecked['pantry-transfer:egg'], undefined);
 });
 
+test('authoritative reviewed-name replacement atomically persists the transfer marker before pruning', () => {
+  const shallot = { ...normalizeIngredient('2 eggs'), name: 'shallot' };
+  let current = {
+    ...emptyWorkspace('our-home'),
+    cart: [{ recipeId: 'r1', ingredients: [egg] }],
+    pantry: [{ name: 'egg', quantity: 3, unit: 'count', kind: 'indivisible' }],
+    shoppingChecked: { egg: true, 'pantry-transfer:egg': true },
+  };
+  current = applyWorkspaceMutation(current, mutation('rename', 'cart.upsertSelection', {
+    selection: { recipeId: 'r1', ingredients: [shallot] },
+    checkedKeys: ['shallot', 'pantry-transfer:shallot'],
+  })).workspace;
+  assert.equal(current.shoppingChecked.shallot, true);
+  assert.equal(current.shoppingChecked['pantry-transfer:shallot'], true);
+  assert.equal(current.shoppingChecked['pantry-transfer:egg'], undefined);
+  const afterReplay = applyWorkspaceMutation(current, mutation('replayed-transfer', 'pantry.add', {
+    sourceKey: 'shallot', item: shallot,
+  })).workspace;
+  assert.deepEqual(afterReplay.pantry, current.pantry);
+});
+
 test('plan generation excludes non-recipe and skipped meals and combines servings per recipe', () => {
   let workspace = emptyWorkspace('our-home');
   const entries = [
@@ -271,6 +293,35 @@ test('unchanged regeneration is idempotent and preserves ingredient removal tomb
   }), { recipes: [recipe()] }).workspace;
   assert.deepEqual(regenerated.cart[0].removedIngredientNames, ['egg']);
   assert.equal(regenerated.cart.length, 1);
+});
+
+test('authoritative plan regeneration applies normalized old and reviewed-name tombstones', () => {
+  const raw = recipe();
+  const reviewed = applyReviewedIngredientCorrection(raw, {
+    ingredientId: ingredientEvidence(raw)[0].id,
+    correction: { name: 'shallot', amountState: 'numeric', amount: '2', measurementFamily: 'count', sourceUnit: 'count', countLabel: '' },
+    reviewer: { sub: 'cook-1', name: 'Cook' }, reviewedAt: 200,
+  }).recipe;
+  let current = emptyWorkspace('our-home');
+  current = applyWorkspaceMutation(current, mutation('plan-reviewed', 'plan.upsert', {
+    id: 'meal', date: '2026-07-17', type: 'recipe', recipeId: 'r1', status: 'active', targetServings: 4,
+  })).workspace;
+  current.cart = [{
+    recipeId: 'plan:2026-07-17:2026-07-17:r1', sourceRecipeId: 'r1', ingredients: [],
+    removedIngredientNames: ['  EGGS  '], origin: { kind: 'plan', rangeStart: '2026-07-17', rangeEnd: '2026-07-17' },
+  }];
+  const oldName = applyWorkspaceMutation(current, mutation('regen-old', 'shopping.regeneratePlanRange', {
+    rangeStart: '2026-07-17', rangeEnd: '2026-07-17',
+  }), { recipes: [reviewed] }).workspace;
+  assert.deepEqual(oldName.cart[0].ingredients, []);
+  assert.deepEqual(oldName.cart[0].removedIngredientNames, ['egg']);
+  oldName.cart[0].removedIngredientNames = ['Shallots'];
+  const newName = applyWorkspaceMutation(oldName, mutation('regen-new', 'shopping.regeneratePlanRange', {
+    rangeStart: '2026-07-17', rangeEnd: '2026-07-17',
+  }), { recipes: [reviewed] }).workspace;
+  assert.deepEqual(newName.cart[0].ingredients, []);
+  assert.deepEqual(newName.cart[0].removedIngredientNames, ['shallot']);
+  assert.equal(newName.cart[0].targetServings, 4);
 });
 
 test('clear removes generated shopping state without letting stale checked rows survive', () => {

@@ -175,6 +175,10 @@ export function applyWorkspaceOperation(source, request) {
       const index = workspace.cart.findIndex((item) => item.recipeId === selection.recipeId);
       if (index >= 0) workspace.cart[index] = selection;
       else workspace.cart.push(selection);
+      for (const rawKey of (Array.isArray(payload.checkedKeys) ? payload.checkedKeys : []).slice(0, 100)) {
+        const key = typeof rawKey === 'string' ? rawKey.trim().slice(0, 300) : '';
+        if (key) workspace.shoppingChecked[key] = true;
+      }
       pruneTransferMarkers(workspace);
       break;
     }

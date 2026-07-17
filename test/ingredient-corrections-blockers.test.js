@@ -154,7 +154,8 @@ test('usage index deduplicates each recipe ingredient and sorts deterministicall
   assert.deepEqual(forward, reverse);
   assert.equal(forward.filter((use) => use.recipeId === 'b').length, 1);
   assert.equal(new Set(forward.map((use) => use.recipeIdentity)).size, forward.length);
-  assert.equal(forward.length, 7);
+  assert.equal(forward.length, 6, 'duplicate appearances of the same stable recipe ID are one use');
+  assert.equal(forward.some((use) => use.recipeName === 'Duplicate id'), false);
   assert.deepEqual(forward.map((use) => use.recipeName), [...forward.map((use) => use.recipeName)].sort());
 });
 
@@ -218,7 +219,7 @@ test('existing selected Shopping authority reconciles reviewed values without re
   );
 });
 
-test('plan range shopping uses effective reviewed ingredients and preserves range tombstones', () => {
+test('plan range shopping applies old and reviewed-name tombstones after effective projection across reload', () => {
   const raw = { _id: 'r', name: 'Recipe', recipeYield: '2 servings', recipeIngredient: ['1 onion'] };
   const corrected = review(raw, {
     name: 'shallot', amountState: 'numeric', amount: '2', measurementFamily: 'count', sourceUnit: 'count', countLabel: 'piece',
@@ -228,10 +229,17 @@ test('plan range shopping uses effective reviewed ingredients and preserves rang
     cart: [{ recipeId: 'plan:2026-07-17:2026-07-17:r', sourceRecipeId: 'r', origin: { kind: 'plan', rangeStart: '2026-07-17', rangeEnd: '2026-07-17' }, removedIngredientNames: ['onion'], ingredients: [] }],
   };
   const cart = regeneratePlanRangeCart(workspace, { rangeStart: '2026-07-17', rangeEnd: '2026-07-17' }, [corrected]);
-  assert.deepEqual(cart[0].ingredients.map(({ name, quantity, countLabel }) => ({ name, quantity, countLabel })), [
-    { name: 'shallot', quantity: 2, countLabel: 'piece' },
-  ]);
+  assert.deepEqual(cart[0].ingredients, [], 'the old onion evidence tombstone must suppress its reviewed shallot projection');
   assert.deepEqual(cart[0].removedIngredientNames, ['onion']);
+  const reloaded = regeneratePlanRangeCart({ ...workspace, cart }, { rangeStart: '2026-07-17', rangeEnd: '2026-07-17' }, [corrected]);
+  assert.deepEqual(reloaded, cart);
+
+  const reviewedNameTombstone = regeneratePlanRangeCart({
+    ...workspace,
+    cart: [{ ...workspace.cart[0], removedIngredientNames: ['  Shallots  '] }],
+  }, { rangeStart: '2026-07-17', rangeEnd: '2026-07-17' }, [corrected]);
+  assert.deepEqual(reviewedNameTombstone[0].ingredients, []);
+  assert.deepEqual(reviewedNameTombstone[0].removedIngredientNames, ['shallot']);
 });
 
 test('suggestion disliked-ingredient filter consumes reviewed names rather than immutable malformed evidence', () => {
@@ -243,7 +251,7 @@ test('suggestion disliked-ingredient filter consumes reviewed names rather than 
   assert.equal(pickForUs({ recipes: [corrected], preferences: { dislikedIngredients: ['spinach'] } }).length, 0);
 });
 
-test('effective projection and usage indexing remain linear at issue-scale without mutating input', { timeout: 15_000 }, () => {
+test('effective projection and usage indexing remain linear at issue-scale without mutating input', { timeout: 45_000 }, () => {
   const recipe = { _id: 'large', name: 'Large', recipeIngredient: Array.from({ length: 10_000 }, (_, index) => `${index + 1} pieces item ${index}`) };
   const before = structuredClone(recipe);
   const heapBefore = process.memoryUsage().heapUsed;
@@ -285,9 +293,23 @@ test('effective projection and usage indexing remain linear at issue-scale witho
     _id: `recipe-${recipeIndex}`, name: `Recipe ${String(recipeIndex).padStart(5, '0')}`,
     recipeIngredient: Array.from({ length: 20 }, (_, ingredientIndex) => `1 piece ingredient ${ingredientIndex}`),
   }));
+  const usageBefore = structuredClone(recipes);
+  const usageHeapBefore = process.memoryUsage().heapUsed;
   const indexStarted = performance.now();
   const index = buildRecipeUsageIndex(recipes);
   const indexMs = performance.now() - indexStarted;
+  const usageHeap = process.memoryUsage().heapUsed - usageHeapBefore;
   assert.equal(index.find('ingredient 1').length, 5_000);
-  assert.ok(indexMs < 6_000, `5k x 20 usage index took ${indexMs}ms`);
+  assert.deepEqual(index.find('ingredient 1').map((use) => use.recipeId),
+    Array.from({ length: 5_000 }, (_, recipeIndex) => `recipe-${recipeIndex}`));
+  assert.deepEqual(recipes, usageBefore);
+  assert.ok(usageHeap < 384 * 1024 * 1024, `5k x 20 usage index retained/allocated ${usageHeap} bytes`);
+
+  const baselineRecipes = recipes.slice(0, 1_250);
+  const baselineStarted = performance.now();
+  buildRecipeUsageIndex(baselineRecipes);
+  const baselineMs = Math.max(performance.now() - baselineStarted, 1);
+  assert.ok(indexMs < baselineMs * 8,
+    `5k x 20 usage index scaled quadratically: 1.25k=${baselineMs}ms 5k=${indexMs}ms`);
+  assert.ok(indexMs < 30_000, `5k x 20 usage index exceeded the conservative fail-safe: ${indexMs}ms`);
 });

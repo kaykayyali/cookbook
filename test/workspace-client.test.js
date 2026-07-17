@@ -46,6 +46,26 @@ test('optimistic replacement and regeneration prune transfer markers and reject 
   }), /invalid_pantry_item/);
 });
 
+test('optimistic reviewed-name replacement atomically migrates checked and transfer keys', () => {
+  const onion = { raw: '1 onion', name: 'onion', quantity: 1, unit: 'count', kind: 'indivisible' };
+  const shallot = { ...onion, name: 'shallot' };
+  const current = applyWorkspaceOperation(workspace({
+    cart: [{ recipeId: 'r1', ingredients: [onion] }],
+    shoppingChecked: { onion: true, 'pantry-transfer:onion': true },
+    pantry: [{ name: 'onion', quantity: 1, unit: 'count', kind: 'indivisible' }],
+  }), {
+    op: 'cart.upsertSelection',
+    payload: { selection: { recipeId: 'r1', ingredients: [shallot] }, checkedKeys: ['shallot', 'pantry-transfer:shallot'] },
+  });
+  assert.equal(current.shoppingChecked.shallot, true);
+  assert.equal(current.shoppingChecked['pantry-transfer:shallot'], true);
+  assert.equal(current.shoppingChecked['pantry-transfer:onion'], undefined);
+  const replay = applyWorkspaceOperation(current, {
+    op: 'pantry.add', payload: { sourceKey: 'shallot', item: shallot },
+  });
+  assert.deepEqual(replay.pantry, current.pantry, 'authoritative replay cannot transfer the renamed row twice');
+});
+
 test('invalid optimistic mutation does not poison the queue for a later valid mutation', async () => {
   const sent = [];
   let sequence = 0;

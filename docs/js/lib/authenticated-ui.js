@@ -23,6 +23,7 @@ import { interactionFeedback } from './interaction-feedback.js';
 import {
   reconcileReviewedRecipesInCart,
   reconcileReviewedShoppingChecked,
+  reviewedShoppingCheckedKeys,
 } from './ingredient-corrections.js';
 
 export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cookRuntime = null, onSignedIn, onSignedOut }) {
@@ -90,7 +91,7 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
   settings.renderAuth();
   $('settings-tour-btn')?.addEventListener('click', () => tour.start('cookbook'));
   initFab({ state, openDrawer: (id) => drawer.open(id), extract, imageCapture, showPanel: panels.showPanel });
-  initSearch({ state, onChange: () => recipes.render() });
+  const search = initSearch({ state, onChange: () => recipes.render() });
   wireSchemaModal();
   reminders.maybeWeeklyPlanReminder(state.plan);
   void engagement.load();
@@ -117,6 +118,7 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
   const tourStarted = tour.maybeStart('cookbook');
   if (!tourStarted) summerTheme.maybeShow();
   return {
+    findRecipeUses: search.findRecipeUses,
     renderShared: () => { week.render(); pantry.render(); cart.render(); engagement.render(); },
     renderActive: (_recipes, meta = {}) => {
       const before = Array.isArray(state.cart) ? state.cart : [];
@@ -126,13 +128,17 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
       const reconciledChecked = reconcileReviewedShoppingChecked(beforeChecked, before, reconciled);
       state.cart = reconciled;
       state.shoppingChecked = reconciledChecked;
+      const persistedMigrationKeys = new Set();
       reconciled.forEach((selection, index) => {
         if (JSON.stringify(selection) !== JSON.stringify(before[index])) {
-          void runtime.mutate('cart.upsertSelection', { selection });
+          const checkedKeys = reviewedShoppingCheckedKeys(beforeChecked, before[index], selection);
+          checkedKeys.forEach((key) => persistedMigrationKeys.add(key));
+          void runtime.mutate('cart.upsertSelection', { selection, checkedKeys });
         }
       });
       Object.keys(reconciledChecked).forEach((key) => {
-        if (reconciledChecked[key] === true && beforeChecked[key] !== true && !key.startsWith('pantry-transfer:')) {
+        if (reconciledChecked[key] === true && beforeChecked[key] !== true
+            && !key.startsWith('pantry-transfer:') && !persistedMigrationKeys.has(key)) {
           void runtime.mutate('shopping.setChecked', { key, checked: true });
         }
       });

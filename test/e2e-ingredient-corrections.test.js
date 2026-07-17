@@ -246,11 +246,28 @@ async function completeReviewedCorrection(page, { alreadyOpen = false } = {}) {
     observe.observe(modal, { attributes: true, subtree: true, childList: true, characterData: true });
     setTimeout(() => { observe.disconnect(); resolve(null); }, 1000);
   }));
+  const authoritySaved = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === '/api/recipe-mutations' && response.ok());
   await save.click();
   const observed = await pendingObserved;
   assert.deepEqual(observed, { disabled: true, pending: 'Saving reviewed correction…' });
   await dialog.waitFor({ state: 'hidden' });
   await page.getByText('Reviewed', { exact: true }).waitFor();
+  await authoritySaved;
+  await page.waitForFunction(() => new Promise((resolve) => {
+    const open = indexedDB.open('cookbook-client');
+    open.onerror = () => resolve(false);
+    open.onsuccess = () => {
+      const db = open.result;
+      const read = db.transaction('outbox').objectStore('outbox').getAll();
+      read.onerror = () => { db.close(); resolve(false); };
+      read.onsuccess = () => {
+        const drained = !read.result.some((row) => row.scope === 'recipe');
+        db.close();
+        resolve(drained);
+      };
+    };
+  }));
   assert.match(await page.locator('#toast').textContent(), /reviewed ingredient correction saved/i);
   assert.match(await page.locator('.detail-ing-item').first().innerText(), /2–4 basil leaves/i);
 }
@@ -263,6 +280,10 @@ test('mobile reviews malformed ingredient evidence, persists it, and reuses it d
     await page.keyboard.press('Enter');
     const keyboardDialog = page.getByRole('dialog', { name: 'Correct ingredient' });
     await keyboardDialog.waitFor();
+    const mobileSource = keyboardDialog.getByRole('link', { name: 'Open import source' });
+    const mobileSourceBox = await mobileSource.boundingBox();
+    assert.ok(mobileSourceBox && mobileSourceBox.width >= 44 && mobileSourceBox.height >= 44,
+      `mobile source link must be a 44px touch target: ${JSON.stringify(mobileSourceBox)}`);
     assert.deepEqual(await page.locator('#detail-modal').evaluate((element) => ({
       inert: element.hasAttribute('inert'), hidden: element.getAttribute('aria-hidden'), modal: element.getAttribute('aria-modal'),
     })), { inert: true, hidden: 'true', modal: null });
@@ -290,6 +311,15 @@ test('mobile reviews malformed ingredient evidence, persists it, and reuses it d
     const trigger = page.getByRole('button', { name: `Correct ${RAW_LINE}` });
     await trigger.click();
     const dialog = page.getByRole('dialog', { name: 'Correct ingredient' });
+    await dialog.waitFor();
+    await page.waitForFunction(() => {
+      const modal = document.getElementById('ingredient-correction-modal');
+      return modal?.hidden || /reviewed by\s+Kaysser/i.test(document.getElementById('ingredient-correction-review-status')?.textContent || '');
+    });
+    if (await dialog.isHidden()) {
+      await page.getByRole('button', { name: `Correct ${RAW_LINE}` }).click();
+      await dialog.waitFor();
+    }
     assert.match(await dialog.getByText(/reviewed by/i).textContent(), /Kaysser/i);
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'hidden' });

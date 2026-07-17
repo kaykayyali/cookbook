@@ -73,6 +73,7 @@ test('recipe mutation route rejects oversize, prototype-key, deeply nested, and 
   const bodies = [
     JSON.stringify({ mutationId: 'x'.repeat(201), op: 'recipe.ingredient.review', payload: {} }),
     JSON.stringify({ mutationId: 'm', op: 'recipe.ingredient.review', payload: { correction: { note: 'x'.repeat(50_001) } } }),
+    JSON.stringify({ mutationId: 'm', op: 'recipe.update', payload: { values: Array.from({ length: 10_001 }, () => 0) } }),
     '{"mutationId":"m","op":"recipe.ingredient.review","payload":{"__proto__":{"polluted":true}}}',
     deeplyNested,
   ];
@@ -85,4 +86,16 @@ test('recipe mutation route rejects oversize, prototype-key, deeply nested, and 
     assert.equal((await onRequestPost(ctx)).status, 400);
     assert.equal(calls, 0);
   }
+});
+
+test('recipe mutation route enforces an explicit structural depth bound before store persistence', async () => {
+  const nested = `{"mutationId":"bounded-depth","op":"recipe.update","payload":${'{"child":'.repeat(80)}0${'}'.repeat(80)}}`;
+  let calls = 0;
+  const ctx = context({ request: new Request('https://cookbook.test/api/recipe-mutations', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: nested,
+  }) });
+  ctx.data.recipeMutationStore = { mutate: async () => { calls += 1; return { status: 200, recipes: [] }; } };
+  const response = await onRequestPost(ctx);
+  assert.equal(response.status, 400);
+  assert.equal(calls, 0);
 });

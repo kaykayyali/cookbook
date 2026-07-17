@@ -54,6 +54,49 @@ test('mutation publishes before persistence and survives a reload once locally d
   assert.deepEqual(reloaded.current().pantry.map((item) => item.name), ['flour']);
 });
 
+test('reviewed-name transfer marker survives outbox reload, second runtime, and authoritative replay', async () => {
+  const onion = { raw: '1 onion', name: 'onion', quantity: 1, unit: 'count', kind: 'indivisible' };
+  const shallot = { ...onion, name: 'shallot' };
+  const initial = base({
+    cart: [{ recipeId: 'r1', ingredients: [onion] }],
+    pantry: [{ name: 'onion', quantity: 1, unit: 'count', kind: 'indivisible' }],
+    shoppingChecked: { onion: true, 'pantry-transfer:onion': true },
+  });
+  const repo = memoryRepo(initial);
+  let online = false;
+  const first = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => false,
+    makeId: () => 'rename-marker',
+  });
+  assert.equal(await first.mutate('cart.upsertSelection', {
+    selection: { recipeId: 'r1', ingredients: [shallot] },
+    checkedKeys: ['shallot', 'pantry-transfer:shallot'],
+  }), true);
+  assert.equal(first.current().shoppingChecked['pantry-transfer:shallot'], true);
+
+  const second = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => online,
+    send: async (request) => {
+      const authority = applyWorkspaceOperation(initial, request);
+      return { ok: true, workspace: { ...authority, revision: 1, updatedAt: 1 } };
+    },
+  });
+  assert.equal(second.current().shoppingChecked['pantry-transfer:shallot'], true,
+    'a second tab reconstructs the migrated marker from the durable outbox');
+  online = true;
+  assert.equal(await second.drain(), true);
+  assert.deepEqual(await repo.listOutbox(), []);
+
+  const reloaded = await createWorkspaceOutbox({
+    repo, authSub: 'cook-1', householdId: 'our-home', initial, isOnline: () => false,
+    makeId: () => 'duplicate-transfer',
+  });
+  assert.equal(reloaded.current().shoppingChecked['pantry-transfer:shallot'], true);
+  const before = structuredClone(reloaded.current().pantry);
+  assert.equal(await reloaded.mutate('pantry.add', { sourceKey: 'shallot', item: shallot }), true);
+  assert.deepEqual(reloaded.current().pantry, before, 'reload cannot duplicate the already-transferred renamed row');
+});
+
 test('a deterministic mutation-ID collision restores the pre-existing durable optimistic row', async () => {
   const repo = await openOfflineDb({ indexedDB, name: dbName() });
   await repo.enqueue({
