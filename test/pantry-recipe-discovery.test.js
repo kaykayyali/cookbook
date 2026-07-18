@@ -92,6 +92,19 @@ test('leaf identity normalizes only the final singular/plural token and preserve
   assert.deepEqual(index.find('bay leaves').map(({ recipeId }) => recipeId), ['bay-leaf']);
 });
 
+test('intrinsic package-word compounds never collapse to their suffix ingredient', () => {
+  const distinct = [
+    ['bottle gourd', 'gourd'],
+    ['bunch onion', 'onion'],
+    ['can candy', 'candy'],
+    ['jar tomato', 'tomato'],
+  ];
+  for (const [compound, suffix] of distinct) {
+    assert.equal(canonicalIngredientsMatch(compound, suffix), false, `${compound} ↔ ${suffix}`);
+    assert.equal(canonicalIngredientsMatch(suffix, compound), false, `${suffix} ↔ ${compound}`);
+  }
+});
+
 test('discovery reuses one bounded recipe index until recipe authority identity changes', () => {
   assert.equal(typeof createPantryRecipeDiscovery, 'function');
   let builds = 0;
@@ -198,6 +211,12 @@ test('reviewed ingredient authority invalidates a warmed discovery index exactly
   assert.equal(builds, 2, 'one authority publication causes one rebuild');
   assert.equal(render().length, 1);
   assert.equal(builds, 2, 'unchanged form renders do not rebuild');
+
+  const invalidated = structuredClone(reviewed.recipe);
+  invalidated.ingredientNormalizations[0].parserVersion = 0;
+  publishRecipeAuthority(state, [invalidated]);
+  assert.deepEqual(render(), [], 'invalid reviewed metadata falls back to immutable source evidence');
+  assert.equal(builds, 3, 'valid-to-invalid effective identity transition rebuilds the index');
 });
 
 test('image extraction accepts safe HTTP(S) forms and rejects executable, credentialed, malformed, and missing URLs', () => {

@@ -39,9 +39,15 @@ test('small cooking quantities render as safe practical cups, tablespoons, and t
   assert.equal(formatCanonicalAmount(9.9, 'ounce', { requiredQuantity: 9, category: 'pantry' }), '1⅛ cups');
 });
 
-test('fallback strips leaked count prefixes from malformed ingredient names', () => {
+test('fallback strips leaked count prefixes from malformed ingredient names without erasing intrinsic compounds', () => {
   assert.equal(normalizeIngredient('slices narutomaki )').name, 'narutomaki');
   assert.equal(normalizeIngredient('sheet nori seaweed )').name, 'nori seaweed');
+  assert.equal(normalizeIngredient('bottle of olive oil').name, 'olive oil');
+  assert.deepEqual(
+    (({ name, quantity, unit, countLabel }) => ({ name, quantity, unit, countLabel }))(normalizeIngredient('2 bottles olive oil')),
+    { name: 'olive oil', quantity: 2, unit: 'count', countLabel: 'bottle' },
+  );
+  assert.equal(normalizeIngredient('bottle gourd').name, 'bottle gourd');
 });
 
 test('recipe-set signatures ignore servings but change with membership and raw lines', () => {

@@ -4,6 +4,11 @@ import 'fake-indexeddb/auto';
 import { JSDOM } from 'jsdom';
 import { openOfflineDb } from '../docs/js/lib/offline-db.js';
 import { initRecipeRuntime } from '../docs/js/lib/recipe-runtime.js';
+import { createPantryRecipeDiscovery } from '../docs/js/lib/pantry-recipe-discovery.js';
+import {
+  applyReviewedIngredientCorrection,
+  ingredientEvidence,
+} from '../docs/js/lib/ingredient-corrections.js';
 
 const deferred = () => {
   let resolve;
@@ -38,6 +43,60 @@ function fakeBroadcastFactory() {
     close() { this.closed = true; channels.delete(this); }
   };
 }
+
+test('production reviewed correction rebuilds a warmed Pantry index once across optimistic and authoritative publication', async () => {
+  const repo = await openOfflineDb({ indexedDB, name: `recipe-correction-index-${Date.now()}` });
+  const window = eventTarget();
+  const document = eventTarget(); document.hidden = false; document.getElementById = () => null;
+  const base = { id: 'r1', _id: 'r1', name: 'Mystery Pesto', recipeIngredient: ['2 mystery leaves'], _updatedAt: 1 };
+  const state = { household: { household: { id: 'home' } }, recipes: [base] };
+  const response = deferred();
+  const runtime = await initRecipeRuntime({
+    state, repo, authSub: 'cook', document, window, BroadcastChannel: null,
+    schedule: () => ({ unref() {} }), clearSchedule() {},
+    send: async () => response.promise,
+  });
+  let builds = 0;
+  const discover = createPantryRecipeDiscovery({ onIndexBuild: () => { builds += 1; } });
+  const render = () => discover({
+    recipes: state.recipes,
+    recipeAuthorityVersion: state.recipeAuthorityVersion,
+    pantry: [{ name: 'basil' }], ingredientName: 'basil',
+  });
+  assert.deepEqual(render(), []);
+  assert.equal(builds, 1);
+
+  const ingredientId = ingredientEvidence(base)[0].id;
+  const correction = {
+    name: 'basil', amountState: 'numeric', amount: '2',
+    measurementFamily: 'count', sourceUnit: 'count', countLabel: 'leaf',
+  };
+  assert.equal(await runtime.mutate('recipe.ingredient.review', { id: 'r1', ingredientId, correction }), true);
+  assert.equal(render().length, 1, 'optimistic correction is discoverable immediately');
+  assert.equal(builds, 2);
+  const versionAfterOptimistic = state.recipeAuthorityVersion;
+
+  const authoritative = applyReviewedIngredientCorrection(base, {
+    ingredientId, correction, reviewer: { sub: 'cook', name: 'Cook' }, reviewedAt: 10,
+  });
+  assert.equal(authoritative.ok, true, authoritative.error);
+  response.resolve({ ok: true, recipes: [{
+    ...authoritative.recipe, _updatedAt: 10,
+    _serverReceipt: { mutationId: 'review-accepted', committedAt: 11 },
+  }] });
+  assert.equal(await runtime.drain(), true);
+  assert.equal(state.recipes[0].ingredientNormalizations[0].reviewedBy.sub, 'cook');
+  assert.deepEqual(state.recipes[0]._serverReceipt,
+    { mutationId: 'review-accepted', committedAt: 11 },
+    'metadata-only acknowledgement still publishes arbitrary server authority');
+  assert.equal(state.recipeAuthorityVersion, versionAfterOptimistic,
+    'acknowledgement metadata does not invalidate the discovery generation again');
+  assert.equal(render().length, 1);
+  assert.equal(builds, 2, 'one reviewed correction causes one discovery rebuild');
+  render();
+  assert.equal(builds, 2, 'unchanged rerenders reuse the corrected index');
+  runtime.destroy(); repo.close();
+});
 
 test('recipe synchronization failures are visible and discardable', async () => {
   const dom = new JSDOM(`<div id="recipe-sync-status" hidden><span data-recipe-sync-message></span><button data-action="retry-recipe-sync" hidden>Retry</button><button data-action="discard-recipe-sync" hidden>Discard</button></div>`);

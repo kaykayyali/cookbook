@@ -23,12 +23,7 @@ const UNIT_FACTORS = Object.freeze({
 const FRACTIONS = Object.freeze({ '¼': 0.25, '½': 0.5, '¾': 0.75, '⅓': 1 / 3, '⅔': 2 / 3, '⅛': 0.125, '⅜': 0.375, '⅝': 0.625, '⅞': 0.875 });
 const MAX_AMOUNT = 1_000_000;
 const SAFE_TEXT = /^[^<>\x00-\x1f\x7f]{1,80}$/;
-const COUNT_NAME_FORMS = new Set([
-  'bottle', 'bottles', 'bunch', 'bunches', 'can', 'cans', 'clove', 'cloves',
-  'item', 'items', 'jar', 'jars', 'package', 'packages',
-  'piece', 'pieces', 'portion', 'portions', 'serving', 'servings', 'sheet',
-  'sheets', 'slice', 'slices',
-]);
+
 // Leaf words are ingredient identity, not generic packaging/count suffixes. Only
 // culinary plants whose plain and leaf forms are unambiguous aliases opt in.
 const LEAF_BASE_ALIASES = new Set([
@@ -41,8 +36,9 @@ const compareText = (left, right) => left === right ? 0 : left < right ? -1 : 1;
 const round = (value) => Math.round((Number(value) + Number.EPSILON) * 1e9) / 1e9;
 
 /**
- * Exact normalized identities plus a base form for established count/package
- * words. Compounds remain intact, so basil cannot match basilisk or sauce.
+ * Exact normalized identities plus explicit culinary leaf aliases. Compounds
+ * remain intact, so basil cannot match basilisk or sauce and bottle gourd does
+ * not collapse to gourd.
  */
 export function canonicalIngredientVariants(value) {
   const exact = canonicalName(value);
@@ -56,14 +52,6 @@ export function canonicalIngredientVariants(value) {
   if (LEAF_BASE_ALIASES.has(exact)) {
     variants.add(`${exact} leaf`);
     variants.add(`${exact} leaves`);
-  }
-  if (words.length > 1 && COUNT_NAME_FORMS.has(words[0])) {
-    const base = canonicalName(words.slice(1).join(' '));
-    if (base && base !== 'uncertain ingredient') variants.add(base);
-  }
-  if (words.length > 1 && COUNT_NAME_FORMS.has(words.at(-1))) {
-    const base = canonicalName(words.slice(0, -1).join(' '));
-    if (base && base !== 'uncertain ingredient') variants.add(base);
   }
   return [...variants].sort(compareText);
 }
@@ -320,6 +308,11 @@ export function ingredientEvidence(recipe) {
     const reviewed = !current ? legacy : !legacy || current.reviewedAt >= legacy.reviewedAt ? current : legacy;
     return reviewed ? { ...clone(reviewed), id: base.id, evidenceOccurrence: base.evidenceOccurrence } : base;
   });
+}
+
+/** Minimal effective projection consumed by Pantry recipe discovery caching. */
+export function ingredientDiscoveryProjection(recipe) {
+  return ingredientEvidence(recipe).map(({ id, raw, name }) => ({ id, raw, name }));
 }
 
 export function buildReviewedIngredientRecord({ id, raw, correction, reviewer, reviewedAt = Date.now() } = {}) {
