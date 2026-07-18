@@ -2,14 +2,21 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import {
-  cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync,
+  cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'node:fs';
-import { basename, extname, isAbsolute, join, normalize, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { basename, dirname, extname, isAbsolute, join, normalize, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
 
 import { launchE2eBrowser } from '../test/helpers/playwright-browser.js';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const ISSUE21_FEATURE_COMMIT = '01a417fdedf57e2c0b5550a4c423adba74b1267e';
+const DEFAULT_OUTPUT = join(ROOT, 'artifacts', 'issue-21', 'evidence');
 
 const RECIPES = [
   { _id: 'basil-pasta', name: 'Basil Pasta', image: 'https://images.example.test/basil-pasta.jpg', recipeIngredient: ['2 basil leaves', '1 tomato', 'pasta'], recipeInstructions: ['Cook the pasta.'] },
@@ -45,10 +52,43 @@ function parseArgs(argv) {
     values[key.slice(2)] = value;
   }
   for (const key of ['baseline-docs', 'feature-docs', 'output-dir']) {
-    if (!values[key] || !isAbsolute(values[key])) throw new Error(`--${key} must be an explicit absolute path.`);
-    values[key] = resolve(values[key]);
+    if (values[key] && !isAbsolute(values[key])) throw new Error(`--${key} must be an explicit absolute path.`);
+    if (values[key]) values[key] = resolve(values[key]);
   }
+  values['feature-docs'] ||= join(ROOT, 'docs');
+  values['output-dir'] ||= DEFAULT_OUTPUT;
+  values.defaultFeature = !argv.includes('--feature-docs');
+  values.defaultBaseline = !values['baseline-docs'];
+  values.baselineLabel = values.defaultBaseline ? 'cookbook-issue21-baseline/docs' : sourceLabel(values['baseline-docs']);
+  values.featureLabel = values.defaultFeature ? 'cookbook-agent-21/docs' : sourceLabel(values['feature-docs']);
   return values;
+}
+
+function prepareDefaultSources(args) {
+  if (args.defaultFeature) {
+    execFileSync(process.execPath, [join(ROOT, 'scripts', 'build.js')], { cwd: ROOT, stdio: 'inherit' });
+  }
+  if (!args.defaultBaseline) return () => {};
+  const temporary = mkdtempSync(join(tmpdir(), 'cookbook-issue21-baseline-'));
+  const worktree = join(temporary, 'source');
+  const modules = join(worktree, 'node_modules');
+  try {
+    const baselineCommit = execFileSync('git', ['rev-parse', `${ISSUE21_FEATURE_COMMIT}^`], { cwd: ROOT, encoding: 'utf8' }).trim();
+    execFileSync('git', ['worktree', 'add', '--detach', worktree, baselineCommit], { cwd: ROOT, stdio: 'ignore' });
+    symlinkSync(join(ROOT, 'node_modules'), modules, 'junction');
+    execFileSync(process.execPath, [join(worktree, 'scripts', 'build.js')], { cwd: worktree, stdio: 'inherit' });
+    args['baseline-docs'] = join(worktree, 'docs');
+  } catch (error) {
+    if (existsSync(modules)) unlinkSync(modules);
+    try { execFileSync('git', ['worktree', 'remove', '--force', worktree], { cwd: ROOT, stdio: 'ignore' }); } catch { /* no worktree created */ }
+    rmSync(temporary, { recursive: true, force: true });
+    throw error;
+  }
+  return () => {
+    if (existsSync(modules)) unlinkSync(modules);
+    try { execFileSync('git', ['worktree', 'remove', '--force', worktree], { cwd: ROOT, stdio: 'ignore' }); } catch { /* cleanup best effort */ }
+    rmSync(temporary, { recursive: true, force: true });
+  };
 }
 
 function sourceLabel(docsPath) {
@@ -67,6 +107,9 @@ async function serveDocs(docsRoot) {
   const root = normalize(docsRoot);
   const server = createServer((request, response) => {
     const pathname = decodeURIComponent(new URL(request.url, 'http://evidence.invalid').pathname);
+    if (pathname === '/favicon.ico') {
+      response.writeHead(204, { 'cache-control': 'no-store' }); response.end(); return;
+    }
     const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
     const file = normalize(join(root, relative));
     if (!file.startsWith(root) || !existsSync(file) || !statSync(file).isFile()) {
@@ -256,6 +299,7 @@ async function pixelDiff(beforePath, afterPath) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const cleanupSources = prepareDefaultSources(args);
   const finalOutput = args['output-dir'];
   const staging = `${finalOutput}.staging-${process.pid}`;
   rmSync(staging, { recursive: true, force: true });
@@ -290,7 +334,7 @@ async function main() {
     };
     const report = {
       capture: {
-        baselineDocs: sourceLabel(args['baseline-docs']), featureDocs: sourceLabel(args['feature-docs']),
+        baselineDocs: args.baselineLabel, featureDocs: args.featureLabel,
         browser: 'Playwright pinned Chromium', reducedMotion: true, deviceScaleFactor: 2,
         launchFlags: ['--hide-scrollbars', '--disable-gpu', '--disable-threaded-animation', '--disable-threaded-scrolling', '--force-color-profile=srgb'],
       },
@@ -306,6 +350,7 @@ async function main() {
   } finally {
     await browser?.close();
     rmSync(staging, { recursive: true, force: true });
+    cleanupSources();
   }
 }
 

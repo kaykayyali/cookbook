@@ -5,6 +5,7 @@
 import { toast } from '../lib/dom.js';
 import { createRecipe, updateRecipe } from '../lib/api.js';
 import { mapCommunityItem } from '../lib/community.js';
+import { publishRecipeAuthority } from '../lib/recipe-authority.js';
 import { interactionFeedback as defaultFeedback } from '../lib/interaction-feedback.js';
 import {
   FIELD_MAP,
@@ -39,6 +40,7 @@ export function initDrawer({
   update = updateRecipe,
   mutateRecipe = null,
   feedback = defaultFeedback,
+  scheduleFocus = globalThis.setTimeout,
 }) {
   let customSave = null;
   function openSheet() {
@@ -47,7 +49,9 @@ export function initDrawer({
     if (drawer) drawer.classList.add('open');
     if (overlay) overlay.classList.add('open');
     document.body.style.overflow = 'hidden';
-    setTimeout(() => document.getElementById('f-name')?.focus(), 80);
+    scheduleFocus?.(() => {
+      if (drawer?.classList.contains('open')) document.getElementById('f-name')?.focus();
+    }, 80);
   }
 
   function closeSheet() {
@@ -138,7 +142,7 @@ export function initDrawer({
       const res = await create(r);
       if (!res.ok) { toast(res.error || 'Could not save recipe'); return { ok: false, error: res.error }; }
       const saved = mapCommunityItem(res.item);
-      state.recipes.unshift(saved);
+      publishRecipeAuthority(state, [saved, ...state.recipes]);
       Object.assign(r, saved);
     } else {
       const existing = state.recipes[idx];
@@ -146,7 +150,7 @@ export function initDrawer({
       const res = await update(serverId, r);
       if (!res.ok) { toast(res.error || 'Could not save recipe'); return { ok: false, error: res.error }; }
       const saved = mapCommunityItem(res.item);
-      state.recipes[idx] = saved;
+      publishRecipeAuthority(state, state.recipes.map((recipe, index) => index === idx ? saved : recipe));
       Object.assign(r, saved);
     }
 

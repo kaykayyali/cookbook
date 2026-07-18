@@ -2,6 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createPantryRecipeDiscovery } from '../../docs/js/lib/pantry-recipe-discovery.js';
 
 let mod;
 try {
@@ -155,6 +156,33 @@ test('durable recipe outbox allows confirmed deletion while offline', async () =
   assert.equal(result.ok, true);
   assert.equal(writes, 1);
   assert.equal(state.recipes.length, 0);
+});
+
+test('online-only fallback delete invalidates a warm Pantry index exactly once', async () => {
+  const { document } = makeDom();
+  const state = {
+    recipes: [SAMPLE_RECIPE], pantry: [], recipeAuthorityVersion: 7,
+    searchTerm: '', categoryFilter: '', eligibleOnly: false,
+  };
+  let builds = 0;
+  const discover = createPantryRecipeDiscovery({ onIndexBuild: () => { builds += 1; } });
+  const renderDiscovery = () => discover({
+    recipes: state.recipes,
+    recipeAuthorityVersion: state.recipeAuthorityVersion,
+    pantry: [], ingredientName: 'salt',
+  });
+  assert.equal(renderDiscovery().length, 1);
+  renderDiscovery();
+  const ctrl = mod.initRecipes({
+    state, document, confirmDelete: () => true,
+    removeRecipe: async () => ({ ok: true }), notify: () => {},
+  });
+  assert.equal((await ctrl._delete('r1')).ok, true);
+  assert.equal(state.recipeAuthorityVersion, 8);
+  assert.deepEqual(renderDiscovery(), []);
+  assert.equal(builds, 2);
+  renderDiscovery();
+  assert.equal(builds, 2, 'unchanged rerender reuses the rebuilt index');
 });
 
 test('recipe deletion stays silent when cancelled and emits destructive then success after confirmation', async () => {

@@ -6,6 +6,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createPantryRecipeDiscovery } from '../../docs/js/lib/pantry-recipe-discovery.js';
+import { formBuffers } from '../../docs/js/components/recipeForm.js';
+import { toSchema } from '../../docs/js/lib/schema.js';
 
 const doc = {
   getElementById: () => ({
@@ -137,6 +140,73 @@ test('durable recipe outbox allows an offline edit after queue persistence', asy
   globalThis.document = doc;
 });
 
+test('online-only fallback update replaces recipe authority and invalidates a warm Pantry index once', async () => {
+  const { document, elements } = makeDom();
+  globalThis.document = document;
+  const state = { recipes: [SAMPLE], editingId: null, recipeAuthorityVersion: 0 };
+  let builds = 0;
+  const discover = createPantryRecipeDiscovery({ onIndexBuild: () => { builds += 1; } });
+  const render = () => discover({
+    recipes: state.recipes,
+    recipeAuthorityVersion: state.recipeAuthorityVersion,
+    pantry: [],
+    ingredientName: 'eggs',
+  });
+  render();
+  render();
+  const before = state.recipes;
+  const ctrl = mod.initDrawer({
+    state, document,
+    update: async (_id, recipe) => ({ ok: true, item: { id: 'r1', recipe: toSchema({ ...SAMPLE, ...recipe }) } }),
+  });
+  ctrl.open('r1');
+  elements['f-name'].value = 'Renamed Carbonara';
+  const result = await ctrl.save();
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.notEqual(state.recipes, before, 'fallback update publishes an immutable authority array');
+  assert.equal(state.recipeAuthorityVersion, 1);
+  assert.equal(render()[0]?.recipeName, 'Renamed Carbonara');
+  assert.equal(builds, 2);
+  render();
+  assert.equal(builds, 2, 'unchanged rerender reuses the rebuilt index');
+  globalThis.document = doc;
+});
+
+test('online-only fallback create invalidates a warm Pantry index exactly once', async () => {
+  const { document, elements } = makeDom();
+  globalThis.document = document;
+  const state = { recipes: [], editingId: null, recipeAuthorityVersion: 4 };
+  let builds = 0;
+  const discover = createPantryRecipeDiscovery({ onIndexBuild: () => { builds += 1; } });
+  const render = () => discover({
+    recipes: state.recipes,
+    recipeAuthorityVersion: state.recipeAuthorityVersion,
+    pantry: [],
+    ingredientName: 'salt',
+  });
+  render();
+  const ctrl = mod.initDrawer({
+    state, document,
+    create: async (recipe) => ({ ok: true, item: { id: 'new', recipe: toSchema(recipe) } }),
+  });
+  ctrl.open(null);
+  elements['f-name'].value = 'Salt Toast';
+  formBuffers.ingredients = ['salt'];
+  formBuffers.steps = ['Toast it'];
+  const result = await ctrl.save();
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(state.recipeAuthorityVersion, 5);
+  assert.equal(render()[0]?.recipeName, 'Salt Toast');
+  assert.equal(builds, 2);
+  render();
+  assert.equal(builds, 2, 'unchanged rerender reuses the rebuilt index');
+  formBuffers.ingredients = [];
+  formBuffers.steps = [''];
+  globalThis.document = doc;
+});
+
 test('openPrefilled strips _id so the recipe opens as "New"', () => {
   if (!mod.initDrawer) return;
   const { document, elements } = makeDom();
@@ -170,6 +240,8 @@ test('reviewable draft uses its explicit confirmation callback instead of ordina
 
 test('save returns an object describing the result', async () => {
   if (!mod.initDrawer) return;
+  formBuffers.ingredients = [];
+  formBuffers.steps = [''];
   const state = { recipes: [], editingId: null };
   const ctrl = mod.initDrawer({ state, document: doc });
   // Validation will fail (no name, no ingredients) — that's fine, the API
@@ -179,6 +251,23 @@ test('save returns an object describing the result', async () => {
   const result = await ctrl.save();
   assert.equal(typeof result, 'object');
   assert.equal(result.ok, false, 'save without required fields returns ok:false');
+});
+
+test('closing before delayed initial focus does not steal focus back into the hidden drawer', () => {
+  const { document, elements } = makeDom();
+  const scheduled = [];
+  let focused = 0;
+  elements['f-name'].focus = () => { focused += 1; };
+  const ctrl = mod.initDrawer({
+    state: { recipes: [SAMPLE], editingId: null },
+    document,
+    scheduleFocus: (callback) => { scheduled.push(callback); },
+  });
+  ctrl.open('r1');
+  ctrl.close();
+  assert.equal(scheduled.length, 1);
+  scheduled[0]();
+  assert.equal(focused, 0, 'a closed drawer cannot reclaim focus from the resumed detail');
 });
 
 test('close removes .open class from drawer + overlay and clears editingId', () => {
