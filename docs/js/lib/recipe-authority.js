@@ -7,7 +7,6 @@ import {
 
 const discoverySignatures = new WeakMap();
 const discoveryRecords = new WeakMap();
-const MAX_AUTHORITY_LENGTH = 10_000;
 
 function assertState(state) {
   if ((typeof state !== 'object' && typeof state !== 'function') || state === null) {
@@ -16,7 +15,9 @@ function assertState(state) {
 }
 
 function snapshotAuthority(recipes) {
-  if (!Array.isArray(recipes)) return { next: [], ok: true };
+  let array = false;
+  try { array = Array.isArray(recipes); } catch { return { next: [], ok: false }; }
+  if (!array) return { next: [], ok: true };
   let length = 0;
   let ok = true;
   try {
@@ -24,8 +25,8 @@ function snapshotAuthority(recipes) {
     length = Number.isSafeInteger(descriptor?.value) && descriptor.value >= 0
       ? descriptor.value : 0;
   } catch { ok = false; }
-  if (length > MAX_AUTHORITY_LENGTH) { length = MAX_AUTHORITY_LENGTH; ok = false; }
-  const next = new Array(length);
+  let next;
+  try { next = new Array(length); } catch { return { next: [], ok: false }; }
   for (let index = 0; index < length; index += 1) {
     try {
       const descriptor = Object.getOwnPropertyDescriptor(recipes, String(index));

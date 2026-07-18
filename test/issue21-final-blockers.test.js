@@ -328,3 +328,23 @@ test('stale asynchronous index preparation is cancelled when recipe authority ch
   if (page.pending) { await page.ready; page = discover.page(options); }
   assert.deepEqual(page.results.map(({ recipeId }) => recipeId), ['new']);
 });
+
+test('oversized publication preserves complete shallow authority while bounding only discovery projection', async () => {
+  const authority = Array.from({ length: 10_001 }, (_, index) => recipe(
+    `oversized-${index}`,
+    `Oversized ${index}`,
+    [],
+  ));
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  const published = publishRecipeAuthority(state, authority);
+
+  assert.equal(published.length, authority.length);
+  assert.equal(state.recipes.length, authority.length);
+  assert.equal(state.recipes[10_000], authority[10_000], 'shallow publication preserves the final element identity');
+  assert.equal(state.recipeAuthorityVersion, 1);
+
+  const projection = recipeDiscoveryAuthority(state.recipes);
+  await projection.promise;
+  assert.equal(projection.ok, false, 'oversized discovery projection fails safe');
+  assert.equal(projection.snapshot.length, 10_000, 'only discovery work is bounded');
+});

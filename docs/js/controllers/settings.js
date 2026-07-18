@@ -34,6 +34,7 @@ const DEFAULT_THEME = 'light';
  * @param {(opts) => void} [deps.initGoogleSignIn]
  * @param {(msg) => void} [deps.toast]
  * @param {() => void} [deps.exportRecipes]
+ * @param {(recipes: object[]) => Promise<boolean>|boolean} [deps.setRecipeAuthority]
  * @param {() => void} [deps.onChange] - re-render after import
  * @param {() => string|null} [deps.getStoredTheme] - read current theme
  * @param {object} [deps.theme] - { getStored, set, apply } — defaults to singleton
@@ -51,6 +52,7 @@ export function initSettings({
   exportRecipes: exportRecipesDep = defaultExportRecipes,
   importToServer: importToServerDep = importToServer,
   fetchRecipes: fetchRecipesDep = fetchRecipes,
+  setRecipeAuthority = null,
   onChange = null,
   getStoredTheme = defaultTheme.getStored,
   theme: themeDep = defaultTheme,
@@ -101,7 +103,10 @@ export function initSettings({
         // Reload recipes from server to get server-assigned ids and publish the
         // one authoritative replacement before the existing render callback.
         const fres = await fetchRecipesDep();
-        if (fres.ok) publishRecipeAuthority(state, fres.recipes);
+        if (fres.ok) {
+          if (setRecipeAuthority) await setRecipeAuthority(fres.recipes);
+          else publishRecipeAuthority(state, fres.recipes);
+        }
         if (onChange) onChange();
         toastDep(`Imported ${pluralize(res.imported || imported.length, 'recipe')}`);
       } catch { toastDep('Could not read file — expected JSON-LD'); }

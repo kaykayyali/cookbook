@@ -91,7 +91,10 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
       importDraftId ? { onSave: confirmImportDraft(importDraftId) } : {},
     ),
   });
-  const settings = initSettings({ state, exportRecipes: () => exportRecipesToFile(state), onSignedIn, onSignedOut });
+  const settings = initSettings({
+    state, exportRecipes: () => exportRecipesToFile(state),
+    setRecipeAuthority: recipeRuntime?.setAuthority, onSignedIn, onSignedOut,
+  });
   panels.register('week', week.render);
   panels.register('recipes', recipes.render);
   panels.register('pantry', pantry.render);

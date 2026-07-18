@@ -58,3 +58,7 @@ test('recipe refresh restores runtime authority when cache persistence rejects',
   assert.match(appSource, /setAuthority\([^;]+\)\.catch\(\(\) => false\)/);
   assert.match(appSource, /publishRecipeAuthority\(state, recipeRuntime\.current\(\)\)/);
 });
+
+test('authenticated Settings composition delegates imported authority to the recipe runtime', () => {
+  assert.match(uiSource, /initSettings\(\{[^;]*setRecipeAuthority:\s*recipeRuntime\?\.setAuthority[^;]*\}\)/s);
+});

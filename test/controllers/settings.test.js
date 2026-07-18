@@ -2,6 +2,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import 'fake-indexeddb/auto';
+import { openOfflineDb } from '../../docs/js/lib/offline-db.js';
+import { initRecipeRuntime } from '../../docs/js/lib/recipe-runtime.js';
 
 if (typeof globalThis.localStorage === 'undefined') {
   globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
@@ -181,6 +184,64 @@ test('Settings import publishes fetched recipe authority once and renders once',
     assert.equal(state.recipeAuthorityVersion, 1);
     assert.deepEqual(state.recipes.map(({ _id }) => _id), ['imported']);
   } finally {
+    globalThis.FileReader = originalFileReader;
+  }
+});
+
+test('Settings import synchronizes runtime and durable authority before the next offline optimistic create', async () => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const importedSchema = {
+    '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Pesto',
+    recipeIngredient: ['basil'], recipeInstructions: ['Blend'],
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([importedSchema]) } }));
+    }
+  };
+  const oldRecipe = { id: 'old', _id: 'old', name: 'Old Soup', recipeIngredient: ['stock'] };
+  const importedRecipe = { id: 'imported', _id: 'imported', name: 'Imported Pesto', recipeIngredient: ['basil'] };
+  const state = {
+    household: { household: { id: 'home' } }, recipes: [oldRecipe], recipeAuthorityVersion: 0,
+  };
+  const repo = await openOfflineDb({ indexedDB, name: `settings-import-runtime-${Date.now()}` });
+  const runtimeDocument = {
+    hidden: false, getElementById: () => null, addEventListener() {}, removeEventListener() {},
+  };
+  const runtimeWindow = {
+    navigator: { onLine: false }, addEventListener() {}, removeEventListener() {},
+  };
+  const runtime = await initRecipeRuntime({
+    state, repo, authSub: 'cook', document: runtimeDocument, window: runtimeWindow,
+    BroadcastChannel: null, schedule: () => ({ unref() {} }), clearSchedule() {},
+    send: async () => assert.fail('offline import probe must not send'),
+  });
+  let imported;
+  const importFinished = new Promise((resolve) => { imported = resolve; });
+  const ctrl = mod.initSettings({
+    state,
+    document,
+    importToServer: async () => ({ ok: true, imported: 1 }),
+    fetchRecipes: async () => ({ ok: true, recipes: [importedRecipe] }),
+    setRecipeAuthority: runtime.setAuthority,
+    toast: (message) => { if (message.startsWith('Imported ')) imported(); },
+  });
+  try {
+    ctrl._importRecipes({});
+    await importFinished;
+    assert.deepEqual(state.recipes.map(({ id }) => id), ['imported']);
+    assert.deepEqual(runtime.current().map(({ id }) => id), ['imported']);
+    assert.deepEqual((await repo.getRecipes('cook', 'home')).map(({ id }) => id), ['imported']);
+
+    assert.equal(await runtime.mutate('recipe.create', {
+      id: 'offline', item: { id: 'offline', _id: 'offline', name: 'Offline Pie', recipeIngredient: ['apple'] },
+    }), true);
+    assert.deepEqual(new Set(state.recipes.map(({ id }) => id)), new Set(['imported', 'offline']));
+    assert.deepEqual(new Set(runtime.current().map(({ id }) => id)), new Set(['imported', 'offline']));
+  } finally {
+    runtime.destroy();
+    repo.close();
     globalThis.FileReader = originalFileReader;
   }
 });
