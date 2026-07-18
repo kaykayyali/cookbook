@@ -1,8 +1,10 @@
 import {
   adoptRecipeDiscoveryRecord,
+  certifyRecipeDiscoveryAuthority,
   equivalentRecipeDiscoveryAuthority,
   prepareRecipeDiscoveryIndex,
   recipeDiscoveryAuthority,
+  replaceRecipeDiscoveryRecord,
 } from './recipe-discovery-projection.js';
 
 const discoverySignatures = new WeakMap();
@@ -51,24 +53,61 @@ export function publishRecipeAuthority(state, recipes) {
   const projection = recipeDiscoveryAuthority(next);
   const previous = discoverySignatures.get(state);
   const previousRecord = discoveryRecords.get(state);
-  let ok = snapshot.ok && projection.ok;
+  const ok = snapshot.ok && projection.ok;
   const signatureChanged = previous === undefined
     || !previous.ok || !ok || previous.signature !== projection.signature;
-  let equivalent = false;
+  let equivalence = false;
   if (snapshot.ok && previousRecord && signatureChanged) {
-    try {
-      equivalent = equivalentRecipeDiscoveryAuthority(previousRecord, projection);
-      if (equivalent) adoptRecipeDiscoveryRecord(projection, previousRecord);
-    } catch { equivalent = false; }
-    ok = snapshot.ok && projection.ok;
+    try { equivalence = equivalentRecipeDiscoveryAuthority(previousRecord, projection); }
+    catch { equivalence = false; }
   }
-  const changed = previous === undefined || (signatureChanged && !equivalent);
+  const certificationPending = equivalence === null && Boolean(projection.source);
+
   state.recipes = next;
-  if (changed) state.recipeAuthorityVersion = (Number(state.recipeAuthorityVersion) || 0) + 1;
-  if (!changed && !equivalent && previousRecord) {
-    try { adoptRecipeDiscoveryRecord(projection, previousRecord); } catch {}
-  }
   discoveryRecords.set(state, projection);
+
+  if (certificationPending) {
+    // Keep serving the last certified index while an isolated candidate is
+    // prepared cooperatively. The detached candidate retains the new source;
+    // provisional adoption therefore cannot erase evidence needed to certify it.
+    const certification = certifyRecipeDiscoveryAuthority(previousRecord, projection);
+    adoptRecipeDiscoveryRecord(projection, previousRecord);
+    discoverySignatures.set(state, previous);
+    projection.certificationPromise = certification.then(({ equivalent, record }) => {
+      if (discoveryRecords.get(state) !== projection) return { stale: true, equivalent };
+      if (equivalent) {
+        adoptRecipeDiscoveryRecord(projection, previousRecord);
+        discoverySignatures.set(state, previous);
+      } else {
+        replaceRecipeDiscoveryRecord(projection, record);
+        state.recipeAuthorityVersion = (Number(state.recipeAuthorityVersion) || 0) + 1;
+        discoverySignatures.set(state, {
+          ok: snapshot.ok && record.ok,
+          signature: record.signature,
+        });
+      }
+      return { stale: false, equivalent };
+    }).catch(() => {
+      if (discoveryRecords.get(state) === projection) {
+        projection.ok = false;
+        projection.signature = '';
+        projection.snapshot = [];
+        projection.index = null;
+        projection.source = null;
+        projection.promise = null;
+        projection.authorityPromise = null;
+        state.recipeAuthorityVersion = (Number(state.recipeAuthorityVersion) || 0) + 1;
+        discoverySignatures.set(state, { ok: false, signature: '' });
+      }
+      return { stale: discoveryRecords.get(state) !== projection, equivalent: false };
+    });
+    return next;
+  }
+
+  const changed = previous === undefined || (signatureChanged && equivalence !== true);
+  if (changed) state.recipeAuthorityVersion = (Number(state.recipeAuthorityVersion) || 0) + 1;
+  if (equivalence === true) adoptRecipeDiscoveryRecord(projection, previousRecord);
+  else if (!changed && previousRecord) adoptRecipeDiscoveryRecord(projection, previousRecord);
   discoverySignatures.set(state, changed
     ? { ok, signature: projection.signature }
     : previous || { ok, signature: projection.signature });

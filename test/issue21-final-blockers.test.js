@@ -213,6 +213,94 @@ test('large raw acknowledgement reuses an in-flight equivalent preparation', asy
   assert.equal(acknowledgementRecord.index, firstRecord.index);
 });
 
+test('large structured acknowledgement certifies asynchronously without publication-stack ingredient work', async () => {
+  const wide = Array.from({ length: 1_001 }, (_, index) => (
+    normalizeIngredient(`${index + 1} cups structured-${index}`)
+  ));
+  const corpus = [
+    recipe('structured', 'Structured', wide),
+    ...Array.from({ length: 200 }, (_, index) => (
+      recipe(`filler-${index}`, `Filler ${index}`, [normalizeIngredient('1 cup tomato')])
+    )),
+  ];
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, corpus);
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  await firstRecord.promise;
+  const firstIndex = firstRecord.index;
+  const version = state.recipeAuthorityVersion;
+
+  let publicationIngredientReads = 0;
+  const acknowledgement = structuredClone(corpus);
+  acknowledgement[0]._updatedAt = 99;
+  acknowledgement[0].recipeIngredient = new Proxy(acknowledgement[0].recipeIngredient, {
+    getOwnPropertyDescriptor(target, property) {
+      if (/^(0|[1-9]\d*)$/.test(String(property))) publicationIngredientReads += 1;
+      return Reflect.getOwnPropertyDescriptor(target, property);
+    },
+  });
+
+  publishRecipeAuthority(state, acknowledgement);
+  const candidate = recipeDiscoveryAuthority(state.recipes);
+
+  assert.ok(publicationIngredientReads <= 50,
+    `publication synchronously read ${publicationIngredientReads} structured ingredients`);
+  assert.equal(state.recipeAuthorityVersion, version);
+  assert.equal(candidate.index, firstIndex, 'the prior certified index remains provisionally available');
+  assert.ok(candidate.certificationPromise instanceof Promise, 'structured equivalence is certified asynchronously');
+  await candidate.certificationPromise;
+  assert.equal(state.recipeAuthorityVersion, version);
+  assert.equal(candidate.index, firstIndex, 'equivalent certification retains the exact prior index');
+});
+
+test('only the newest structured certification invalidates once and exposes changed discovery', async () => {
+  const makeCorpus = (firstName) => [
+    recipe('structured', 'Structured', [normalizeIngredient(`1 cup ${firstName}`)]),
+    ...Array.from({ length: 200 }, (_, index) => (
+      recipe(`filler-${index}`, `Filler ${index}`, [normalizeIngredient('1 cup tomato')])
+    )),
+  ];
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, makeCorpus('basil'));
+  await recipeDiscoveryAuthority(state.recipes).promise;
+  const version = state.recipeAuthorityVersion;
+
+  publishRecipeAuthority(state, makeCorpus('parsley'));
+  const staleCandidate = recipeDiscoveryAuthority(state.recipes);
+  publishRecipeAuthority(state, makeCorpus('cilantro'));
+  const currentCandidate = recipeDiscoveryAuthority(state.recipes);
+
+  assert.equal(state.recipeAuthorityVersion, version, 'unreviewed async work cannot invalidate synchronously');
+  await Promise.all([staleCandidate.certificationPromise, currentCandidate.certificationPromise]);
+  assert.equal(state.recipeAuthorityVersion, version + 1, 'only the current changed certification invalidates');
+  assert.equal(currentCandidate.index.byIngredient.has('cilantro'), true);
+  assert.equal(currentCandidate.index.byIngredient.has('basil'), false);
+  assert.equal(currentCandidate.index.byIngredient.has('parsley'), false);
+});
+
+test('cold immediate structured acknowledgement adopts the in-flight authority without a generation', async () => {
+  const corpus = Array.from({ length: 201 }, (_, index) => recipe(
+    `structured-${index}`,
+    `Structured ${index}`,
+    [normalizeIngredient(`1 cup ingredient-${index}`)],
+  ));
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, corpus);
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  const version = state.recipeAuthorityVersion;
+
+  const acknowledgement = structuredClone(corpus);
+  acknowledgement[0]._updatedAt = 123;
+  publishRecipeAuthority(state, acknowledgement);
+  const candidate = recipeDiscoveryAuthority(state.recipes);
+
+  assert.equal(state.recipeAuthorityVersion, version);
+  assert.ok(candidate.certificationPromise instanceof Promise);
+  await Promise.all([firstRecord.promise, candidate.certificationPromise]);
+  assert.equal(state.recipeAuthorityVersion, version);
+  assert.equal(candidate.index, firstRecord.index);
+});
+
 test('raw semantic signatures ignore losing canonical variants but detect winner changes', async () => {
   const state = { recipes: [], recipeAuthorityVersion: 0 };
   publishRecipeAuthority(state, [recipe('r', 'Pesto', ['basil'])]);

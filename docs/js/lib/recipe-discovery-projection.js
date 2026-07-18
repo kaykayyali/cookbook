@@ -15,6 +15,7 @@ const MAX_IMAGE_DEPTH = 8;
 const SYNC_RECIPE_LIMIT = 200;
 const YIELD_INGREDIENT_CHUNK = 50;
 const MISSING = Symbol('missing');
+const INVALID_RAW_SUMMARIES = Symbol('invalid-raw-summaries');
 const cache = new WeakMap();
 
 const EFFECTIVE_FIELDS = Object.freeze(['raw', 'name']);
@@ -229,6 +230,13 @@ function finishAuthorityRecord(record, context, projected) {
   return record;
 }
 
+function pendingAuthorityRecord(source, caches = null) {
+  return {
+    ok: false, signature: '', snapshot: null, source, index: null,
+    promise: null, authorityPromise: null, certificationPromise: null, caches,
+  };
+}
+
 function makeAuthorityRecord(recipes) {
   const context = { ok: true };
   const totals = { ingredients: 0 };
@@ -241,10 +249,7 @@ function makeAuthorityRecord(recipes) {
     const item = sanitizeRecipe(value, context, totals);
     if (item) projected.push(item);
   }
-  return finishAuthorityRecord({
-    ok: false, signature: '', snapshot: null, source: recipes, index: null,
-    promise: null, authorityPromise: null, caches: null,
-  }, context, projected);
+  return finishAuthorityRecord(pendingAuthorityRecord(recipes), context, projected);
 }
 
 export function recipeDiscoveryAuthority(recipes) {
@@ -253,10 +258,7 @@ export function recipeDiscoveryAuthority(recipes) {
   if (!record) {
     record = recipes.length <= SYNC_RECIPE_LIMIT
       ? makeAuthorityRecord(recipes)
-      : {
-        ok: false, signature: '', snapshot: null, source: recipes, index: null,
-        promise: null, authorityPromise: null, caches: null,
-      };
+      : pendingAuthorityRecord(recipes);
     cache.set(recipes, record);
   }
   return record;
@@ -266,28 +268,32 @@ function rawOnlyRecipeSummary(value, context, totals) {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return null;
   const id = boundedText(ownValue(value, '_id', context), '', context)
     || boundedText(ownValue(value, 'id', context), '', context);
-  if (!id) return null;
+  if (!id) return context.ok ? null : INVALID_RAW_SUMMARIES;
   const name = boundedText(ownValue(value, 'name', context), 'Untitled', context);
   const image = safeRecipeImageUrlValue(ownValue(value, 'image', context), context);
   const normalizations = ownValue(value, 'ingredientNormalizations', context);
   if (safeArrayCheck(normalizations, context) && safeArrayLength(normalizations, context) > 0) return null;
-  if (!context.ok) return null;
+  if (!context.ok) return INVALID_RAW_SUMMARIES;
   const ingredientValue = ownValue(value, 'recipeIngredient', context);
   const ingredients = new Set();
   if (safeArrayCheck(ingredientValue, context)) {
     const sourceLength = safeArrayLength(ingredientValue, context);
-    const length = Math.min(sourceLength, MAX_INGREDIENTS_PER_RECIPE);
-    if (sourceLength > MAX_INGREDIENTS_PER_RECIPE) context.ok = false;
-    for (let index = 0; index < length; index += 1) {
+    if (!context.ok || sourceLength > MAX_INGREDIENTS_PER_RECIPE) return INVALID_RAW_SUMMARIES;
+    // A single wide row must be certified by the yielded path rather than
+    // monopolizing the synchronous publication stack.
+    if (sourceLength > YIELD_INGREDIENT_CHUNK) return null;
+    for (let index = 0; index < sourceLength; index += 1) {
       totals.ingredients += 1;
-      if (totals.ingredients > MAX_TOTAL_INGREDIENTS) { context.ok = false; break; }
+      if (totals.ingredients > MAX_TOTAL_INGREDIENTS) return INVALID_RAW_SUMMARIES;
       const ingredient = ownValue(ingredientValue, String(index), context);
+      if (!context.ok) return INVALID_RAW_SUMMARIES;
       if (ingredient === MISSING) continue;
-      if (typeof ingredient !== 'string' || ingredient.length > MAX_TEXT) { context.ok = false; continue; }
+      if (typeof ingredient !== 'string') return null;
+      if (ingredient.length > MAX_TEXT) return INVALID_RAW_SUMMARIES;
       ingredients.add(ingredient);
     }
   }
-  return context.ok ? { id, name, image, ingredients } : null;
+  return context.ok ? { id, name, image, ingredients } : INVALID_RAW_SUMMARIES;
 }
 
 function rawSummariesFromSnapshot(snapshot) {
@@ -308,19 +314,20 @@ function rawSummariesFromSnapshot(snapshot) {
 
 function rawSummariesFromRecipes(recipes) {
   const context = { ok: true };
-  if (!safeArrayCheck(recipes, context)) return null;
+  if (!safeArrayCheck(recipes, context)) return context.ok ? null : INVALID_RAW_SUMMARIES;
   const length = safeArrayLength(recipes, context);
-  if (!context.ok || length > MAX_RECIPES) return null;
+  if (!context.ok || length > MAX_RECIPES) return INVALID_RAW_SUMMARIES;
   const totals = { ingredients: 0 };
   const summaries = new Map();
   for (let index = 0; index < length; index += 1) {
     const value = ownValue(recipes, String(index), context);
-    if (value === MISSING) { context.ok = false; break; }
+    if (value === MISSING || !context.ok) return INVALID_RAW_SUMMARIES;
     const summary = rawOnlyRecipeSummary(value, context, totals);
+    if (summary === INVALID_RAW_SUMMARIES) return INVALID_RAW_SUMMARIES;
     if (!summary || summaries.has(summary.id)) return null;
     summaries.set(summary.id, summary);
   }
-  return context.ok ? summaries : null;
+  return context.ok ? summaries : INVALID_RAW_SUMMARIES;
 }
 
 function rawSummaries(record) {
@@ -357,8 +364,11 @@ function compactRawRows(summary, caches) {
 
 function compareRawAuthorities(previousRecord, candidateRecord) {
   const previous = rawSummaries(previousRecord);
+  if (previous === INVALID_RAW_SUMMARIES) return false;
+  if (!previous) return null;
   const candidate = rawSummaries(candidateRecord);
-  if (!previous || !candidate) return null;
+  if (candidate === INVALID_RAW_SUMMARIES) return false;
+  if (!candidate) return null;
   if (previous.size !== candidate.size) return false;
   const changed = [];
   for (const [id, summary] of candidate) {
@@ -401,19 +411,40 @@ function sameCompactIndexes(left, right) {
 }
 
 /**
- * Prove exact compact discovery equivalence. Identical raw evidence can be
- * certified without parsing (including while the first preparation is still in
- * flight). Otherwise compare the exact compact rows, whose canonical raw winner
- * discards aliases such as a losing "fresh basil" variant.
+ * Return true/false only when compact discovery equivalence can be decided
+ * without building on the publication stack. Null delegates the decision to the
+ * yielded certification path.
  */
 export function equivalentRecipeDiscoveryAuthority(previous, candidate) {
   if (!previous || !candidate) return false;
   const rawComparison = compareRawAuthorities(previous, candidate);
   if (rawComparison !== null) return rawComparison;
-  if (!previous.ok || !previous.index) return false;
-  candidate.caches = previous.caches || candidate.caches;
-  const candidateIndex = buildRecipeDiscoveryIndexSync(candidate);
-  return candidate.ok && sameCompactIndexes(previous.index, candidateIndex);
+  if (previous.ok && candidate.ok && previous.index && candidate.index) {
+    return sameCompactIndexes(previous.index, candidate.index);
+  }
+  return null;
+}
+
+/** Build an isolated candidate with cooperative yields, then compare exact compact rows. */
+export function certifyRecipeDiscoveryAuthority(previous, candidate) {
+  if (!previous || !candidate?.source) {
+    return Promise.resolve({
+      equivalent: equivalentRecipeDiscoveryAuthority(previous, candidate) === true,
+      record: candidate,
+    });
+  }
+  const certification = pendingAuthorityRecord(
+    candidate.source,
+    previous.caches || candidate.caches || null,
+  );
+  return Promise.all([
+    prepareRecipeDiscoveryIndex(previous),
+    prepareRecipeDiscoveryIndex(certification),
+  ]).then(() => ({
+    equivalent: Boolean(previous.ok && certification.ok
+      && sameCompactIndexes(previous.index, certification.index)),
+    record: certification,
+  }));
 }
 
 function copyAdoptedRecord(target, source) {
@@ -427,6 +458,19 @@ function copyAdoptedRecord(target, source) {
   target.caches = source.caches;
 }
 
+export function replaceRecipeDiscoveryRecord(target, source) {
+  if (!target || !source?.index) return false;
+  target.ok = source.ok;
+  target.signature = source.signature;
+  target.snapshot = source.snapshot;
+  target.source = null;
+  target.index = source.index;
+  target.caches = source.caches;
+  target.promise = null;
+  target.authorityPromise = null;
+  return true;
+}
+
 export function adoptRecipeDiscoveryRecord(target, source) {
   if (!target || !source) return false;
   if (source.index) {
@@ -434,7 +478,7 @@ export function adoptRecipeDiscoveryRecord(target, source) {
     return true;
   }
   const linked = prepareRecipeDiscoveryIndex(source).then(() => {
-    copyAdoptedRecord(target, source);
+    if (target.promise === tracked) copyAdoptedRecord(target, source);
     return target.index;
   });
   const tracked = linked.finally(() => {
@@ -506,12 +550,11 @@ async function addCompactRecipeYielded(build, item, caches, budget) {
   for (const value of ingredients) {
     let ingredient = value;
     if (!item.effective) {
-      let parsed = caches.parsed.get(value);
-      if (!parsed) {
-        try {
-          parsed = normalizeIngredient(value);
-          caches.parsed.set(value, parsed);
-        } catch { parsed = null; }
+      let parsed;
+      if (caches.parsed.has(value)) parsed = caches.parsed.get(value);
+      else {
+        try { parsed = normalizeIngredient(value); } catch { parsed = null; }
+        if (caches.parsed.size < MAX_TOTAL_INGREDIENTS) caches.parsed.set(value, parsed);
       }
       ingredient = parsed;
     }
@@ -520,7 +563,7 @@ async function addCompactRecipeYielded(build, item, caches, budget) {
       let identity = caches.identities.get(sourceName);
       if (identity === undefined) {
         identity = canonicalIngredientIdentity(sourceName);
-        caches.identities.set(sourceName, identity);
+        if (caches.identities.size < MAX_TOTAL_INGREDIENTS) caches.identities.set(sourceName, identity);
       }
       if (identity) {
         const raw = typeof ingredient?.raw === 'string' ? ingredient.raw : '';

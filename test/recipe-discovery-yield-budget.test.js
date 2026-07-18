@@ -12,7 +12,7 @@ import {
 } from '../docs/js/lib/recipe-discovery-projection.js';
 
 const WIDE_INGREDIENT_COUNT = 1_001;
-const MAX_WORK_BETWEEN_YIELDS = 60;
+const MAX_WORK_BETWEEN_YIELDS = 50;
 const isArrayIndex = (property) => typeof property === 'string' && /^(0|[1-9]\d*)$/.test(property);
 
 function installYieldProbe(t) {
@@ -134,6 +134,46 @@ test('wide asynchronous index build yields inside one recipe ingredient loop', a
 
   assert.equal(index.recipes[0].names.length, WIDE_INGREDIENT_COUNT);
   assertChunked(probe, 'index build');
+});
+
+test('allocation-bounded async query also yields while materializing one wide selected recipe', async (t) => {
+  const probe = installYieldProbe(t);
+  let resultLikeReads = 0;
+  const wideNameValues = [
+    'basil',
+    ...Array.from({ length: WIDE_INGREDIENT_COUNT - 1 }, (_, index) => `wide-${index}`),
+  ];
+  const wideNames = readObservedArray(wideNameValues, probe);
+  const wideRaws = wideNameValues.map((name) => `raw ${name}`);
+  const recipes = Array.from({ length: 5_000 }, (_, index) => {
+    const names = index === 0 ? wideNames : ['basil'];
+    const raws = index === 0 ? wideRaws : ['raw basil'];
+    return {
+      recipeId: `recipe-${index}`,
+      recipeIdentity: `id:recipe-${index}`,
+      recipeName: `Recipe ${String(index).padStart(5, '0')}`,
+      imageUrl: '',
+      canOpen: true,
+      names,
+      get raws() {
+        resultLikeReads += 1;
+        return raws;
+      },
+    };
+  });
+  const index = {
+    recipes,
+    byIngredient: new Map([['basil', recipes.map((_, index) => index)]]),
+  };
+
+  const page = await prepareRecipeDiscoveryPage(index, [], 'basil', { limit: 3 });
+
+  assert.deepEqual(page.results.map(({ recipeId }) => recipeId), [
+    'recipe-0', 'recipe-1', 'recipe-2',
+  ]);
+  assert.equal(resultLikeReads, 3, 'only selected refs materialize result evidence');
+  assert.equal(page.results[0].availability.total, WIDE_INGREDIENT_COUNT);
+  assertChunked(probe, 'selected recipe materialization');
 });
 
 test('wide asynchronous query yields inside one recipe ranking loop', async (t) => {
