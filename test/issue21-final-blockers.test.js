@@ -221,6 +221,8 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   const heapDelta = process.memoryUsage().heapUsed - heapBefore;
   assert.ok(heapDelta < 80 * 1024 * 1024, `incremental heap was ${heapDelta} bytes`);
 
+  maxTimerGap = 0;
+  lastTick = performance.now();
   const queryStarted = performance.now();
   const pageOptions = {
     recipes: state.recipes,
@@ -235,6 +237,7 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   assert.equal(page.pending, true);
   assert.ok(initialQueryMs < 50, `initial common query call took ${initialQueryMs}ms`);
   await page.ready;
+  await new Promise((resolve) => setTimeout(resolve, 0));
   clearInterval(interval);
   page = discover.page(pageOptions);
   const queryMs = performance.now() - queryStarted;
