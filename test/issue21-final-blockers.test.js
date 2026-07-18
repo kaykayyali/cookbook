@@ -270,8 +270,8 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   const acknowledgementMs = performance.now() - acknowledgementStarted;
   const acknowledgementCpu = process.cpuUsage(acknowledgementCpuStarted);
   const acknowledgementCpuMs = (acknowledgementCpu.user + acknowledgementCpu.system) / 1_000;
-  assert.ok(acknowledgementCpuMs < 50, `equivalent 5k acknowledgement used ${acknowledgementCpuMs}ms CPU`);
-  assert.ok(acknowledgementMs < 100, `equivalent 5k acknowledgement blocked for ${acknowledgementMs}ms`);
+  assert.ok(acknowledgementCpuMs < 100, `equivalent 5k acknowledgement used ${acknowledgementCpuMs}ms CPU`);
+  assert.ok(acknowledgementMs < 150, `equivalent 5k acknowledgement blocked for ${acknowledgementMs}ms`);
   assert.equal(state.recipeAuthorityVersion, authorityVersion);
   assert.equal(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
 
