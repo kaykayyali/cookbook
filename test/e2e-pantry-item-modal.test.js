@@ -111,6 +111,7 @@ async function createPantryPage(viewport = { width: 1440, height: 900 }, options
     householdId: 'household-home', revision: 1, plan: [], cart: [], pantry,
     shoppingChecked: {}, manualItems: [], recentMutations: [], updatedAt: 101,
   };
+  let recipeAuthority = structuredClone(options.recipes || []);
   const mutations = [];
 
   await context.route('https://images.example.test/**', (route) => route.fulfill({
@@ -126,7 +127,7 @@ async function createPantryPage(viewport = { width: 1440, height: 900 }, options
     });
     if (url.pathname === '/api/community' && request.method() === 'GET') {
       return json(route, {
-        recipes: (options.recipes || []).map((recipe) => ({
+        recipes: recipeAuthority.map((recipe) => ({
           id: recipe._id,
           recipe,
           author: { sub: 'kay', displayName: 'Kaysser' },
@@ -134,6 +135,24 @@ async function createPantryPage(viewport = { width: 1440, height: 900 }, options
           updatedAt: 1,
         })),
         nextCursor: null,
+      });
+    }
+    if (url.pathname === '/api/recipe-mutations' && request.method() === 'POST') {
+      const mutation = request.postDataJSON();
+      if (mutation.op === 'recipe.delete') {
+        recipeAuthority = recipeAuthority.filter((recipe) => String(recipe._id || recipe.id) !== String(mutation.payload.id));
+      } else if (mutation.op === 'recipe.update' || mutation.op === 'recipe.create') {
+        const item = structuredClone(mutation.payload.item);
+        const id = String(mutation.payload.id || item._id || item.id);
+        item._id ||= id;
+        item.id ||= id;
+        recipeAuthority = [...recipeAuthority.filter((recipe) => String(recipe._id || recipe.id) !== id), item];
+      }
+      return json(route, {
+        recipes: recipeAuthority.map((recipe) => ({
+          id: recipe._id || recipe.id, recipe,
+          author: { sub: 'kay', displayName: 'Kaysser' }, createdAt: 1, updatedAt: Date.now(),
+        })),
       });
     }
     if (url.pathname === '/api/workspace' && request.method() === 'GET') return json(route, workspace);
@@ -307,6 +326,48 @@ test('selected Pantry ingredient discovers canonical recipe uses and opens detai
     assert.equal(await pantryRow.evaluate((element) => element === document.activeElement), true, 'second Escape returns to the Pantry row');
     assert.equal(await page.locator('body').evaluate((element) => element.style.overflow), '', 'nested modal teardown restores page scrolling');
     assert.deepEqual(browserErrors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('two production recipe runtimes refresh an open Pantry modal after remote rename and delete without losing its draft', { timeout: 90_000 }, async () => {
+  const recipe = { _id: 'shared-pesto', id: 'shared-pesto', name: 'Shared Pesto', recipeIngredient: ['basil'], recipeInstructions: ['Mix.'] };
+  const fixture = await createPantryPage({ width: 1280, height: 900 }, { recipes: [recipe] });
+  const { context, page: first, browserErrors } = fixture;
+  const second = await context.newPage();
+  const secondErrors = [];
+  second.on('pageerror', (error) => secondErrors.push(error.message));
+  second.on('console', (message) => { if (message.type() === 'error' && !message.text().includes('Failed to load resource')) secondErrors.push(message.text()); });
+  try {
+    await second.goto(baseUrl, { waitUntil: 'networkidle' });
+    await second.locator('button[data-panel="pantry"]').click();
+    await second.locator('[data-pantry-id="pantry-basil"]').click();
+    const modal = second.locator('#pantry-item-modal');
+    await modal.waitFor({ state: 'visible' });
+    await second.locator('#pantry-item-name').fill('Unsaved basil draft');
+    assert.match(await second.locator('#pantry-recipe-discovery').innerText(), /Shared Pesto/);
+
+    await first.locator('button[data-panel="recipes"]').click();
+    const card = first.locator('.recipe-card[data-id="shared-pesto"]');
+    await card.locator('[data-action="edit"]').click();
+    await first.locator('#f-name').fill('Renamed Shared Pesto');
+    const renamed = first.waitForResponse((response) => new URL(response.url()).pathname === '/api/recipe-mutations'
+      && response.request().postDataJSON()?.op === 'recipe.update' && response.ok());
+    await first.locator('#save-recipe-btn').click();
+    await renamed;
+    await second.waitForFunction(() => document.getElementById('pantry-recipe-discovery')?.textContent.includes('Renamed Shared Pesto'));
+    assert.equal(await second.locator('#pantry-item-name').inputValue(), 'Unsaved basil draft');
+
+    first.once('dialog', (dialog) => dialog.accept());
+    const deleted = first.waitForResponse((response) => new URL(response.url()).pathname === '/api/recipe-mutations'
+      && response.request().postDataJSON()?.op === 'recipe.delete' && response.ok());
+    await first.locator('.recipe-card[data-id="shared-pesto"] [data-action="delete"]').click();
+    await deleted;
+    await second.waitForFunction(() => /No recipes use this item yet/i.test(document.getElementById('pantry-recipe-discovery')?.textContent || ''));
+    assert.equal(await second.locator('#pantry-item-name').inputValue(), 'Unsaved basil draft');
+    assert.deepEqual(browserErrors, []);
+    assert.deepEqual(secondErrors, []);
   } finally {
     await context.close();
   }

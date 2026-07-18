@@ -20,7 +20,7 @@ import {
 import { save as persist } from '../lib/store.js';
 import { toast } from '../lib/dom.js';
 import { interactionFeedback as defaultFeedback } from '../lib/interaction-feedback.js';
-import { discoverPantryRecipes } from '../lib/pantry-recipe-discovery.js';
+import { createPantryRecipeDiscovery } from '../lib/pantry-recipe-discovery.js';
 
 const PANTRY_CATEGORIES = [
   ['produce', 'Produce'],
@@ -64,8 +64,10 @@ export function initPantry({
   mutate = null,
   onOpenRecipe = null,
   feedback = defaultFeedback,
+  onDiscoveryIndexBuild = () => {},
 }) {
   state.pantry = normalizePantry(state.pantry);
+  const discoverRecipes = createPantryRecipeDiscovery({ onIndexBuild: onDiscoveryIndexBuild });
   let query = '';
   let category = 'all';
   let editorId = null;
@@ -113,8 +115,9 @@ export function initPantry({
     const focusedRecipeId = document.activeElement?.dataset?.pantryRecipeId || '';
     const ingredientLabel = record.displayName || record.name;
     setText('pantry-recipe-title', `Recipes using ${ingredientLabel}`);
-    const discovered = discoverPantryRecipes({
+    const discovered = discoverRecipes({
       recipes: state.recipes,
+      recipeAuthorityVersion: state.recipeAuthorityVersion,
       pantry: state.pantry,
       ingredientName: record.name,
     });

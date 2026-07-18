@@ -25,9 +25,15 @@ const MAX_AMOUNT = 1_000_000;
 const SAFE_TEXT = /^[^<>\x00-\x1f\x7f]{1,80}$/;
 const COUNT_NAME_FORMS = new Set([
   'bottle', 'bottles', 'bunch', 'bunches', 'can', 'cans', 'clove', 'cloves',
-  'item', 'items', 'jar', 'jars', 'leaf', 'leaves', 'package', 'packages',
+  'item', 'items', 'jar', 'jars', 'package', 'packages',
   'piece', 'pieces', 'portion', 'portions', 'serving', 'servings', 'sheet',
   'sheets', 'slice', 'slices',
+]);
+// Leaf words are ingredient identity, not generic packaging/count suffixes. Only
+// culinary plants whose plain and leaf forms are unambiguous aliases opt in.
+const LEAF_BASE_ALIASES = new Set([
+  'basil', 'cilantro', 'coriander', 'dill', 'kale', 'mint', 'oregano',
+  'parsley', 'rosemary', 'sage', 'spinach', 'thyme',
 ]);
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -43,6 +49,13 @@ export function canonicalIngredientVariants(value) {
   if (!exact || exact === 'uncertain ingredient') return [];
   const variants = new Set([exact]);
   const words = exact.split(/\s+/).filter(Boolean);
+  const leafBase = words.length > 1 && ['leaf', 'leaves'].includes(words.at(-1))
+    ? canonicalName(words.slice(0, -1).join(' ')) : '';
+  if (leafBase && LEAF_BASE_ALIASES.has(leafBase)) variants.add(leafBase);
+  if (LEAF_BASE_ALIASES.has(exact)) {
+    variants.add(`${exact} leaf`);
+    variants.add(`${exact} leaves`);
+  }
   if (words.length > 1 && COUNT_NAME_FORMS.has(words[0])) {
     const base = canonicalName(words.slice(1).join(' '));
     if (base && base !== 'uncertain ingredient') variants.add(base);

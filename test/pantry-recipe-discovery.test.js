@@ -5,11 +5,13 @@ import { performance } from 'node:perf_hooks';
 import {
   applyReviewedIngredientCorrection,
   buildRecipeUsageIndex,
+  canonicalIngredientsMatch,
   ingredientEvidence,
 } from '../docs/js/lib/ingredient-corrections.js';
 
 const discovery = await import('../docs/js/lib/pantry-recipe-discovery.js').catch(() => ({}));
 const {
+  createPantryRecipeDiscovery,
   discoverPantryRecipes,
   pantryAvailability,
   safeRecipeImageUrl,
@@ -46,6 +48,53 @@ test('usage lookup matches canonical basil leaf variants but never arbitrary sub
   assert.deepEqual(buildRecipeUsageIndex(recipes).find('basil leaves').map(({ recipeId }) => recipeId), ['leaf', 'plain']);
   assert.equal(basilUses.some(({ recipeId }) => ['basilisk', 'sauce'].includes(recipeId)), false);
   assert.deepEqual(buildRecipeUsageIndex(recipes).find('basilisk steak').map(({ recipeId }) => recipeId), ['basilisk']);
+});
+
+test('leaf aliases are explicit and never collapse distinct curry, tea, or bay ingredients', () => {
+  const matrix = [
+    ['basil', 'basil leaves', true],
+    ['mint', 'mint leaves', true],
+    ['parsley', 'parsley leaves', true],
+    ['cilantro', 'cilantro leaves', true],
+    ['curry', 'curry leaves', false],
+    ['tea', 'tea leaves', false],
+    ['bay', 'bay leaves', false],
+    ['spinach', 'spinach leaves', true],
+    ['basil', 'basilisk steak', false],
+    ['basil', 'thai basil sauce', false],
+  ];
+  for (const [left, right, expected] of matrix) {
+    assert.equal(canonicalIngredientsMatch(left, right), expected, `${left} ↔ ${right}`);
+  }
+  const recipes = [
+    recipe('curry', 'Curry', ['curry']),
+    recipe('curry-leaf', 'Curry Leaf', ['curry leaves']),
+    recipe('tea', 'Tea', ['tea']),
+    recipe('tea-leaf', 'Tea Leaf', ['tea leaves']),
+    recipe('bay', 'Bay', ['bay']),
+    recipe('bay-leaf', 'Bay Leaf', ['bay leaves']),
+  ];
+  const index = buildRecipeUsageIndex(recipes);
+  assert.deepEqual(index.find('curry').map(({ recipeId }) => recipeId), ['curry']);
+  assert.deepEqual(index.find('curry leaves').map(({ recipeId }) => recipeId), ['curry-leaf']);
+  assert.deepEqual(index.find('tea').map(({ recipeId }) => recipeId), ['tea']);
+  assert.deepEqual(index.find('tea leaves').map(({ recipeId }) => recipeId), ['tea-leaf']);
+  assert.deepEqual(index.find('bay').map(({ recipeId }) => recipeId), ['bay']);
+  assert.deepEqual(index.find('bay leaves').map(({ recipeId }) => recipeId), ['bay-leaf']);
+});
+
+test('discovery reuses one bounded recipe index until recipe authority identity changes', () => {
+  assert.equal(typeof createPantryRecipeDiscovery, 'function');
+  let builds = 0;
+  const discover = createPantryRecipeDiscovery({ onIndexBuild: () => { builds += 1; } });
+  const recipes = [recipe('pesto', 'Pesto', ['basil', 'tomato'])];
+  const pantry = [pantryItem('basil')];
+  for (let index = 0; index < 25; index += 1) {
+    discover({ recipes, pantry: index % 2 ? pantry : [...pantry], ingredientName: 'basil' });
+  }
+  assert.equal(builds, 1, 'Pantry-only rerenders reuse the recipe authority index');
+  discover({ recipes: [...recipes], pantry, ingredientName: 'basil' });
+  assert.equal(builds, 2, 'a replacement recipe authority rebuilds exactly once');
 });
 
 test('Pantry discovery deduplicates, computes unique-name coverage, and sorts by availability label then stable name and id', () => {

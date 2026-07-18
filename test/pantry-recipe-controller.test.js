@@ -80,6 +80,23 @@ test('two independent Pantry controller runtimes converge on the same reviewed r
   }
 });
 
+test('Pantry editor rerenders reuse recipe index and authority refresh preserves the draft', () => {
+  const base = { _id: 'shared', name: 'Shared Pesto', recipeIngredient: ['basil'] };
+  let builds = 0;
+  const { dom, state, controller } = setup(base, { onDiscoveryIndexBuild: () => { builds += 1; } });
+  const name = dom.window.document.getElementById('pantry-item-name');
+  name.value = 'My unsaved basil draft';
+  for (let index = 0; index < 20; index += 1) controller.render();
+  state.pantry = [{ ...state.pantry[0], quantity: 2 }];
+  controller.render();
+  assert.equal(builds, 1, 'form and Pantry-only rerenders reuse the recipe index');
+  state.recipes = [{ ...base, name: 'Remote Shared Pesto' }];
+  controller.render();
+  assert.equal(builds, 2, 'recipe authority replacement rebuilds exactly once');
+  assert.equal(name.value, 'My unsaved basil draft');
+  assert.match(dom.window.document.getElementById('pantry-recipe-discovery').textContent, /Remote Shared Pesto/);
+});
+
 test('resuming after recipe detail exposes remote Pantry conflicts before save', () => {
   const base = { _id: 'shared', name: 'Shared Pesto', recipeIngredient: ['basil'] };
   const runtime = setup(base);

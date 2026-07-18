@@ -174,6 +174,32 @@ test('recipe drain never acknowledges a mutation before its enqueue completes', 
   repo.close();
 });
 
+test('authority refresh rebases durable pending update and delete intent over the server snapshot', async () => {
+  const repo = await openOfflineDb({ indexedDB, name: dbName() });
+  const initial = [
+    { id: 'r1', _id: 'r1', name: 'Delete me' },
+    { id: 'r2', _id: 'r2', name: 'Edit me' },
+  ];
+  const manager = createRecipeOutbox({
+    repo, authSub: 'kay', householdId: 'our-home', initial, isOnline: () => false,
+  });
+  await manager.init();
+  await manager.mutate('recipe.delete', { id: 'r1' });
+  await manager.mutate('recipe.update', { id: 'r2', item: { id: 'r2', _id: 'r2', name: 'Pending local edit' } });
+  const mutationVersion = manager.version();
+  assert.equal(await manager.setAuthority([
+    { id: 'r1', _id: 'r1', name: 'Stale server copy' },
+    { id: 'r2', _id: 'r2', name: 'Remote edit' },
+    { id: 'r3', _id: 'r3', name: 'Remote addition' },
+  ], { mutationVersion }), true);
+  assert.deepEqual(manager.current().map(({ id, name }) => [id, name]), [
+    ['r2', 'Pending local edit'],
+    ['r3', 'Remote addition'],
+  ]);
+  assert.equal(manager.pending().length, 2);
+  repo.close();
+});
+
 test('stale recipe authority cannot resurrect a deletion during or after acknowledgement', async () => {
   const repo = await openOfflineDb({ indexedDB, name: dbName() });
   let online = false;

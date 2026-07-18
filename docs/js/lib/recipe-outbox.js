@@ -43,7 +43,7 @@ export function applyRecipeOperation(recipes, request) {
 export function createRecipeOutbox({
   repo, authSub, householdId, initial = [], send = async () => ({ ok: false, status: 503 }),
   isOnline = () => globalThis.navigator?.onLine !== false, onChange = () => {}, onStatus = () => {},
-  makeId = makeMutationId,
+  onAccepted = () => {}, makeId = makeMutationId,
 } = {}) {
   let confirmed = clone(initial);
   let optimistic = clone(initial);
@@ -159,6 +159,7 @@ export function createRecipeOutbox({
           blockedSequence = null;
           rebuild();
           publish({ optimistic: rows.length > 0, pending: rows.length, authoritative: true });
+          try { onAccepted({ mutationId: row.mutationId, op: row.op }); } catch { /* notification is advisory */ }
           return 'acknowledged';
         });
       } catch {

@@ -76,14 +76,20 @@ function recipeSources(recipes) {
   return sources;
 }
 
-/** Build one deterministic, immutable result per recipe using the shared usage index. */
-export function discoverPantryRecipes({ recipes, pantry, ingredientName } = {}) {
+/** Build the recipe-only half once per authority snapshot. */
+function buildDiscoveryIndex(recipes) {
   const allRecipes = Array.isArray(recipes) ? recipes : [];
-  const sources = recipeSources(allRecipes);
-  const uses = buildRecipeUsageIndex(allRecipes).find(ingredientName);
+  return Object.freeze({
+    sources: recipeSources(allRecipes),
+    usage: buildRecipeUsageIndex(allRecipes),
+  });
+}
+
+function discoverWithIndex(index, pantry, ingredientName) {
+  const uses = index.usage.find(ingredientName);
   const available = pantryCanonicalNames(pantry);
   return uses.map((use) => {
-    const source = sources.get(use.recipeIdentity);
+    const source = index.sources.get(use.recipeIdentity);
     const recipe = source?.recipe || null;
     const effective = source?.effective || [];
     const availability = availabilityFromCanonicalNames(effective.map((ingredient) => ingredient.name), available);
@@ -102,3 +108,27 @@ export function discoverPantryRecipes({ recipes, pantry, ingredientName } = {}) 
     || compareText(left.recipeName, right.recipeName)
     || compareText(left.recipeIdentity, right.recipeIdentity));
 }
+
+/**
+ * Create a bounded one-entry recipe index cache. Pantry coverage is intentionally
+ * recomputed on every call, while recipe parsing/indexing is reused until the
+ * authority array reference or explicit authority version changes.
+ */
+export function createPantryRecipeDiscovery({ onIndexBuild = () => {} } = {}) {
+  let authority = null;
+  let authorityVersion;
+  let index = null;
+  return function discover({ recipes, pantry, ingredientName, recipeAuthorityVersion } = {}) {
+    const allRecipes = Array.isArray(recipes) ? recipes : [];
+    if (!index || authority !== allRecipes || authorityVersion !== recipeAuthorityVersion) {
+      authority = allRecipes;
+      authorityVersion = recipeAuthorityVersion;
+      index = buildDiscoveryIndex(allRecipes);
+      onIndexBuild(allRecipes);
+    }
+    return discoverWithIndex(index, pantry, ingredientName);
+  };
+}
+
+/** Discover one deterministic, immutable result per recipe. */
+export const discoverPantryRecipes = createPantryRecipeDiscovery();
