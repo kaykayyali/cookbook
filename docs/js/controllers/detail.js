@@ -548,6 +548,9 @@ export function initDetail({
 
     renderRecipePresentation();
     if (scroller && Number.isFinite(scrollTop)) scroller.scrollTop = scrollTop;
+    if (correction && correctionFocusSnapshot) {
+      correctionOpener = resolveDetailFocus(correctionFocusSnapshot) || correctionOpener;
+    }
 
     const correctionOpen = correctionElement('modal') && !correctionElement('modal').hidden;
     if (!correctionOpen) {

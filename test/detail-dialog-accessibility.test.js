@@ -161,6 +161,11 @@ test('reconciliation preserves a valid nested correction draft, refreshes proven
   assert.match(document.getElementById('ingredient-correction-provenance').textContent, /microdata · v2/);
   assert.equal(document.getElementById('detail-modal').getAttribute('aria-modal'), null, 'detail stays suspended under the correction editor');
 
+  detail.closeCorrection();
+  const refreshedAction = document.querySelector('[data-action="correct-ingredient"]');
+  assert.equal(document.activeElement, refreshedAction, 'closing a preserved editor restores focus to the refreshed stable action');
+  assert.equal(detail.openCorrection(refreshedAction.dataset.ingredientId, refreshedAction), true);
+
   state.recipes = [{ ...state.recipes[0], recipeIngredient: ['2 cups parsley'] }];
   detail.reconcileRecipes({ authoritative: true });
   assert.equal(document.getElementById('ingredient-correction-modal').hidden, true, 'changed evidence safely closes the stale correction editor');
