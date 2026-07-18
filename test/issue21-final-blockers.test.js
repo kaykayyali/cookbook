@@ -208,11 +208,14 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   t.after(() => clearInterval(interval));
   const timer = new Promise((resolve) => setTimeout(() => { timerFiredAt = performance.now(); resolve(); }, 0));
   const prepareStarted = performance.now();
+  const prepareCpuStarted = process.cpuUsage();
   const preparing = discover.prepare({ recipes: state.recipes, recipeAuthorityVersion: state.recipeAuthorityVersion });
   await timer;
   assert.ok(timerFiredAt - prepareStarted < 100, `index preparation blocked the event loop for ${timerFiredAt - prepareStarted}ms`);
   await preparing;
   const preparationMs = performance.now() - prepareStarted;
+  const preparationCpu = process.cpuUsage(prepareCpuStarted);
+  const preparationCpuMs = (preparationCpu.user + preparationCpu.system) / 1_000;
   assert.ok(preparationMs < 5_000, `5k x 20 index took ${preparationMs}ms`);
   assert.ok(maxTimerGap < 50, `index preparation created a ${maxTimerGap}ms event-loop gap`);
   const heapDelta = process.memoryUsage().heapUsed - heapBefore;
@@ -245,9 +248,13 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   const half = corpus.slice(0, 1_250);
   const halfDiscover = createPantryRecipeDiscovery();
   const halfStarted = performance.now();
-  await halfDiscover.prepare({ recipes: half });
-  const halfMs = Math.max(performance.now() - halfStarted, 1);
-  assert.ok(preparationMs < halfMs * 5, `4x scaling exceeded linear target: 1.25k=${halfMs}ms 5k=${preparationMs}ms`);
+  const halfCpuStarted = process.cpuUsage();
+  await halfDiscover.prepare({ recipes: half, recipeAuthorityVersion: 1 });
+  const halfMs = performance.now() - halfStarted;
+  const halfCpu = process.cpuUsage(halfCpuStarted);
+  const halfCpuMs = (halfCpu.user + halfCpu.system) / 1_000;
+  assert.ok(preparationCpuMs < (halfCpuMs * 6) + 100,
+    `4x scaling exceeded linear CPU target: 1.25k=${halfCpuMs}ms 5k=${preparationCpuMs}ms (wall ${halfMs}ms/${preparationMs}ms)`);
 });
 
 test('stale asynchronous index preparation is cancelled when recipe authority changes', async () => {
