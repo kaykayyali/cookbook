@@ -61,6 +61,7 @@ export function initSettings({
   onSignedOut = null,
 } = {}) {
   let settingsRendered = false;
+  let importGeneration = 0;
 
   function renderAuth() {
     const zone = document.getElementById('settings-auth-zone');
@@ -91,21 +92,24 @@ export function initSettings({
   }
 
   async function importRecipes(file) {
+    const generation = ++importGeneration;
+    const isCurrentImport = () => generation === importGeneration;
+    const report = (message) => { if (isCurrentImport()) toastDep(message); };
     const reader = new FileReader();
     reader.onload = async (e) => {
       let imported;
       try {
         imported = parseImport(JSON.parse(e.target.result));
       } catch {
-        toastDep('Could not read file — expected JSON-LD');
+        report('Could not read file — expected JSON-LD');
         return;
       }
-      if (!imported.length) { toastDep('No valid recipes found in file'); return; }
+      if (!imported.length) { report('No valid recipes found in file'); return; }
 
       let res;
       try { res = await importToServerDep(imported.map(toSchema)); }
-      catch { toastDep('Could not import recipes'); return; }
-      if (!res?.ok) { toastDep('Could not import recipes'); return; }
+      catch { report('Could not import recipes'); return; }
+      if (!res?.ok) { report('Could not import recipes'); return; }
 
       // Capture the runtime generation before starting the GET. A mutation can
       // be acknowledged while it is in flight, making that response stale even
@@ -113,25 +117,31 @@ export function initSettings({
       const mutationVersion = recipeRuntime?.version?.();
       let fres;
       try { fres = await fetchRecipesDep(); }
-      catch { toastDep('Recipes imported, but could not refresh'); return; }
+      catch { report('Recipes imported, but could not refresh'); return; }
       if (!fres?.ok || !Array.isArray(fres.recipes)) {
-        toastDep('Recipes imported, but could not refresh');
+        report('Recipes imported, but could not refresh');
         return;
       }
+      // Runtime mutation versions order aggregate reads against outbox changes,
+      // not against other imports. Only the latest selected file may replace
+      // authority or report the outcome of its workflow.
+      if (!isCurrentImport()) return;
 
       if (recipeRuntime) {
         const accepted = await recipeRuntime.setAuthority(
           fres.recipes,
           { mutationVersion },
         ).catch(() => false);
+        if (!isCurrentImport()) return;
         if (!accepted) {
           // fetchRecipes does not publish today, but restoring from the runtime
           // keeps this handoff safe if a fetch helper ever touches shared state.
           publishRecipeAuthority(state, recipeRuntime.current());
           const refreshed = await recipeRuntime.refresh?.().catch(() => false);
+          if (!isCurrentImport()) return;
           if (!refreshed) {
             if (onChange) onChange();
-            toastDep('Recipes imported, but could not refresh');
+            report('Recipes imported, but could not refresh');
             return;
           }
         }
@@ -140,13 +150,13 @@ export function initSettings({
       if (onChange) onChange();
       const importedCount = res.imported ?? imported.length;
       const importedMessage = `Imported ${pluralize(importedCount, 'recipe')}`;
-      toastDep(res.failed > 0
+      report(res.failed > 0
         ? `${importedMessage}; ${res.failed} failed.`
         : importedMessage);
     };
-    reader.onerror = () => toastDep('Could not read file');
+    reader.onerror = () => report('Could not read file');
     try { reader.readAsText(file); }
-    catch { toastDep('Could not read file'); }
+    catch { report('Could not read file'); }
   }
 
   function renderThemePicker() {

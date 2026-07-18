@@ -499,6 +499,111 @@ test('Settings import synchronizes runtime and durable authority before the next
   }
 });
 
+test('overlapping production Settings imports keep the newest fetched authority', async (t) => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const originalFetch = globalThis.fetch;
+  const schema = (name) => ({
+    '@context': 'https://schema.org', '@type': 'Recipe', name,
+    recipeIngredient: ['water'], recipeInstructions: ['Simmer'],
+  });
+  globalThis.FileReader = class {
+    readAsText(file) {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([file.recipe]) } }));
+    }
+  };
+  t.after(() => {
+    globalThis.FileReader = originalFileReader;
+    globalThis.fetch = originalFetch;
+  });
+
+  const ids = (recipes) => recipes.map(({ id, _id }) => id ?? _id);
+  const oldRecipe = { id: 'old', _id: 'old', name: 'Old authority' };
+  const staleRecipe = {
+    id: 'stale-a', recipe: schema('Stale A'), author: { sub: 'cook', name: 'Cook' },
+    createdAt: 1, updatedAt: 1,
+  };
+  const newestRecipe = {
+    id: 'newest-b', recipe: schema('Newest B'), author: { sub: 'cook', name: 'Cook' },
+    createdAt: 2, updatedAt: 2,
+  };
+  const aggregateGets = [];
+  const bothGetsStarted = deferred();
+  let posts = 0;
+  globalThis.fetch = async (url, init = {}) => {
+    assert.equal(new URL(url, 'https://cookbook.test').pathname, '/api/community');
+    if (init.method === 'POST') {
+      posts += 1;
+      return new Response(JSON.stringify(posts === 1 ? staleRecipe : newestRecipe), {
+        status: 201, headers: { 'content-type': 'application/json' },
+      });
+    }
+    const response = deferred();
+    aggregateGets.push(response);
+    if (aggregateGets.length === 2) bothGetsStarted.resolve();
+    return response.promise;
+  };
+
+  const state = {
+    household: { household: { id: 'home' } }, recipes: [oldRecipe], recipeAuthorityVersion: 0,
+  };
+  const repo = await openOfflineDb({ indexedDB, name: `settings-import-overlap-${Date.now()}` });
+  await repo.putRecipes('cook', 'home', [oldRecipe]);
+  const runtime = await initRecipeRuntime({
+    state, repo, authSub: 'cook',
+    document: { hidden: false, getElementById: () => null, addEventListener() {}, removeEventListener() {} },
+    window: { navigator: { onLine: false }, addEventListener() {}, removeEventListener() {} },
+    BroadcastChannel: null, schedule: () => ({ unref() {} }), clearSchedule() {},
+  });
+  const capturedVersions = [];
+  const settingsRuntime = {
+    version: () => { const version = runtime.version(); capturedVersions.push(version); return version; },
+    setAuthority: (...args) => runtime.setAuthority(...args),
+    current: () => runtime.current(),
+    refresh: () => runtime.refresh(),
+  };
+  const toasts = [];
+  let changes = 0;
+  const newestFinished = deferred();
+  const ctrl = mod.initSettings({
+    state, document, recipeRuntime: settingsRuntime,
+    onChange: () => { changes += 1; },
+    toast: (message) => { toasts.push(message); if (message.startsWith('Imported ')) newestFinished.resolve(); },
+  });
+  try {
+    ctrl._importRecipes({ recipe: schema('Import A') });
+    ctrl._importRecipes({ recipe: schema('Import B') });
+    await bothGetsStarted.promise;
+    assert.equal(posts, 2, 'both selected files complete one upload');
+    assert.equal(aggregateGets.length, 2, 'both successful uploads start one aggregate GET');
+    assert.deepEqual(capturedVersions, [0, 0]);
+
+    aggregateGets[1].resolve(new Response(JSON.stringify({ recipes: [newestRecipe], nextCursor: null }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }));
+    await newestFinished.promise;
+    assert.deepEqual(ids(state.recipes), ['newest-b']);
+    assert.deepEqual(ids(runtime.current()), ['newest-b']);
+    assert.deepEqual(ids(await repo.getRecipes('cook', 'home')), ['newest-b']);
+
+    aggregateGets[0].resolve(new Response(JSON.stringify({ recipes: [staleRecipe], nextCursor: null }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }));
+    // Drain the fetch/controller continuation and fake IndexedDB transaction queues.
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(ids(state.recipes), ['newest-b']);
+    assert.deepEqual(ids(runtime.current()), ['newest-b']);
+    assert.deepEqual(ids(await repo.getRecipes('cook', 'home')), ['newest-b']);
+    assert.equal(changes, 1, 'only the current import renders refreshed authority');
+    assert.deepEqual(toasts, ['Imported 1 recipe'], 'the superseded import must not report success');
+  } finally {
+    runtime.destroy();
+    repo.close();
+  }
+});
+
 test('production Settings runtime wiring rejects a stale import fetch after a newer acknowledgement', async () => {
   const { document } = makeDom();
   const originalFileReader = globalThis.FileReader;
