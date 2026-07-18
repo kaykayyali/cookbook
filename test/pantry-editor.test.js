@@ -156,6 +156,32 @@ test('Pantry editor locks body scrolling and restores the exact previous overflo
   assert.equal(dom.window.document.body.style.overflow, 'scroll');
 });
 
+test('Pantry editor owns one body lock and repeated open or close cannot corrupt newer overflow', () => {
+  const dom = editorDom();
+  globalThis.document = dom.window.document;
+  globalThis.window = dom.window;
+  globalThis.localStorage = dom.window.localStorage;
+  const style = dom.window.document.body.style;
+  style.setProperty('overflow', 'scroll', 'important');
+  const target = oliveOil();
+  const controller = initPantry({
+    state: { pantry: [target], recipes: [] }, document: dom.window.document, mutate: async () => true,
+  });
+  controller.render();
+
+  assert.equal(controller.openEditor(target.id), true);
+  assert.equal(style.getPropertyValue('overflow'), 'hidden');
+  assert.equal(controller.openEditor(target.id), false, 'an already-open editor does not reacquire the body lock');
+  assert.equal(controller.closeEditor(), true);
+  assert.equal(style.getPropertyValue('overflow'), 'scroll');
+  assert.equal(style.getPropertyPriority('overflow'), 'important', 'release restores the exact previous priority');
+
+  style.setProperty('overflow', 'clip');
+  assert.equal(controller.closeEditor(), false, 'closing an inactive editor is a no-op');
+  assert.equal(style.getPropertyValue('overflow'), 'clip', 'a repeated close cannot overwrite newer body state');
+  assert.equal(style.getPropertyPriority('overflow'), '');
+});
+
 test('entire Pantry row opens the edit modal and save updates exactly one stable record', async () => {
   const dom = editorDom();
   globalThis.document = dom.window.document;

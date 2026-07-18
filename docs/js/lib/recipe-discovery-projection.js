@@ -668,13 +668,16 @@ async function sanitizeRecipeYielded(value, context, totals, budget) {
     signatureIngredients = ['raw-v', NORMALIZATION_VERSION, ...[...unique].sort(compareText)];
   } else {
     try {
-      effective = await effectiveIngredientRecordsYielded(
+      const projected = await effectiveIngredientRecordsYielded(
         sanitized,
         () => spendIngredientBudget(budget),
       );
+      effective = [];
       const unique = new Set();
-      for (const ingredient of effective) {
-        unique.add(JSON.stringify(effectiveRow(ingredient)));
+      for (const ingredient of projected) {
+        const row = effectiveRow(ingredient);
+        effective.push(row);
+        unique.add(JSON.stringify(row));
         const pending = spendIngredientBudget(budget);
         if (pending) await pending;
       }

@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { isDeepStrictEqual } from 'node:util';
 
+import { normalizeIngredient } from '../docs/js/lib/cart.js';
 import {
   buildRecipeDiscoveryIndexSync,
   prepareRecipeDiscoveryIndex,
@@ -86,6 +88,31 @@ test('wide asynchronous authority projection yields inside one recipe ingredient
   assert.deepEqual(record.index.recipes.find((item) => item.recipeId === 'wide'), syncIndex.recipes[0],
     'yielding preserves the synchronous deterministic projection and index output');
   assertChunked(probe, 'authority projection');
+});
+
+test('structured asynchronous authority retains the exact compact synchronous snapshot', { timeout: 30_000 }, async () => {
+  const makeCorpus = () => Array.from({ length: 201 }, (_, recipeIndex) => ({
+    _id: `structured-${recipeIndex}`,
+    name: `Structured recipe ${recipeIndex}`,
+    recipeIngredient: Array.from({ length: 250 }, (_, ingredientIndex) => (
+      normalizeIngredient(`${ingredientIndex + 1} cups ingredient-${recipeIndex}-${ingredientIndex}`)
+    )),
+  }));
+
+  const synchronous = recipeDiscoveryAuthority(makeCorpus());
+  buildRecipeDiscoveryIndexSync(synchronous);
+  const asynchronous = recipeDiscoveryAuthority(makeCorpus());
+  await prepareRecipeDiscoveryIndex(asynchronous);
+
+  assert.equal(isDeepStrictEqual(asynchronous.snapshot, synchronous.snapshot), true,
+    'yielded and synchronous authority snapshots must be exactly equal');
+  assert.deepEqual(Object.keys(asynchronous.snapshot[0].effective[0]), ['raw', 'name'],
+    'the retained effective projection contains only discovery fields');
+  const retainedEffectiveBytes = Buffer.byteLength(JSON.stringify(
+    asynchronous.snapshot.map((item) => item.effective),
+  ));
+  assert.ok(retainedEffectiveBytes < 4 * 1024 * 1024,
+    `compact effective snapshot retained ${retainedEffectiveBytes} bytes`);
 });
 
 test('wide asynchronous index build yields inside one recipe ingredient loop', async (t) => {

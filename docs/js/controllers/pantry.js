@@ -83,7 +83,10 @@ export function initPantry({
   let discoveryReturnFocusId = '';
   let editorSuspended = false;
   let suspendedRecipeId = '';
+  let editorActive = false;
   let editorBodyOverflow = '';
+  let editorBodyOverflowPriority = '';
+  let editorBodyLockOwned = false;
 
   const byId = (id) => state.pantry.find((entry) => entry.id === id);
   const editorChanged = (record) => Boolean(editorId && record
@@ -92,6 +95,26 @@ export function initPantry({
   const modalOpen = () => {
     const modal = get('pantry-item-modal');
     return Boolean(modal && !modal.hidden);
+  };
+  const acquireEditorBodyLock = () => {
+    if (editorBodyLockOwned || !document.body?.style) return;
+    const style = document.body.style;
+    editorBodyOverflow = style.getPropertyValue?.('overflow') ?? style.overflow ?? '';
+    editorBodyOverflowPriority = style.getPropertyPriority?.('overflow') || '';
+    if (style.setProperty) style.setProperty('overflow', 'hidden');
+    else style.overflow = 'hidden';
+    editorBodyLockOwned = true;
+  };
+  const releaseEditorBodyLock = () => {
+    if (!editorBodyLockOwned) return;
+    const style = document.body?.style;
+    if (style?.setProperty) {
+      if (editorBodyOverflow) style.setProperty('overflow', editorBodyOverflow, editorBodyOverflowPriority);
+      else style.removeProperty('overflow');
+    } else if (style) style.overflow = editorBodyOverflow;
+    editorBodyOverflow = '';
+    editorBodyOverflowPriority = '';
+    editorBodyLockOwned = false;
   };
   const setText = (id, value) => { const node = get(id); if (node) node.textContent = value || ''; };
   const setError = (message) => {
@@ -357,6 +380,7 @@ export function initPantry({
     const modal = get('pantry-item-modal');
     const overlay = get('pantry-item-overlay');
     if (!modal) return false;
+    if (editorActive) return false;
     const record = recordId ? byId(recordId) : normalizePantryEntry(raw, { updatedAt: Date.now() });
     if (recordId && !record) {
       toast('That Pantry item is no longer available.');
@@ -375,7 +399,6 @@ export function initPantry({
     discoveryReturnFocusId = '';
     editorSuspended = false;
     suspendedRecipeId = '';
-    editorBodyOverflow = document.body?.style?.overflow || '';
     setEditorPending(false);
     setText('pantry-item-title', recordId ? 'Edit Pantry item' : 'Add Pantry item');
     setText('pantry-item-description', recordId
@@ -399,7 +422,8 @@ export function initPantry({
       overlay.hidden = false;
       overlay.classList?.add('open');
     }
-    if (document.body?.style) document.body.style.overflow = 'hidden';
+    editorActive = true;
+    acquireEditorBodyLock();
     renderRecipeDiscovery();
     if (sourceEvent) feedback.emit('select', { target, sourceEvent });
     globalThis.setTimeout?.(() => get('pantry-item-name')?.focus?.(), 0);
@@ -407,6 +431,7 @@ export function initPantry({
   }
 
   function closeEditor({ force = false } = {}) {
+    if (!editorActive) return false;
     if (editorPending && !force) return false;
     const modal = get('pantry-item-modal');
     const overlay = get('pantry-item-overlay');
@@ -418,7 +443,7 @@ export function initPantry({
       modal.classList?.remove('open');
     }
     if (overlay) { overlay.hidden = true; overlay.classList?.remove('open'); }
-    if (document.body?.style) document.body.style.overflow = editorBodyOverflow;
+    releaseEditorBodyLock();
     const focusTarget = editorReturnId
       ? (document.querySelector?.(`[data-pantry-id="${globalThis.CSS?.escape?.(editorReturnId) || editorReturnId}"]`)
         || document.querySelector?.('.pantry-tag')
@@ -435,7 +460,7 @@ export function initPantry({
     discoveryReturnFocusId = '';
     editorSuspended = false;
     suspendedRecipeId = '';
-    editorBodyOverflow = '';
+    editorActive = false;
     const discovery = get('pantry-recipe-discovery');
     if (discovery) discovery.hidden = true;
     focusTarget?.focus?.();
