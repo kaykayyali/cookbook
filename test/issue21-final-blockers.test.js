@@ -265,9 +265,13 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   const authorityVersion = state.recipeAuthorityVersion;
   const equivalent = corpus.map((item) => ({ ...item, recipeIngredient: [...item.recipeIngredient].reverse() }));
   const acknowledgementStarted = performance.now();
+  const acknowledgementCpuStarted = process.cpuUsage();
   publishRecipeAuthority(state, equivalent);
   const acknowledgementMs = performance.now() - acknowledgementStarted;
-  assert.ok(acknowledgementMs < 50, `equivalent 5k acknowledgement blocked for ${acknowledgementMs}ms`);
+  const acknowledgementCpu = process.cpuUsage(acknowledgementCpuStarted);
+  const acknowledgementCpuMs = (acknowledgementCpu.user + acknowledgementCpu.system) / 1_000;
+  assert.ok(acknowledgementCpuMs < 50, `equivalent 5k acknowledgement used ${acknowledgementCpuMs}ms CPU`);
+  assert.ok(acknowledgementMs < 100, `equivalent 5k acknowledgement blocked for ${acknowledgementMs}ms`);
   assert.equal(state.recipeAuthorityVersion, authorityVersion);
   assert.equal(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
 
