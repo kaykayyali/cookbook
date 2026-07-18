@@ -138,7 +138,11 @@ export function initSettings({
       } else publishRecipeAuthority(state, fres.recipes);
 
       if (onChange) onChange();
-      toastDep(`Imported ${pluralize(res.imported ?? imported.length, 'recipe')}`);
+      const importedCount = res.imported ?? imported.length;
+      const importedMessage = `Imported ${pluralize(importedCount, 'recipe')}`;
+      toastDep(res.failed > 0
+        ? `${importedMessage}; ${res.failed} failed.`
+        : importedMessage);
     };
     reader.onerror = () => toastDep('Could not read file');
     try { reader.readAsText(file); }

@@ -345,7 +345,7 @@ test('partial production imports report succeeded and failed counts and refresh 
   const toasted = deferred();
   const ctrl = mod.initSettings({ state, document, toast: toasted.resolve });
   ctrl._importRecipes({});
-  assert.equal(await toasted.promise, 'Imported 1 recipe');
+  assert.equal(await toasted.promise, 'Imported 1 recipe; 1 failed.');
   assert.equal(posts, 4, 'the API and Settings each attempt every recipe POST');
   assert.equal(gets, 1, 'partial success refreshes authoritative recipes once');
   assert.deepEqual(state.recipes.map(({ _id }) => _id), ['imported']);
