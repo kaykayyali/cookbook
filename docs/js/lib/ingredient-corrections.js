@@ -224,6 +224,23 @@ function reviewedRecord(record) {
   ].every((key) => Object.is(record[key], expected[key]));
 }
 
+function reviewedWinner(left, right) {
+  if (!left) return right;
+  if (!right) return left;
+  if (right.reviewedAt !== left.reviewedAt) return right.reviewedAt > left.reviewedAt ? right : left;
+  const correctionKey = (record) => {
+    const validated = validateIngredientCorrection(record);
+    return JSON.stringify({
+      id: record.id,
+      raw: record.raw,
+      parserVersion: record.parserVersion,
+      reviewVersion: record.reviewVersion ?? null,
+      correction: validated.ok ? validated.correction : null,
+    });
+  };
+  return correctionKey(right) < correctionKey(left) ? right : left;
+}
+
 function legacyNormalizedRecord(record) {
   const hasReviewMetadata = ['reviewStatus', 'reviewVersion', 'reviewedAt', 'reviewedBy', 'parserVersion']
     .some((key) => Object.hasOwn(record || {}, key));
@@ -299,13 +316,13 @@ export function ingredientEvidence(recipe) {
     if (!reviewedRecord(record)) continue;
     const key = `${record.raw}\u0000${record.id}`;
     const current = reviewedByEvidence.get(key);
-    if (!current || record.reviewedAt > current.reviewedAt) reviewedByEvidence.set(key, record);
+    reviewedByEvidence.set(key, reviewedWinner(current, record));
   }
   return baseIngredientEvidence(recipe).map((base) => {
     const legacyId = legacyEvidenceId(base.raw, base.evidenceOccurrence);
     const current = reviewedByEvidence.get(`${base.raw}\u0000${base.id}`);
     const legacy = reviewedByEvidence.get(`${base.raw}\u0000${legacyId}`);
-    const reviewed = !current ? legacy : !legacy || current.reviewedAt >= legacy.reviewedAt ? current : legacy;
+    const reviewed = reviewedWinner(current, legacy);
     return reviewed ? { ...clone(reviewed), id: base.id, evidenceOccurrence: base.evidenceOccurrence } : base;
   });
 }

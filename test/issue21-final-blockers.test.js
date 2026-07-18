@@ -16,6 +16,7 @@ import {
 import { normalizePantryEntry } from '../docs/js/lib/pantry.js';
 import { createPantryRecipeDiscovery } from '../docs/js/lib/pantry-recipe-discovery.js';
 import { publishRecipeAuthority } from '../docs/js/lib/recipe-authority.js';
+import { recipeDiscoveryAuthority } from '../docs/js/lib/recipe-discovery-projection.js';
 
 const pantry = (name) => [{ name }];
 const recipe = (id, name, lines, extras = {}) => ({ _id: id, name, recipeIngredient: lines, ...extras });
@@ -120,6 +121,45 @@ test('discovery-equivalent ingredient reorder and duplication do not advance aut
   assert.equal(versionDelta(before, recipe('r', 'Pesto', ['basil', 'tomato', 'basil'])), 0);
 });
 
+test('structured discovery signatures ignore order and exact duplicates', () => {
+  const basil = normalizeIngredient('basil');
+  const tomato = normalizeIngredient('tomato');
+  const before = recipe('r', 'Pesto', [basil, tomato]);
+  assert.equal(versionDelta(before, recipe('r', 'Pesto', [tomato, basil])), 0);
+  assert.equal(versionDelta(before, recipe('r', 'Pesto', [basil, tomato, basil])), 0);
+});
+
+test('equal-timestamp reviewed correction winners are input-order independent', () => {
+  const raw = recipe('r', 'Pesto', ['mystery']);
+  const basil = reviewed(raw, basilCorrection, 20).ingredientNormalizations[0];
+  const parsley = reviewed(raw, { ...basilCorrection, name: 'parsley' }, 20).ingredientNormalizations[0];
+  const forward = { ...raw, ingredientNormalizations: [basil, parsley] };
+  const reverse = { ...raw, ingredientNormalizations: [parsley, basil] };
+  assert.equal(versionDelta(forward, reverse), 0);
+  const discover = createPantryRecipeDiscovery();
+  const names = (recipeValue) => ['basil', 'parsley'].filter((name) => discover({ recipes: [recipeValue], pantry: pantry(name), ingredientName: name }).length);
+  assert.deepEqual(names(forward), names(reverse));
+});
+
+test('equivalent warmed large authorities reuse generation and index', async () => {
+  const corpus = Array.from({ length: 201 }, (_, index) => recipe(`r-${index}`, `Recipe ${index}`, ['basil', `item ${index}`]));
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, corpus);
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  await firstRecord.promise;
+  const firstIndex = firstRecord.index;
+  const version = state.recipeAuthorityVersion;
+  const equivalent = corpus.map((item) => ({ ...item, recipeIngredient: [...item.recipeIngredient].reverse() }));
+  publishRecipeAuthority(state, equivalent);
+  const nextRecord = recipeDiscoveryAuthority(state.recipes);
+  assert.equal(state.recipeAuthorityVersion, version);
+  assert.equal(nextRecord.index, firstIndex);
+  const changed = equivalent.map((item, index) => index ? item : { ...item, recipeIngredient: ['parsley'] });
+  publishRecipeAuthority(state, changed);
+  assert.equal(state.recipeAuthorityVersion, version + 1);
+  assert.notEqual(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
+});
+
 test('missing-ID derived identities are collision-free for distinct recipes', () => {
   const recipes = [
     { name: 'Missing 39494', recipeIngredient: ['basil'] },
@@ -220,6 +260,16 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   assert.ok(maxTimerGap < 50, `index preparation created a ${maxTimerGap}ms event-loop gap`);
   const heapDelta = process.memoryUsage().heapUsed - heapBefore;
   assert.ok(heapDelta < 80 * 1024 * 1024, `incremental heap was ${heapDelta} bytes`);
+
+  const firstIndex = recipeDiscoveryAuthority(state.recipes).index;
+  const authorityVersion = state.recipeAuthorityVersion;
+  const equivalent = corpus.map((item) => ({ ...item, recipeIngredient: [...item.recipeIngredient].reverse() }));
+  const acknowledgementStarted = performance.now();
+  publishRecipeAuthority(state, equivalent);
+  const acknowledgementMs = performance.now() - acknowledgementStarted;
+  assert.ok(acknowledgementMs < 50, `equivalent 5k acknowledgement blocked for ${acknowledgementMs}ms`);
+  assert.equal(state.recipeAuthorityVersion, authorityVersion);
+  assert.equal(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
 
   maxTimerGap = 0;
   lastTick = performance.now();

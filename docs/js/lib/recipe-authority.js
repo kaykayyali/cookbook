@@ -1,9 +1,12 @@
 import {
+  adoptRecipeDiscoveryRecord,
+  equivalentWarmedRawRecipeAuthority,
   prepareRecipeDiscoveryIndex,
   recipeDiscoveryAuthority,
 } from './recipe-discovery-projection.js';
 
 const discoverySignatures = new WeakMap();
+const discoveryRecords = new WeakMap();
 const MAX_AUTHORITY_LENGTH = 10_000;
 
 function assertState(state) {
@@ -46,14 +49,24 @@ export function publishRecipeAuthority(state, recipes) {
   const { next } = snapshot;
   const projection = recipeDiscoveryAuthority(next);
   const previous = discoverySignatures.get(state);
+  const previousRecord = discoveryRecords.get(state);
+  const equivalentLarge = snapshot.ok && !projection.ok
+    && equivalentWarmedRawRecipeAuthority(previousRecord, next)
+    && adoptRecipeDiscoveryRecord(projection, previousRecord);
   const ok = snapshot.ok && projection.ok;
+  const changed = previous === undefined || (!equivalentLarge
+    && (!previous.ok || !ok || previous.signature !== projection.signature));
   state.recipes = next;
-  if (previous === undefined || !previous.ok || !ok || previous.signature !== projection.signature) {
+  if (changed) {
     state.recipeAuthorityVersion = (Number(state.recipeAuthorityVersion) || 0) + 1;
+    discoveryRecords.set(state, projection);
+    void prepareRecipeDiscoveryIndex(projection).catch(() => {});
+  } else {
+    if (!equivalentLarge && previousRecord?.index) adoptRecipeDiscoveryRecord(projection, previousRecord);
+    discoveryRecords.set(state, projection.index ? projection : previousRecord || projection);
   }
-  discoverySignatures.set(state, { ok, signature: projection.signature });
-  // Warm the compact index outside the publication stack. The yielded builder
-  // keeps large remote refreshes from monopolizing the browser event loop.
-  void prepareRecipeDiscoveryIndex(projection).catch(() => {});
+  discoverySignatures.set(state, changed
+    ? { ok, signature: projection.signature }
+    : previous || { ok: projection.ok, signature: projection.signature });
   return next;
 }

@@ -185,7 +185,8 @@ function sanitizeRecipe(value, context, totals) {
   } else {
     try {
       effective = effectiveIngredientRecords(sanitized).map(effectiveRow);
-      signatureIngredients = ['effective', ...effective];
+      const rows = [...new Set(effective.map((row) => JSON.stringify(row)))].sort(compareText);
+      signatureIngredients = ['effective', ...rows];
     } catch {
       context.ok = false;
       effective = [];
@@ -238,6 +239,68 @@ export function recipeDiscoveryAuthority(recipes) {
     cache.set(recipes, record);
   }
   return record;
+}
+
+function rawOnlyRecipeSummary(value, context, totals) {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return null;
+  const id = boundedText(ownValue(value, '_id', context), '', context)
+    || boundedText(ownValue(value, 'id', context), '', context);
+  if (!id) return null;
+  const name = boundedText(ownValue(value, 'name', context), 'Untitled', context);
+  const image = safeRecipeImageUrlValue(ownValue(value, 'image', context), context);
+  const normalizations = ownValue(value, 'ingredientNormalizations', context);
+  if (Array.isArray(normalizations) && normalizations.length > 0) return null;
+  const ingredientValue = ownValue(value, 'recipeIngredient', context);
+  const ingredients = new Set();
+  if (Array.isArray(ingredientValue)) {
+    const length = Math.min(ingredientValue.length, MAX_INGREDIENTS_PER_RECIPE);
+    if (ingredientValue.length > MAX_INGREDIENTS_PER_RECIPE) context.ok = false;
+    for (let index = 0; index < length; index += 1) {
+      totals.ingredients += 1;
+      if (totals.ingredients > MAX_TOTAL_INGREDIENTS) { context.ok = false; break; }
+      const ingredient = ownValue(ingredientValue, String(index), context);
+      if (ingredient === MISSING) continue;
+      if (typeof ingredient !== 'string' || ingredient.length > MAX_TEXT) { context.ok = false; continue; }
+      ingredients.add(ingredient);
+    }
+  }
+  return { id, name, image, ingredients };
+}
+
+export function equivalentWarmedRawRecipeAuthority(record, recipes) {
+  if (!record?.ok || !record.index || !Array.isArray(record.snapshot) || !Array.isArray(recipes)
+      || recipes.length !== record.snapshot.length) return false;
+  const previous = new Map();
+  for (const item of record.snapshot) {
+    if (!item.rawOnly || !item.id || previous.has(item.id)) return false;
+    previous.set(item.id, item);
+  }
+  const context = { ok: true };
+  const totals = { ingredients: 0 };
+  const seen = new Set();
+  for (let index = 0; index < recipes.length; index += 1) {
+    const value = ownValue(recipes, String(index), context);
+    if (value === MISSING) { context.ok = false; continue; }
+    const summary = rawOnlyRecipeSummary(value, context, totals);
+    if (!summary || seen.has(summary.id)) return false;
+    seen.add(summary.id);
+    const prior = previous.get(summary.id);
+    if (!prior || prior.name !== summary.name || prior.image !== summary.image) return false;
+    const priorIngredients = prior.signatureRow.ingredients.slice(2);
+    if (priorIngredients.length !== summary.ingredients.size
+        || priorIngredients.some((ingredient) => !summary.ingredients.has(ingredient))) return false;
+  }
+  return context.ok && seen.size === previous.size;
+}
+
+export function adoptRecipeDiscoveryRecord(target, source) {
+  if (!target || !source?.ok || !source.index) return false;
+  target.ok = source.ok;
+  target.signature = source.signature;
+  target.snapshot = source.snapshot;
+  target.source = null;
+  target.index = source.index;
+  return true;
 }
 
 function effectiveForIndex(item, caches) {
