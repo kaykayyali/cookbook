@@ -92,6 +92,19 @@ test('leaf identity normalizes only the final singular/plural token and preserve
   assert.deepEqual(index.find('bay leaves').map(({ recipeId }) => recipeId), ['bay-leaf']);
 });
 
+test('intrinsic package-word compounds never collapse to their suffix ingredient', () => {
+  const distinct = [
+    ['bottle gourd', 'gourd'],
+    ['bunch onion', 'onion'],
+    ['can candy', 'candy'],
+    ['jar tomato', 'tomato'],
+  ];
+  for (const [compound, suffix] of distinct) {
+    assert.equal(canonicalIngredientsMatch(compound, suffix), false, `${compound} ↔ ${suffix}`);
+    assert.equal(canonicalIngredientsMatch(suffix, compound), false, `${suffix} ↔ ${compound}`);
+  }
+});
+
 test('discovery reuses one bounded recipe index until recipe authority identity changes', () => {
   assert.equal(typeof createPantryRecipeDiscovery, 'function');
   let builds = 0;
