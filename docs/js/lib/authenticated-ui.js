@@ -44,7 +44,10 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
   });
   const week = initWeek({ state, mutate: runtime.mutate, onMarkCooked: engagement.markPlan });
   const cookingMode = initCookingMode({ state });
-  const drawer = initDrawer({ state, mutateRecipe: recipeRuntime?.mutate, onSchema: showRecipeSchema, onSaved: () => panels.renderActive() });
+  const drawer = initDrawer({
+    state, mutateRecipe: recipeRuntime?.mutate, onSchema: showRecipeSchema,
+    onSaved: () => { detail?.reconcileRecipes({ authoritative: true }); panels.renderActive(); },
+  });
   const confirmImportDraft = (draftId) => async (recipe) => {
     let result = await patchImportDraft(draftId, 'confirm', { recipe });
     if (!result.ok && result.error === 'duplicate_confirmation_required'

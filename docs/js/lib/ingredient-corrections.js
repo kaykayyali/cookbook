@@ -49,8 +49,9 @@ export function canonicalIngredientVariants(value) {
   if (!exact || exact === 'uncertain ingredient') return [];
   const variants = new Set([exact]);
   const words = exact.split(/\s+/).filter(Boolean);
-  const leafBase = words.length > 1 && ['leaf', 'leaves'].includes(words.at(-1))
-    ? canonicalName(words.slice(0, -1).join(' ')) : '';
+  const leafSuffix = words.length > 1 && ['leaf', 'leaves'].includes(words.at(-1));
+  const leafBase = leafSuffix ? canonicalName(words.slice(0, -1).join(' ')) : '';
+  if (leafSuffix) variants.add(`${leafBase} ${words.at(-1) === 'leaf' ? 'leaves' : 'leaf'}`);
   if (leafBase && LEAF_BASE_ALIASES.has(leafBase)) variants.add(leafBase);
   if (LEAF_BASE_ALIASES.has(exact)) {
     variants.add(`${exact} leaf`);

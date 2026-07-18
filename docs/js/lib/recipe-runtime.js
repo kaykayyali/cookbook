@@ -1,6 +1,7 @@
 import { fetchRecipes, sendRecipeMutation } from './api.js';
 import { createRecipeOutbox } from './recipe-outbox.js';
 import { createSyncStatusPresenter } from './sync-status.js';
+import { publishRecipeAuthority } from './recipe-authority.js';
 
 const AUTHORITY_POLL_MS = 15_000;
 const CHANNEL_PREFIX = 'cookbook-recipe-authority';
@@ -34,8 +35,7 @@ export async function initRecipeRuntime({
     repo, authSub, householdId, initial: state.recipes, send,
     isOnline: () => window?.navigator?.onLine !== false,
     onChange: (recipes, meta) => {
-      state.recipes = recipes;
-      state.recipeAuthorityVersion = (Number(state.recipeAuthorityVersion) || 0) + 1;
+      publishRecipeAuthority(state, recipes);
       onChange(recipes, meta);
     },
     onAccepted: () => {

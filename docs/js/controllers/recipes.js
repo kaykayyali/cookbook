@@ -10,6 +10,7 @@ import { toast } from '../lib/dom.js';
 import { deleteRecipeById } from '../lib/api.js';
 import { recipeCardHTML, emptyStateHTML } from '../components/recipeCard.js';
 import { interactionFeedback as defaultFeedback } from '../lib/interaction-feedback.js';
+import { publishRecipeAuthority } from '../lib/recipe-authority.js';
 
 /**
  * Recipe grid controller. Renders the filtered, sorted list of recipes as
@@ -122,7 +123,9 @@ export function initRecipes({
     feedback.emit('destructive', { target, sourceEvent });
     const res = await removeRecipe(id);
     if (!res.ok) { notify(res.error || 'Could not delete recipe'); feedback.emit('blocked', { target, interaction: outcome }); return { ok: false, error: res.error }; }
-    state.recipes = state.recipes.filter((r) => r._id !== id);
+    if (state.recipes.some((recipe) => recipe._id === id)) {
+      publishRecipeAuthority(state, state.recipes.filter((recipe) => recipe._id !== id));
+    }
 
     feedback.emit('success', { target, interaction: outcome });
     render();

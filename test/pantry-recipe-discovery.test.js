@@ -8,6 +8,7 @@ import {
   canonicalIngredientsMatch,
   ingredientEvidence,
 } from '../docs/js/lib/ingredient-corrections.js';
+import { publishRecipeAuthority } from '../docs/js/lib/recipe-authority.js';
 
 const discovery = await import('../docs/js/lib/pantry-recipe-discovery.js').catch(() => ({}));
 const {
@@ -50,21 +51,26 @@ test('usage lookup matches canonical basil leaf variants but never arbitrary sub
   assert.deepEqual(buildRecipeUsageIndex(recipes).find('basilisk steak').map(({ recipeId }) => recipeId), ['basilisk']);
 });
 
-test('leaf aliases are explicit and never collapse distinct curry, tea, or bay ingredients', () => {
+test('leaf identity normalizes only the final singular/plural token and preserves compounds', () => {
   const matrix = [
     ['basil', 'basil leaves', true],
+    ['basil leaf', 'basil leaves', true],
     ['mint', 'mint leaves', true],
     ['parsley', 'parsley leaves', true],
     ['cilantro', 'cilantro leaves', true],
     ['curry', 'curry leaves', false],
+    ['curry leaf', 'curry leaves', true],
     ['tea', 'tea leaves', false],
+    ['tea leaf', 'tea leaves', true],
     ['bay', 'bay leaves', false],
+    ['bay leaf', 'bay leaves', true],
     ['spinach', 'spinach leaves', true],
     ['basil', 'basilisk steak', false],
     ['basil', 'thai basil sauce', false],
   ];
   for (const [left, right, expected] of matrix) {
     assert.equal(canonicalIngredientsMatch(left, right), expected, `${left} ↔ ${right}`);
+    assert.equal(canonicalIngredientsMatch(right, left), expected, `${right} ↔ ${left}`);
   }
   const recipes = [
     recipe('curry', 'Curry', ['curry']),
@@ -76,10 +82,13 @@ test('leaf aliases are explicit and never collapse distinct curry, tea, or bay i
   ];
   const index = buildRecipeUsageIndex(recipes);
   assert.deepEqual(index.find('curry').map(({ recipeId }) => recipeId), ['curry']);
+  assert.deepEqual(index.find('curry leaf').map(({ recipeId }) => recipeId), ['curry-leaf']);
   assert.deepEqual(index.find('curry leaves').map(({ recipeId }) => recipeId), ['curry-leaf']);
   assert.deepEqual(index.find('tea').map(({ recipeId }) => recipeId), ['tea']);
+  assert.deepEqual(index.find('tea leaf').map(({ recipeId }) => recipeId), ['tea-leaf']);
   assert.deepEqual(index.find('tea leaves').map(({ recipeId }) => recipeId), ['tea-leaf']);
   assert.deepEqual(index.find('bay').map(({ recipeId }) => recipeId), ['bay']);
+  assert.deepEqual(index.find('bay leaf').map(({ recipeId }) => recipeId), ['bay-leaf']);
   assert.deepEqual(index.find('bay leaves').map(({ recipeId }) => recipeId), ['bay-leaf']);
 });
 
@@ -162,6 +171,33 @@ test('reviewed corrections and Pantry renames change discovery immediately while
   assert.equal(corrected.length, 1);
   assert.equal(corrected[0].matchingLine, '2 mystery leaves', 'display evidence stays immutable source text');
   assert.deepEqual(discoverPantryRecipes({ recipes: [reviewed.recipe], pantry: [pantryItem('parsley')], ingredientName: 'parsley' }), []);
+});
+
+test('reviewed ingredient authority invalidates a warmed discovery index exactly once', () => {
+  let builds = 0;
+  const discover = createPantryRecipeDiscovery({ onIndexBuild: () => { builds += 1; } });
+  const base = recipe('pesto', 'Pesto', ['2 mystery leaves']);
+  const state = { recipes: [base], recipeAuthorityVersion: 0 };
+  const options = { pantry: [pantryItem('basil')], ingredientName: 'basil' };
+  const render = () => discover({ ...options, recipes: state.recipes, recipeAuthorityVersion: state.recipeAuthorityVersion });
+
+  assert.deepEqual(render(), []);
+  assert.deepEqual(render(), []);
+  assert.equal(builds, 1, 'unchanged renders reuse the warm index');
+
+  const reviewed = applyReviewedIngredientCorrection(base, {
+    ingredientId: ingredientEvidence(base)[0].id,
+    correction: { name: 'basil', amountState: 'numeric', amount: '2', measurementFamily: 'count', sourceUnit: 'count', countLabel: 'leaf' },
+    reviewer: { sub: 'member', name: 'Member' },
+    reviewedAt: 10,
+  });
+  assert.equal(reviewed.ok, true, reviewed.error);
+  publishRecipeAuthority(state, [reviewed.recipe]);
+
+  assert.equal(render().length, 1);
+  assert.equal(builds, 2, 'one authority publication causes one rebuild');
+  assert.equal(render().length, 1);
+  assert.equal(builds, 2, 'unchanged form renders do not rebuild');
 });
 
 test('image extraction accepts safe HTTP(S) forms and rejects executable, credentialed, malformed, and missing URLs', () => {

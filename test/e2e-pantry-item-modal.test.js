@@ -137,6 +137,23 @@ async function createPantryPage(viewport = { width: 1440, height: 900 }, options
         nextCursor: null,
       });
     }
+    if (url.pathname === '/api/community' && request.method() === 'POST') {
+      const submitted = structuredClone(request.postDataJSON().recipe);
+      const id = `fallback-${recipeAuthority.length + 1}`;
+      recipeAuthority = [{ ...submitted, _id: id }, ...recipeAuthority];
+      return json(route, { id, recipe: submitted, createdAt: Date.now(), updatedAt: Date.now() });
+    }
+    const fallbackRecipeId = url.pathname.match(/^\/api\/community\/([^/]+)$/)?.[1];
+    if (fallbackRecipeId && request.method() === 'PUT') {
+      const submitted = structuredClone(request.postDataJSON().recipe);
+      recipeAuthority = recipeAuthority.map((recipe) => String(recipe._id || recipe.id) === fallbackRecipeId
+        ? { ...submitted, _id: fallbackRecipeId } : recipe);
+      return json(route, { id: fallbackRecipeId, recipe: submitted, createdAt: 1, updatedAt: Date.now() });
+    }
+    if (fallbackRecipeId && request.method() === 'DELETE') {
+      recipeAuthority = recipeAuthority.filter((recipe) => String(recipe._id || recipe.id) !== fallbackRecipeId);
+      return route.fulfill({ status: 204, body: '' });
+    }
     if (url.pathname === '/api/recipe-mutations' && request.method() === 'POST') {
       const mutation = request.postDataJSON();
       if (mutation.op === 'recipe.delete') {
@@ -325,6 +342,33 @@ test('selected Pantry ingredient discovers canonical recipe uses and opens detai
     await page.keyboard.press('Escape');
     assert.equal(await pantryRow.evaluate((element) => element === document.activeElement), true, 'second Escape returns to the Pantry row');
     assert.equal(await page.locator('body').evaluate((element) => element.style.overflow), '', 'nested modal teardown restores page scrolling');
+    assert.deepEqual(browserErrors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('online-only recipe fallback invalidates warmed Pantry discovery after a rename', { timeout: 60_000 }, async () => {
+  const recipe = { _id: 'fallback-pesto', name: 'Fallback Pesto', recipeIngredient: ['basil'], recipeInstructions: ['Mix.'] };
+  const { context, page, browserErrors } = await createPantryPage(
+    { width: 1280, height: 900 },
+    { recipes: [recipe], disableIndexedDb: true },
+  );
+  try {
+    await page.locator('[data-pantry-id="pantry-basil"]').click();
+    assert.match(await page.locator('#pantry-recipe-discovery').innerText(), /Fallback Pesto/);
+    await page.locator('#pantry-item-close').click();
+    await page.locator('button[data-panel="recipes"]').click();
+    await page.locator('.recipe-card[data-id="fallback-pesto"] [data-action="edit"]').click();
+    await page.locator('#f-name').fill('Renamed Fallback Pesto');
+    const responsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/community/fallback-pesto'
+      && response.request().method() === 'PUT' && response.ok());
+    await page.locator('#save-recipe-btn').click();
+    await responsePromise;
+
+    await page.locator('button[data-panel="pantry"]').click();
+    await page.locator('[data-pantry-id="pantry-basil"]').click();
+    assert.match(await page.locator('#pantry-recipe-discovery').innerText(), /Renamed Fallback Pesto/);
     assert.deepEqual(browserErrors, []);
   } finally {
     await context.close();
