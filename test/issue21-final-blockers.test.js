@@ -259,7 +259,7 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   const preparationCpu = process.cpuUsage(prepareCpuStarted);
   const preparationCpuMs = (preparationCpu.user + preparationCpu.system) / 1_000;
   assert.ok(preparationMs < 5_000, `5k x 20 index took ${preparationMs}ms`);
-  assert.ok(maxTimerGap < 75, `index preparation created a ${maxTimerGap}ms event-loop gap`);
+  assert.ok(maxTimerGap < 50, `index preparation created a ${maxTimerGap}ms event-loop gap`);
   const heapDelta = process.memoryUsage().heapUsed - heapBefore;
   assert.ok(heapDelta < 80 * 1024 * 1024, `incremental heap was ${heapDelta} bytes`);
 
@@ -302,7 +302,7 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   assert.equal(page.total, 5_000);
   assert.equal(page.hasMore, true);
   assert.ok(queryMs < 3_000, `yielded common query took ${queryMs}ms`);
-  assert.ok(maxTimerGap < 75, `paged query created a ${maxTimerGap}ms event-loop gap`);
+  assert.ok(maxTimerGap < 50, `paged query created a ${maxTimerGap}ms event-loop gap`);
 
   const half = corpus.slice(0, 1_250);
   const halfDiscover = createPantryRecipeDiscovery();
