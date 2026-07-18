@@ -64,6 +64,69 @@ function reconciliationFixture(options = {}) {
   return { dom, detail, state, recipe };
 }
 
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+function heldMutation() {
+  let settle;
+  const promise = new Promise((resolve, reject) => { settle = { resolve, reject }; });
+  return { promise, ...settle };
+}
+
+async function beginHeldCorrection(detail, document) {
+  detail.open('r1');
+  const action = document.querySelector('[data-action="correct-ingredient"]');
+  assert.equal(detail.openCorrection(action.dataset.ingredientId, action), true);
+  document.getElementById('ingredient-correction-name').value = 'basil';
+  document.getElementById('ingredient-correction-state').value = 'numeric';
+  document.getElementById('ingredient-correction-state')
+    .dispatchEvent(new document.defaultView.Event('change', { bubbles: true }));
+  document.getElementById('ingredient-correction-amount').value = '1';
+  document.getElementById('ingredient-correction-family').value = 'count';
+  document.getElementById('ingredient-correction-family')
+    .dispatchEvent(new document.defaultView.Event('change', { bubbles: true }));
+  document.getElementById('ingredient-correction-unit').value = 'count';
+  document.getElementById('ingredient-correction-form')
+    .dispatchEvent(new document.defaultView.Event('submit', { bubbles: true, cancelable: true }));
+  await tick();
+  assert.equal(document.getElementById('ingredient-correction-modal').getAttribute('aria-busy'), 'true');
+}
+
+function installPantryOwner(document) {
+  const owner = document.createElement('section');
+  owner.id = 'pantry-item-modal';
+  owner.setAttribute('role', 'dialog');
+  owner.setAttribute('aria-modal', 'true');
+  document.body.prepend(owner);
+  owner.append(document.getElementById('pantry-result'));
+  return owner;
+}
+
+function assertDeletedStackTornDown(document, state, pantryOwner, expectedRecipes = []) {
+  const correction = document.getElementById('ingredient-correction-modal');
+  const detail = document.getElementById('detail-modal');
+  assert.equal(correction.hidden, true);
+  assert.equal(correction.getAttribute('aria-modal'), null);
+  assert.equal(correction.getAttribute('aria-busy'), null);
+  assert.equal(correction.getAttribute('aria-hidden'), 'true');
+  assert.equal(correction.hasAttribute('inert'), true);
+  assert.equal(document.getElementById('ingredient-correction-overlay').hidden, true);
+  assert.equal(document.getElementById('ingredient-correction-pending').textContent, '');
+  assert.equal(document.getElementById('ingredient-correction-error').textContent, '');
+  for (const id of ['ingredient-correction-save', 'ingredient-correction-close', 'ingredient-correction-cancel']) {
+    assert.equal(document.getElementById(id).disabled, false);
+  }
+  assert.equal(detail.hidden, true);
+  assert.equal(detail.getAttribute('aria-modal'), null);
+  assert.equal(detail.getAttribute('aria-hidden'), 'true');
+  assert.equal(detail.hasAttribute('inert'), true);
+  assert.equal(document.getElementById('detail-overlay').hidden, true);
+  assert.equal(pantryOwner.getAttribute('aria-modal'), 'true');
+  assert.equal(document.body.style.overflow, 'hidden');
+  assert.equal(state.detailId, null);
+  assert.deepEqual(state.recipes, expectedRecipes);
+  assert.equal(document.activeElement, document.getElementById('pantry-result'));
+}
+
 test('recipe detail is modal, focuses inside, traps Tab, closes on Escape, and restores its opener', () => {
   const { dom, detail } = fixture();
   const { document, KeyboardEvent } = dom.window;
@@ -195,4 +258,103 @@ test('deleting the current recipe closes nested detail safely and hands focus ba
   assert.equal(resumed, 1);
   assert.equal(document.activeElement, document.getElementById('pantry-result'));
   assert.equal(document.body.style.overflow, '');
+});
+
+for (const [name, settle] of [
+  ['late success', (held) => held.resolve(true)],
+  ['late failure', (held) => held.resolve(false)],
+  ['late abort', (held) => held.reject(new DOMException('Deleted owner', 'AbortError'))],
+]) {
+  test(`authoritative recipe deletion force-tears down a pending correction and ignores ${name}`, async () => {
+    const held = heldMutation();
+    const mutations = [];
+    const notifications = [];
+    const feedbackEvents = [];
+    let resumed = 0;
+    const { dom, detail, state } = reconciliationFixture({
+      mutateRecipe: (op, payload) => { mutations.push({ op, payload }); return held.promise; },
+      notify: (message) => notifications.push(message),
+      feedback: { contextFromEvent: () => null, emit: (type) => feedbackEvents.push(type) },
+      onClose: () => {
+        resumed += 1;
+        dom.window.document.getElementById('pantry-result').focus();
+        return true;
+      },
+    });
+    const { document } = dom.window;
+    const pantryOwner = installPantryOwner(document);
+    document.getElementById('pantry-result').focus();
+    await beginHeldCorrection(detail, document);
+    assert.equal(mutations.length, 1, 'the correction intent is submitted exactly once');
+    assert.equal(mutations[0].op, 'recipe.ingredient.review');
+
+    state.recipes = [];
+    assert.equal(detail.reconcileRecipes({ authoritative: true }), true);
+    assertDeletedStackTornDown(document, state, pantryOwner);
+    assert.equal(resumed, 1);
+    const tornDownDom = document.body.innerHTML;
+
+    settle(held);
+    await tick();
+    await tick();
+    assertDeletedStackTornDown(document, state, pantryOwner);
+    assert.equal(document.body.innerHTML, tornDownDom, 'late settlement performs no DOM mutation');
+    assert.deepEqual(notifications, []);
+    assert.deepEqual(feedbackEvents, []);
+    assert.equal(mutations.length, 1, 'teardown does not discard or duplicate accepted durable intent');
+    assert.equal(resumed, 1, 'focus handoff runs exactly once');
+    assert.equal(detail.reconcileRecipes({ authoritative: true }), false, 'duplicate reconciliation is idempotent');
+    assert.equal(resumed, 1);
+  });
+}
+
+test('normal correction and parent close paths still refuse while a save is pending', async () => {
+  const held = heldMutation();
+  const { dom, detail } = reconciliationFixture({ mutateRecipe: () => held.promise });
+  const { document } = dom.window;
+  await beginHeldCorrection(detail, document);
+
+  const correctionClosed = detail.closeCorrection();
+  const detailClosed = detail.close();
+  document.getElementById('ingredient-correction-modal').dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+    key: 'Escape', bubbles: true, cancelable: true,
+  }));
+  const correctionStillOpen = !document.getElementById('ingredient-correction-modal').hidden;
+  const detailStillOpen = !document.getElementById('detail-modal').hidden;
+  held.resolve(false);
+  await tick();
+  await tick();
+
+  assert.equal(correctionClosed, false);
+  assert.equal(detailClosed, false);
+  assert.equal(correctionStillOpen, true);
+  assert.equal(detailStillOpen, true);
+  assert.match(document.getElementById('ingredient-correction-error').textContent, /could not save/i);
+});
+
+test('destroy force-tears down a pending correction and ignores its late settlement idempotently', async () => {
+  const held = heldMutation();
+  let resumed = 0;
+  const { dom, detail, state } = reconciliationFixture({
+    mutateRecipe: () => held.promise,
+    onClose: () => {
+      resumed += 1;
+      dom.window.document.getElementById('pantry-result').focus();
+      return true;
+    },
+  });
+  const { document } = dom.window;
+  const pantryOwner = installPantryOwner(document);
+  document.getElementById('pantry-result').focus();
+  await beginHeldCorrection(detail, document);
+
+  const recipesBeforeDestroy = structuredClone(state.recipes);
+  assert.equal(detail.destroy(), true);
+  assertDeletedStackTornDown(document, state, pantryOwner, recipesBeforeDestroy);
+  assert.equal(detail.destroy(), false);
+  held.resolve(true);
+  await tick();
+  await tick();
+  assertDeletedStackTornDown(document, state, pantryOwner, recipesBeforeDestroy);
+  assert.equal(resumed, 1);
 });

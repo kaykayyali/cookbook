@@ -126,7 +126,10 @@ export function initDetail({
   let correction = null;
   let correctionOpener = null;
   let correctionPending = false;
+  let correctionRequestGeneration = 0;
   let suspendedDetailState = null;
+  let destroyed = false;
+  const parentDestruction = Symbol('parent-destruction');
   const pendingAudits = new Set();
 
   function renderRecipePresentation() {
@@ -282,6 +285,7 @@ export function initDetail({
   }
 
   function openCorrection(ingredientId, sourceElement) {
+    if (destroyed) return false;
     const recipe = current?.r;
     const record = effectiveIngredientRecords(recipe).find((item) => item.id === ingredientId);
     if (!recipe || !record) { notify('Ingredient evidence changed. Reload and try again.'); return false; }
@@ -326,16 +330,18 @@ export function initDetail({
     return true;
   }
 
-  function closeCorrection({ restoreFocus = true } = {}) {
-    if (correctionPending) return false;
+  function teardownCorrection({ restoreFocus = true, force = false, resumeDetail = true } = {}) {
+    if (correctionPending && !force) return false;
+    if (force) correctionRequestGeneration += 1;
     const modal = correctionElement('modal');
     const overlay = correctionElement('overlay');
     if (modal) {
-      modal.setAttribute('inert', ''); modal.setAttribute('aria-hidden', 'true'); modal.removeAttribute('aria-modal'); modal.hidden = true;
+      modal.setAttribute('inert', ''); modal.setAttribute('aria-hidden', 'true');
+      modal.removeAttribute('aria-modal'); modal.removeAttribute('aria-busy'); modal.hidden = true;
     }
     if (overlay) overlay.hidden = true;
     const detailModal = document.getElementById('detail-modal');
-    if (detailModal && suspendedDetailState) {
+    if (resumeDetail && detailModal && suspendedDetailState) {
       if (suspendedDetailState.inert) detailModal.setAttribute?.('inert', '');
       else detailModal.removeAttribute?.('inert');
       if (suspendedDetailState.ariaHidden == null) detailModal.removeAttribute?.('aria-hidden');
@@ -348,7 +354,16 @@ export function initDetail({
     correction = null;
     correctionOpener = null;
     correctionPending = false;
+    const pending = correctionElement('pending');
+    if (pending) pending.textContent = '';
+    clearCorrectionError();
+    for (const key of ['save', 'close', 'cancel']) if (correctionElement(key)) correctionElement(key).disabled = false;
     if (restoreFocus && restore?.isConnected !== false) restore?.focus?.();
+    return true;
+  }
+
+  function closeCorrection({ restoreFocus = true } = {}) {
+    return teardownCorrection({ restoreFocus });
   }
 
   function correctionFocusable() {
@@ -384,7 +399,7 @@ export function initDetail({
 
   async function saveCorrection(event) {
     event?.preventDefault?.();
-    if (!correction || correctionPending) return false;
+    if (destroyed || !correction || correctionPending) return false;
     clearCorrectionError();
     const draft = correctionDraft();
     const validation = validateIngredientCorrection(draft);
@@ -400,6 +415,8 @@ export function initDetail({
     }
     const recipe = state.recipes.find((item) => String(item._id || item.id) === correction.recipeId);
     if (!recipe) { showCorrectionError('This recipe changed. Reload and try again.'); return false; }
+    const request = correction;
+    const requestGeneration = ++correctionRequestGeneration;
     const interaction = feedback.contextFromEvent?.(event, correctionElement('save'));
     correctionPending = true;
     correctionElement('modal')?.setAttribute?.('aria-busy', 'true');
@@ -407,14 +424,15 @@ export function initDetail({
     const pending = correctionElement('pending');
     if (pending) pending.textContent = 'Saving reviewed correction…';
     const payload = {
-      id: correction.recipeId,
-      ingredientId: correction.ingredientId,
+      id: request.recipeId,
+      ingredientId: request.ingredientId,
       expectedUpdatedAt: Number(recipe._updatedAt) || 0,
       correction: validation.correction,
     };
     let accepted = false;
     try { accepted = await mutateRecipe('recipe.ingredient.review', payload); }
     catch { accepted = false; }
+    if (destroyed || requestGeneration !== correctionRequestGeneration || correction !== request) return false;
     for (const key of ['save', 'close', 'cancel']) if (correctionElement(key)) correctionElement(key).disabled = false;
     correctionElement('modal')?.removeAttribute?.('aria-busy');
     correctionPending = false;
@@ -424,24 +442,24 @@ export function initDetail({
       feedback.emit('blocked', { target: correctionElement('save'), interaction: interaction ? { ...interaction, deferred: true } : null });
       return false;
     }
-    const latest = state.recipes.find((item) => String(item._id || item.id) === correction.recipeId) || recipe;
-    const pendingRecord = latest.ingredientNormalizations?.find?.((item) => item.id === correction.ingredientId);
+    const latest = state.recipes.find((item) => String(item._id || item.id) === request.recipeId) || recipe;
+    const pendingRecord = latest.ingredientNormalizations?.find?.((item) => item.id === request.ingredientId);
     if (pendingRecord?.reviewedBy?.sub === 'pending') {
       pendingRecord.reviewedBy = {
         sub: state.auth?.sub || 'pending',
         name: state.household?.member?.displayName || state.auth?.name || 'You',
       };
     }
-    if (!effectiveIngredientRecords(latest).some((item) => item.id === correction.ingredientId && item.reviewStatus === 'reviewed')) {
+    if (!effectiveIngredientRecords(latest).some((item) => item.id === request.ingredientId && item.reviewStatus === 'reviewed')) {
       const optimistic = applyReviewedIngredientCorrection(latest, {
-        ingredientId: correction.ingredientId,
+        ingredientId: request.ingredientId,
         correction: validation.correction,
         reviewer: { sub: state.auth?.sub || '', name: state.auth?.name || 'You' },
         reviewedAt: Date.now(),
       });
       if (optimistic.ok) Object.assign(latest, optimistic.recipe);
     }
-    if (current?.r && String(current.r._id || current.r.id) === correction.recipeId) current.r = latest;
+    if (current?.r && String(current.r._id || current.r.id) === request.recipeId) current.r = latest;
     const successTarget = correctionOpener || correctionElement('save');
     closeCorrection();
     renderIngredients();
@@ -452,6 +470,7 @@ export function initDetail({
   }
 
   function open(id) {
+    if (destroyed) return false;
     const r = state.recipes.find((x) => x._id === id);
     if (!r) return false;
     const isAuthor = !r._author || !!(state.auth?.sub && r._author.sub === state.auth.sub);
@@ -514,10 +533,10 @@ export function initDetail({
   }
 
   function reconcileRecipes(meta = {}) {
-    if (!current?.r) return false;
+    if (destroyed || !current?.r) return false;
     const id = String(current.r._id || current.r.id || '');
     const latest = (state.recipes || []).find((recipe) => String(recipe._id || recipe.id || '') === id);
-    if (!latest) { closeSheet(); return true; }
+    if (!latest) return closeSheet(parentDestruction);
 
     const scroller = document.querySelector?.('.detail-body');
     const scrollTop = scroller?.scrollTop;
@@ -611,9 +630,16 @@ export function initDetail({
     document.getElementById('detail-close-btn')?.focus?.();
   }
 
-  function closeSheet() {
-    if (!correctionElement('modal')?.hidden) closeCorrection({ restoreFocus: false });
+  function closeSheet(reason) {
+    const forceCorrection = reason === parentDestruction;
+    const correctionModal = correctionElement('modal');
+    const correctionOpen = Boolean(correction && (!correctionModal || !correctionModal.hidden));
     const modal = document.getElementById('detail-modal');
+    const detailOpen = Boolean(current || correctionOpen || modal?.classList.contains('open'));
+    if (!detailOpen) return false;
+    if (correctionOpen && !teardownCorrection({
+      restoreFocus: false, force: forceCorrection, resumeDetail: false,
+    })) return false;
     const overlay = document.getElementById('detail-overlay');
     if (modal) {
       modal.setAttribute?.('inert', '');
@@ -637,6 +663,16 @@ export function initDetail({
     if (!focusRestored && restore?.isConnected !== false) {
       try { restore?.focus?.(); } catch { /* Detached opener. */ }
     }
+    return true;
+  }
+
+  function destroy() {
+    if (destroyed) return false;
+    destroyed = true;
+    correctionRequestGeneration += 1;
+    const active = Boolean(current || correction || document.getElementById('detail-modal')?.classList.contains('open'));
+    if (active) closeSheet(parentDestruction);
+    return true;
   }
 
   function focusableElements(modal) {
@@ -805,7 +841,7 @@ export function initDetail({
     const editBtn = document.getElementById('dm-edit-btn');
     if (editBtn) editBtn.addEventListener('click', () => {
       const id = state.detailId;
-      closeSheet();
+      if (!closeSheet()) return;
       if (onEdit) onEdit(id);
     });
     const schemaBtn = document.getElementById('dm-schema-btn');
@@ -951,7 +987,7 @@ export function initDetail({
   wireDetail();
   return {
     open, close: closeSheet, restore, _renderIngredients: renderIngredients, _addToCart: addToCartHandler,
-    openCorrection, closeCorrection, reconcileRecipes,
+    openCorrection, closeCorrection, reconcileRecipes, destroy,
     _waitForAudits: () => Promise.allSettled([...pendingAudits]),
   };
 }
