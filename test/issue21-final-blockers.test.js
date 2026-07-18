@@ -321,6 +321,56 @@ test('raw semantic signatures ignore losing canonical variants but detect winner
   assert.equal(winnerState.recipeAuthorityVersion, winnerVersion + 1, 'a new compact raw winner invalidates discovery');
 });
 
+test('warmed large raw duplicates preserve exact canonical winner equivalence', async () => {
+  const corpus = Array.from({ length: 201 }, (_, index) => (
+    recipe(`r-${index}`, `Recipe ${index}`, ['basil', `item ${index}`])
+  ));
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, corpus);
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  await firstRecord.promise;
+  const firstIndex = firstRecord.index;
+  const version = state.recipeAuthorityVersion;
+
+  const reordered = corpus
+    .map((item) => ({ ...item, recipeIngredient: [...item.recipeIngredient].reverse() }))
+    .reverse();
+  reordered.splice(73, 0, {
+    ...corpus[0],
+    recipeIngredient: [...corpus[0].recipeIngredient].reverse(),
+  });
+  publishRecipeAuthority(state, reordered);
+  let candidate = recipeDiscoveryAuthority(state.recipes);
+  assert.equal(state.recipeAuthorityVersion, version, 'an unresolved duplicate cannot invalidate synchronously');
+  assert.ok(candidate.certificationPromise instanceof Promise, 'the duplicate delegates to exact certification');
+  await candidate.certificationPromise;
+  assert.equal(state.recipeAuthorityVersion, version, 'an equivalent duplicate does not advance generation');
+  assert.equal(candidate.index, firstIndex, 'equivalent certification reuses the exact prior index');
+
+  const losingDuplicate = [...corpus].reverse();
+  losingDuplicate.splice(41, 0, recipe('r-0', 'Recipe 0', ['parsley']));
+  publishRecipeAuthority(state, losingDuplicate);
+  candidate = recipeDiscoveryAuthority(state.recipes);
+  assert.equal(state.recipeAuthorityVersion, version, 'a possible losing duplicate remains unresolved');
+  assert.ok(candidate.certificationPromise instanceof Promise);
+  await candidate.certificationPromise;
+  assert.equal(state.recipeAuthorityVersion, version, 'a discarded canonical variant does not advance generation');
+  assert.equal(candidate.index, firstIndex, 'a losing duplicate retains the exact prior index');
+
+  const winningDuplicate = [...corpus].reverse();
+  winningDuplicate.splice(109, 0, recipe('r-0', 'Recipe 0', ['apple']));
+  publishRecipeAuthority(state, winningDuplicate);
+  candidate = recipeDiscoveryAuthority(state.recipes);
+  assert.equal(state.recipeAuthorityVersion, version, 'a possible winning duplicate remains unresolved');
+  assert.equal(candidate.index, firstIndex, 'the prior index remains provisional until exact certification');
+  assert.ok(candidate.certificationPromise instanceof Promise);
+  await candidate.certificationPromise;
+  assert.equal(state.recipeAuthorityVersion, version + 1, 'a changed canonical winner advances generation once');
+  assert.notEqual(candidate.index, firstIndex, 'a changed canonical winner installs its certified index');
+  assert.equal(candidate.index.byIngredient.has('apple'), true);
+  assert.equal(candidate.index.byIngredient.has('basil'), true, 'unrelated recipes remain discoverable');
+});
+
 test('missing-ID derived identities are collision-free for distinct recipes', () => {
   const recipes = [
     { name: 'Missing 39494', recipeIngredient: ['basil'] },

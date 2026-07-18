@@ -415,10 +415,11 @@ function compareRawRecipeSource(previous, candidateRecord, previousRecord) {
   if (!safeArrayCheck(recipes, context)) return context.ok ? null : false;
   const length = safeArrayLength(recipes, context);
   if (!context.ok || length > MAX_RECIPES) return false;
-  if (length !== previous.size) return false;
+  if (length < previous.size) return false;
   const totals = { ingredients: 0 };
   const seen = new Set();
   const resources = { previousRows: null, caches: null };
+  let matches = length === previous.size;
   for (let index = 0; index < length; index += 1) {
     const value = ownValue(recipes, String(index), context);
     if (value === MISSING || !context.ok) return false;
@@ -426,10 +427,12 @@ function compareRawRecipeSource(previous, candidateRecord, previousRecord) {
     if (summary === INVALID_RAW_SUMMARIES) return false;
     if (!summary || seen.has(summary.id)) return null;
     seen.add(summary.id);
-    if (!rawSummaryMatchesIndex(previous.get(summary.id), summary, previousRecord, resources)) return false;
+    if (matches && !rawSummaryMatchesIndex(previous.get(summary.id), summary, previousRecord, resources)) {
+      matches = false;
+    }
   }
   if (resources.caches) candidateRecord.caches = resources.caches;
-  return seen.size === previous.size;
+  return matches && seen.size === previous.size;
 }
 
 function compareRawAuthorities(previousRecord, candidateRecord) {
