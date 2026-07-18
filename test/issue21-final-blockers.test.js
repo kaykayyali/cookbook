@@ -18,6 +18,8 @@ import { createPantryRecipeDiscovery } from '../docs/js/lib/pantry-recipe-discov
 import { publishRecipeAuthority } from '../docs/js/lib/recipe-authority.js';
 import {
   prepareRecipeDiscoveryIndex,
+  prepareRecipeDiscoveryPage,
+  queryRecipeDiscoveryIndex,
   recipeDiscoveryAuthority,
 } from '../docs/js/lib/recipe-discovery-projection.js';
 
@@ -431,6 +433,54 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   const halfCpuMs = (halfCpu.user + halfCpu.system) / 1_000;
   assert.ok(preparationCpuMs < (halfCpuMs * 6) + 100,
     `4x scaling exceeded linear CPU target: 1.25k=${halfCpuMs}ms 5k=${preparationCpuMs}ms (wall ${halfMs}ms/${preparationMs}ms)`);
+});
+
+function allocationProbedDiscoveryIndex(size) {
+  let resultLikeReads = 0;
+  const recipes = Array.from({ length: size }, (_, index) => {
+    const names = index === 0 || index === 3 ? ['basil']
+      : index % 2 ? ['basil', 'tomato']
+        : ['basil', 'tomato', `missing-${index}`];
+    const raws = names.map((name) => `1 piece ${name}`);
+    return {
+      recipeId: `recipe-${index}`,
+      recipeIdentity: `id:recipe-${index}`,
+      recipeName: `Recipe ${String(index).padStart(5, '0')}`,
+      imageUrl: '',
+      canOpen: true,
+      names,
+      get raws() {
+        resultLikeReads += 1;
+        return raws;
+      },
+    };
+  });
+  return {
+    index: { recipes, byIngredient: new Map([['basil', recipes.map((_, index) => index)]]) },
+    resultLikeReads: () => resultLikeReads,
+  };
+}
+
+test('paged discovery materializes result-like data only for the retained offset and limit', async (t) => {
+  const expectedIds = ['recipe-3', 'recipe-1', 'recipe-5'];
+  const options = { offset: 1, limit: 3 };
+  for (const [name, query] of [
+    ['synchronous query', (index) => queryRecipeDiscoveryIndex(index, pantry('basil'), 'basil', options)],
+    ['yielded query', (index) => prepareRecipeDiscoveryPage(index, pantry('basil'), 'basil', options)],
+  ]) {
+    await t.test(name, async () => {
+      const probe = allocationProbedDiscoveryIndex(5_000);
+      const page = await query(probe.index);
+      assert.deepEqual(page.results.map(({ recipeId }) => recipeId), expectedIds, 'rank buckets retain stable index order');
+      assert.deepEqual(page.results.map(({ availability }) => availability.label), ['All', 'Some', 'Some']);
+      assert.equal(page.total, 5_000);
+      assert.equal(page.hasMore, true);
+      assert.equal(probe.resultLikeReads(), page.results.length,
+        `${name} should read matching evidence only while materializing selected results`);
+      assert.ok(probe.resultLikeReads() <= options.offset + options.limit,
+        `${name} materialized matching evidence for ${probe.resultLikeReads()} results while retaining ${options.offset + options.limit}`);
+    });
+  }
 });
 
 test('stale asynchronous index preparation is cancelled when recipe authority changes', async () => {

@@ -738,18 +738,49 @@ export function prepareRecipeDiscoveryIndex(record) {
   return record.promise;
 }
 
-function rankedRecipe(source, canonical, available) {
-    let have = 0;
-    for (const name of source.names) if (available.has(name)) have += 1;
-    const total = source.names.length;
-    const ratio = total ? have / total : 0;
-    const label = total && have === total ? 'All' : ratio >= 0.5 ? 'Some' : 'Few';
-    const rank = label === 'All' ? 0 : label === 'Some' ? 1 : 2;
-    const matchIndex = source.names.indexOf(canonical);
-  return { rank, item: { source, matchingLine: matchIndex >= 0 ? source.raws[matchIndex] : '', availability: { label, have, total, ratio } } };
+function recipeRank(source, available) {
+  let have = 0;
+  for (const name of source.names) if (available.has(name)) have += 1;
+  const total = source.names.length;
+  if (total && have === total) return 0;
+  return total && have / total >= 0.5 ? 1 : 2;
 }
 
-async function rankedRecipeYielded(source, canonical, available, budget) {
+async function recipeRankYielded(source, available, budget) {
+  let have = 0;
+  for (const name of source.names) {
+    if (available.has(name)) have += 1;
+    const pending = spendIngredientBudget(budget);
+    if (pending) await pending;
+  }
+  const total = source.names.length;
+  if (total && have === total) return 0;
+  return total && have / total >= 0.5 ? 1 : 2;
+}
+
+function materializeRecipe(source, canonical, available) {
+  let have = 0;
+  let matchIndex = -1;
+  for (let index = 0; index < source.names.length; index += 1) {
+    const name = source.names[index];
+    if (available.has(name)) have += 1;
+    if (matchIndex < 0 && name === canonical) matchIndex = index;
+  }
+  const total = source.names.length;
+  const ratio = total ? have / total : 0;
+  const label = total && have === total ? 'All' : ratio >= 0.5 ? 'Some' : 'Few';
+  return {
+    recipeId: source.recipeId,
+    recipeIdentity: source.recipeIdentity,
+    recipeName: source.recipeName,
+    matchingLine: matchIndex >= 0 ? source.raws[matchIndex] : '',
+    availability: { label, have, total, ratio },
+    imageUrl: source.imageUrl,
+    canOpen: source.canOpen,
+  };
+}
+
+async function materializeRecipeYielded(source, canonical, available, budget) {
   let have = 0;
   let matchIndex = -1;
   for (let index = 0; index < source.names.length; index += 1) {
@@ -762,32 +793,45 @@ async function rankedRecipeYielded(source, canonical, available, budget) {
   const total = source.names.length;
   const ratio = total ? have / total : 0;
   const label = total && have === total ? 'All' : ratio >= 0.5 ? 'Some' : 'Few';
-  const rank = label === 'All' ? 0 : label === 'Some' ? 1 : 2;
-  return { rank, item: { source, matchingLine: matchIndex >= 0 ? source.raws[matchIndex] : '', availability: { label, have, total, ratio } } };
+  return {
+    recipeId: source.recipeId,
+    recipeIdentity: source.recipeIdentity,
+    recipeName: source.recipeName,
+    matchingLine: matchIndex >= 0 ? source.raws[matchIndex] : '',
+    availability: { label, have, total, ratio },
+    imageUrl: source.imageUrl,
+    canOpen: source.canOpen,
+  };
 }
 
-function pageFromBuckets(buckets, total, offset, limit) {
+function selectedRefsFromBuckets(buckets, offset, limit, total) {
   const start = Math.max(0, Number(offset) || 0);
   const count = Number.isFinite(limit) ? Math.max(0, Number(limit) || 0) : total;
   const selected = [];
   let skipped = 0;
   for (const bucket of buckets) {
-    for (const item of bucket) {
+    for (const ref of bucket) {
       if (skipped++ < start) continue;
       if (selected.length >= count) break;
-      selected.push(item);
+      selected.push(ref);
     }
     if (selected.length >= count) break;
   }
-  const results = selected.map(({ source, matchingLine, availability }) => ({
-    recipeId: source.recipeId,
-    recipeIdentity: source.recipeIdentity,
-    recipeName: source.recipeName,
-    matchingLine,
-    availability,
-    imageUrl: source.imageUrl,
-    canOpen: source.canOpen,
-  }));
+  return { selected, start };
+}
+
+function pageFromBuckets(buckets, index, canonical, available, total, offset, limit) {
+  const { selected, start } = selectedRefsFromBuckets(buckets, offset, limit, total);
+  const results = selected.map((ref) => materializeRecipe(index.recipes[ref], canonical, available));
+  return { results, total, hasMore: start + results.length < total, pending: false };
+}
+
+async function pageFromBucketsYielded(buckets, index, canonical, available, total, offset, limit, budget) {
+  const { selected, start } = selectedRefsFromBuckets(buckets, offset, limit, total);
+  const results = [];
+  for (const ref of selected) {
+    results.push(await materializeRecipeYielded(index.recipes[ref], canonical, available, budget));
+  }
   return { results, total, hasMore: start + results.length < total, pending: false };
 }
 
@@ -805,10 +849,10 @@ export function queryRecipeDiscoveryIndex(index, pantryNames, ingredientName, { 
   const { canonical, refs, available, cap } = queryInputs(index, pantryNames, ingredientName, offset, limit);
   const buckets = [[], [], []];
   for (const ref of refs) {
-    const ranked = rankedRecipe(index.recipes[ref], canonical, available);
-    if (buckets[ranked.rank].length < cap) buckets[ranked.rank].push(ranked.item);
+    const rank = recipeRank(index.recipes[ref], available);
+    if (buckets[rank].length < cap) buckets[rank].push(ref);
   }
-  return pageFromBuckets(buckets, refs.length, offset, limit);
+  return pageFromBuckets(buckets, index, canonical, available, refs.length, offset, limit);
 }
 
 export async function prepareRecipeDiscoveryPage(index, pantryNames, ingredientName, { offset = 0, limit = Infinity } = {}) {
@@ -818,8 +862,10 @@ export async function prepareRecipeDiscoveryPage(index, pantryNames, ingredientN
   await yieldTask();
   for (const ref of refs) {
     const source = index.recipes[ref];
-    const ranked = await rankedRecipeYielded(source, canonical, available, budget);
-    if (buckets[ranked.rank].length < cap) buckets[ranked.rank].push(ranked.item);
+    const rank = await recipeRankYielded(source, available, budget);
+    if (buckets[rank].length < cap) buckets[rank].push(ref);
   }
-  return pageFromBuckets(buckets, refs.length, offset, limit);
+  return pageFromBucketsYielded(
+    buckets, index, canonical, available, refs.length, offset, limit, budget,
+  );
 }
