@@ -541,6 +541,7 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   assert.ok(variantMs < 150, `canonical 5k acknowledgement blocked for ${variantMs}ms`);
   assert.equal(state.recipeAuthorityVersion, authorityVersion);
   assert.equal(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
+  t.diagnostic(`5k acknowledgement CPU: equivalent=${acknowledgementCpuMs}ms canonical=${variantCpuMs}ms`);
 
   maxTimerGap = 0;
   lastTick = performance.now();
@@ -579,6 +580,77 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   const halfCpuMs = (halfCpu.user + halfCpu.system) / 1_000;
   assert.ok(preparationCpuMs < (halfCpuMs * 6) + 100,
     `4x scaling exceeded linear CPU target: 1.25k=${halfCpuMs}ms 5k=${preparationCpuMs}ms (wall ${halfMs}ms/${preparationMs}ms)`);
+});
+
+test('warmed 5k raw acknowledgements reuse one exact prior summary and scan only candidate evidence', { timeout: 20_000 }, async () => {
+  const recipeCount = 5_000;
+  const ingredientsPerRecipe = 20;
+  const numericKey = /^(?:0|[1-9]\d*)$/;
+  const observeIngredientEvidence = (values, counter) => new Proxy(values, {
+    getOwnPropertyDescriptor(target, key) {
+      if (typeof key === 'string' && numericKey.test(key)) counter.reads += 1;
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+  });
+  const backing = Array.from({ length: recipeCount }, (_, recipeIndex) => [
+    'basil',
+    ...Array.from(
+      { length: ingredientsPerRecipe - 1 },
+      (_, ingredientIndex) => `1 piece ingredient ${recipeIndex}-${ingredientIndex}`,
+    ),
+  ]);
+  const priorEvidence = { reads: 0 };
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, backing.map((ingredients, index) => recipe(
+    `summary-${index}`,
+    `Summary ${String(index).padStart(5, '0')}`,
+    observeIngredientEvidence(ingredients, priorEvidence),
+  )));
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  await firstRecord.promise;
+  const expectedPriorReads = recipeCount * ingredientsPerRecipe;
+  assert.equal(priorEvidence.reads, expectedPriorReads, 'the certified prior reads each raw ingredient exactly once');
+
+  let retainedSummaryReads = 0;
+  for (const item of firstRecord.snapshot) {
+    item.signatureRow.ingredients = new Proxy(item.signatureRow.ingredients, {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && numericKey.test(key)) retainedSummaryReads += 1;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+  }
+  const firstIndex = firstRecord.index;
+  const generation = state.recipeAuthorityVersion;
+  const equivalentEvidence = { reads: 0 };
+  const equivalent = backing.map((ingredients, index) => recipe(
+    `summary-${index}`,
+    `Summary ${String(index).padStart(5, '0')}`,
+    observeIngredientEvidence([...ingredients].reverse(), equivalentEvidence),
+  ));
+  publishRecipeAuthority(state, equivalent);
+  const equivalentRecord = recipeDiscoveryAuthority(state.recipes);
+  assert.equal(equivalentEvidence.reads, expectedPriorReads, 'equivalence scans candidate evidence exactly once');
+  assert.equal(retainedSummaryReads, 0, 'equivalence reuses the certified prior summary without rescanning it');
+  assert.equal(state.recipeAuthorityVersion, generation);
+  assert.equal(equivalentRecord.index, firstIndex);
+
+  const losingEvidence = { reads: 0 };
+  const losingVariant = backing.map((ingredients, index) => {
+    const values = [...ingredients].reverse();
+    if (index === 0) values.push('fresh basil');
+    return recipe(
+      `summary-${index}`,
+      `Summary ${String(index).padStart(5, '0')}`,
+      observeIngredientEvidence(values, losingEvidence),
+    );
+  });
+  publishRecipeAuthority(state, losingVariant);
+  assert.equal(losingEvidence.reads, expectedPriorReads + 1, 'losing-variant equivalence scans only candidate evidence');
+  assert.equal(retainedSummaryReads, 0, 'the adopted record carries the exact prior summary cache');
+  assert.equal(priorEvidence.reads, expectedPriorReads, 'neither acknowledgement rereads user prior evidence');
+  assert.equal(state.recipeAuthorityVersion, generation);
+  assert.equal(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
 });
 
 function allocationProbedDiscoveryIndex(size) {

@@ -17,6 +17,11 @@ const YIELD_INGREDIENT_CHUNK = 50;
 const MISSING = Symbol('missing');
 const INVALID_RAW_SUMMARIES = Symbol('invalid-raw-summaries');
 const cache = new WeakMap();
+// Certified snapshots are immutable internal projections. Retain their exact,
+// bounded raw summaries by record so acknowledgement compares never rebuild
+// thousands of Maps/Sets from the prior snapshot on the publication stack.
+const rawSummaryCache = new WeakMap();
+const rawSummaryByProjection = new WeakMap();
 
 const EFFECTIVE_FIELDS = Object.freeze(['raw', 'name']);
 const INPUT_FIELDS = Object.freeze([
@@ -193,11 +198,13 @@ function sanitizeRecipe(value, context, totals) {
   const rawOnly = recipeIngredient.every((item) => typeof item === 'string') && ingredientNormalizations.length === 0;
   const sanitized = { _id: id, name, image, recipeIngredient, ingredientNormalizations };
   let effective = null;
+  let rawIngredients = null;
   let signatureIngredients;
   if (rawOnly) {
     // Raw evidence plus the parser version is a complete effective projection for
     // unstructured, unreviewed ingredients and avoids eagerly parsing 100k lines.
-    signatureIngredients = ['raw-v', NORMALIZATION_VERSION, ...[...new Set(recipeIngredient)].sort(compareText)];
+    rawIngredients = new Set(recipeIngredient);
+    signatureIngredients = ['raw-v', NORMALIZATION_VERSION, ...[...rawIngredients].sort(compareText)];
   } else {
     try {
       effective = effectiveIngredientRecords(sanitized).map(effectiveRow);
@@ -214,7 +221,19 @@ function sanitizeRecipe(value, context, totals) {
   // Missing-ID data is uncommon and bounded. Keep its exact deterministic key;
   // truncating it to a non-cryptographic hash can silently merge real recipes.
   const identity = id ? `id:${id}` : `derived:${name}\u0000${candidateKey}`;
-  return { id, name, image, identity, candidateKey, recipe: sanitized, effective, rawOnly, signatureRow };
+  const item = { id, name, image, identity, candidateKey, recipe: sanitized, effective, rawOnly, signatureRow };
+  if (rawIngredients && id) rawSummaryByProjection.set(item, { id, name, image, ingredients: rawIngredients });
+  return item;
+}
+
+function rawSummariesFromProjected(snapshot) {
+  const summaries = new Map();
+  for (const item of snapshot) {
+    const summary = rawSummaryByProjection.get(item);
+    if (!summary || summaries.has(summary.id)) return null;
+    summaries.set(summary.id, summary);
+  }
+  return summaries;
 }
 
 function finishAuthorityRecord(record, context, projected) {
@@ -227,6 +246,7 @@ function finishAuthorityRecord(record, context, projected) {
   try { record.signature = JSON.stringify(record.snapshot.map((item) => item.signatureRow)); } catch { context.ok = false; }
   record.ok = context.ok;
   record.source = null;
+  rawSummaryCache.set(record, rawSummariesFromProjected(record.snapshot));
   return record;
 }
 
@@ -331,8 +351,16 @@ function rawSummariesFromRecipes(recipes) {
 }
 
 function rawSummaries(record) {
-  return rawSummariesFromSnapshot(record?.snapshot)
-    || rawSummariesFromRecipes(record?.source);
+  if (!record) return null;
+  if (rawSummaryCache.has(record)) return rawSummaryCache.get(record);
+  if (record.snapshot) {
+    const summaries = rawSummariesFromSnapshot(record.snapshot);
+    rawSummaryCache.set(record, summaries);
+    return summaries;
+  }
+  // Do not retain summaries taken from a pending, shallow user authority. They
+  // become safe to carry only after certification or exact record adoption.
+  return rawSummariesFromRecipes(record.source);
 }
 
 function normalizedRawName(raw, caches) {
@@ -362,32 +390,64 @@ function compactRawRows(summary, caches) {
   return { names, raws: names.map((name) => unique.get(name) || '') };
 }
 
+function rawIngredientsEqual(left, right) {
+  if (left.size !== right.size) return false;
+  for (const ingredient of right) if (!left.has(ingredient)) return false;
+  return true;
+}
+
+function rawSummaryMatchesIndex(prior, summary, previousRecord, resources) {
+  if (!prior || prior.name !== summary.name || prior.image !== summary.image) return false;
+  if (rawIngredientsEqual(prior.ingredients, summary.ingredients)) return true;
+  if (!previousRecord.index) return false;
+  resources.previousRows ||= new Map(previousRecord.index.recipes.map((row) => [row.recipeId, row]));
+  resources.caches ||= previousRecord.caches || { parsed: new Map(), identities: new Map() };
+  previousRecord.caches = resources.caches;
+  const previousRow = resources.previousRows.get(summary.id);
+  const compact = compactRawRows(summary, resources.caches);
+  return Boolean(previousRow && sameTextList(previousRow.names, compact.names)
+    && sameTextList(previousRow.raws, compact.raws));
+}
+
+function compareRawRecipeSource(previous, candidateRecord, previousRecord) {
+  const recipes = candidateRecord.source;
+  const context = { ok: true };
+  if (!safeArrayCheck(recipes, context)) return context.ok ? null : false;
+  const length = safeArrayLength(recipes, context);
+  if (!context.ok || length > MAX_RECIPES) return false;
+  if (length !== previous.size) return false;
+  const totals = { ingredients: 0 };
+  const seen = new Set();
+  const resources = { previousRows: null, caches: null };
+  for (let index = 0; index < length; index += 1) {
+    const value = ownValue(recipes, String(index), context);
+    if (value === MISSING || !context.ok) return false;
+    const summary = rawOnlyRecipeSummary(value, context, totals);
+    if (summary === INVALID_RAW_SUMMARIES) return false;
+    if (!summary || seen.has(summary.id)) return null;
+    seen.add(summary.id);
+    if (!rawSummaryMatchesIndex(previous.get(summary.id), summary, previousRecord, resources)) return false;
+  }
+  if (resources.caches) candidateRecord.caches = resources.caches;
+  return seen.size === previous.size;
+}
+
 function compareRawAuthorities(previousRecord, candidateRecord) {
   const previous = rawSummaries(previousRecord);
   if (previous === INVALID_RAW_SUMMARIES) return false;
   if (!previous) return null;
+  if (!candidateRecord.snapshot && candidateRecord.source) {
+    return compareRawRecipeSource(previous, candidateRecord, previousRecord);
+  }
   const candidate = rawSummaries(candidateRecord);
   if (candidate === INVALID_RAW_SUMMARIES) return false;
   if (!candidate) return null;
   if (previous.size !== candidate.size) return false;
-  const changed = [];
+  const resources = { previousRows: null, caches: null };
   for (const [id, summary] of candidate) {
-    const prior = previous.get(id);
-    if (!prior || prior.name !== summary.name || prior.image !== summary.image) return false;
-    if (prior.ingredients.size !== summary.ingredients.size
-        || [...summary.ingredients].some((ingredient) => !prior.ingredients.has(ingredient))) changed.push(summary);
+    if (!rawSummaryMatchesIndex(previous.get(id), summary, previousRecord, resources)) return false;
   }
-  if (!changed.length) return true;
-  if (!previousRecord.index) return false;
-  const previousRows = new Map(previousRecord.index.recipes.map((row) => [row.recipeId, row]));
-  const caches = previousRecord.caches || { parsed: new Map(), identities: new Map() };
-  previousRecord.caches = caches;
-  candidateRecord.caches = caches;
-  for (const summary of changed) {
-    const prior = previousRows.get(summary.id);
-    const compact = compactRawRows(summary, caches);
-    if (!prior || !sameTextList(prior.names, compact.names) || !sameTextList(prior.raws, compact.raws)) return false;
-  }
+  if (resources.caches) candidateRecord.caches = resources.caches;
   return true;
 }
 
@@ -447,6 +507,11 @@ export function certifyRecipeDiscoveryAuthority(previous, candidate) {
   }));
 }
 
+function copyRawSummaryCache(target, source) {
+  if (rawSummaryCache.has(source)) rawSummaryCache.set(target, rawSummaryCache.get(source));
+  else rawSummaryCache.delete(target);
+}
+
 function copyAdoptedRecord(target, source) {
   target.ok = source.ok;
   if (!target.snapshot) {
@@ -456,6 +521,7 @@ function copyAdoptedRecord(target, source) {
   target.source = null;
   target.index = source.index;
   target.caches = source.caches;
+  copyRawSummaryCache(target, source);
 }
 
 export function replaceRecipeDiscoveryRecord(target, source) {
@@ -468,6 +534,7 @@ export function replaceRecipeDiscoveryRecord(target, source) {
   target.caches = source.caches;
   target.promise = null;
   target.authorityPromise = null;
+  copyRawSummaryCache(target, source);
   return true;
 }
 
@@ -615,6 +682,7 @@ export function buildRecipeDiscoveryIndexSync(record) {
     const retainedCaches = record.caches;
     const materialized = makeAuthorityRecord(record.source || []);
     Object.assign(record, materialized);
+    copyRawSummaryCache(record, materialized);
     record.caches = retainedCaches || materialized.caches;
   }
   const build = [];
@@ -699,15 +767,16 @@ async function sanitizeRecipeYielded(value, context, totals, budget) {
   const rawOnly = allRaw && ingredientNormalizations.length === 0;
   const sanitized = { _id: id, name, image, recipeIngredient, ingredientNormalizations };
   let effective = null;
+  let rawIngredients = null;
   let signatureIngredients;
   if (rawOnly) {
-    const unique = new Set();
+    rawIngredients = new Set();
     for (const ingredient of recipeIngredient) {
-      unique.add(ingredient);
+      rawIngredients.add(ingredient);
       const pending = spendIngredientBudget(budget);
       if (pending) await pending;
     }
-    signatureIngredients = ['raw-v', NORMALIZATION_VERSION, ...[...unique].sort(compareText)];
+    signatureIngredients = ['raw-v', NORMALIZATION_VERSION, ...[...rawIngredients].sort(compareText)];
   } else {
     try {
       const projected = await effectiveIngredientRecordsYielded(
@@ -733,7 +802,9 @@ async function sanitizeRecipeYielded(value, context, totals, budget) {
   const signatureRow = { id, name, image, ingredients: signatureIngredients };
   const candidateKey = JSON.stringify(signatureRow);
   const identity = id ? `id:${id}` : `derived:${name}\u0000${candidateKey}`;
-  return { id, name, image, identity, candidateKey, recipe: sanitized, effective, rawOnly, signatureRow };
+  const item = { id, name, image, identity, candidateKey, recipe: sanitized, effective, rawOnly, signatureRow };
+  if (rawIngredients && id) rawSummaryByProjection.set(item, { id, name, image, ingredients: rawIngredients });
+  return item;
 }
 
 function prepareAuthoritySnapshot(record) {
