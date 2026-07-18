@@ -310,6 +310,11 @@ export function ingredientEvidence(recipe) {
   });
 }
 
+/** Minimal effective projection consumed by Pantry recipe discovery caching. */
+export function ingredientDiscoveryProjection(recipe) {
+  return ingredientEvidence(recipe).map(({ id, raw, name }) => ({ id, raw, name }));
+}
+
 export function buildReviewedIngredientRecord({ id, raw, correction, reviewer, reviewedAt = Date.now() } = {}) {
   const validation = validateIngredientCorrection(correction);
   if (!validation.ok || typeof id !== 'string' || !id || typeof raw !== 'string' || !raw.trim()) return validation.ok ? { ok: false, error: 'Ingredient evidence was not found.' } : validation;

@@ -1,24 +1,13 @@
-const discoverySignatures = new WeakMap();
+import { ingredientDiscoveryProjection } from './ingredient-corrections.js';
 
-function normalizationDiscoveryProjection(record) {
-  return {
-    id: record?.id, raw: record?.raw, name: record?.name,
-    reviewStatus: record?.reviewStatus, reviewVersion: record?.reviewVersion,
-    amountState: record?.amountState, quantity: record?.quantity,
-    quantityMin: record?.quantityMin, quantityState: record?.quantityState,
-    unit: record?.unit, measurementFamily: record?.measurementFamily,
-    sourceUnit: record?.sourceUnit, countLabel: record?.countLabel,
-  };
-}
+const discoverySignatures = new WeakMap();
 
 function discoverySignature(recipes) {
   return JSON.stringify(recipes.map((recipe) => ({
     id: String(recipe?._id || recipe?.id || ''),
     name: String(recipe?.name || 'Untitled'),
     image: recipe?.image ?? null,
-    ingredients: Array.isArray(recipe?.recipeIngredient) ? recipe.recipeIngredient : [],
-    normalizations: (Array.isArray(recipe?.ingredientNormalizations)
-      ? recipe.ingredientNormalizations : []).map(normalizationDiscoveryProjection),
+    ingredients: ingredientDiscoveryProjection(recipe),
   })));
 }
 

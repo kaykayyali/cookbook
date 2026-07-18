@@ -80,9 +80,15 @@ test('production reviewed correction rebuilds a warmed Pantry index once across 
     ingredientId, correction, reviewer: { sub: 'cook', name: 'Cook' }, reviewedAt: 10,
   });
   assert.equal(authoritative.ok, true, authoritative.error);
-  response.resolve({ ok: true, recipes: [{ ...authoritative.recipe, _updatedAt: 10 }] });
+  response.resolve({ ok: true, recipes: [{
+    ...authoritative.recipe, _updatedAt: 10,
+    _serverReceipt: { mutationId: 'review-accepted', committedAt: 11 },
+  }] });
   assert.equal(await runtime.drain(), true);
   assert.equal(state.recipes[0].ingredientNormalizations[0].reviewedBy.sub, 'cook');
+  assert.deepEqual(state.recipes[0]._serverReceipt,
+    { mutationId: 'review-accepted', committedAt: 11 },
+    'metadata-only acknowledgement still publishes arbitrary server authority');
   assert.equal(state.recipeAuthorityVersion, versionAfterOptimistic,
     'acknowledgement metadata does not invalidate the discovery generation again');
   assert.equal(render().length, 1);
