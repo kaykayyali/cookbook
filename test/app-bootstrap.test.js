@@ -56,5 +56,9 @@ test('app.js stays under 130 lines (auth-gate + login screen allowance)', () => 
 
 test('recipe refresh restores runtime authority when cache persistence rejects', () => {
   assert.match(appSource, /setAuthority\([^;]+\)\.catch\(\(\) => false\)/);
-  assert.match(appSource, /state\.recipes = recipeRuntime\.current\(\)/);
+  assert.match(appSource, /publishRecipeAuthority\(state, recipeRuntime\.current\(\)\)/);
+});
+
+test('authenticated Settings composition delegates imported authority races to the recipe runtime', () => {
+  assert.match(uiSource, /initSettings\(\{[^;]*recipeRuntime[^;]*\}\)/s);
 });

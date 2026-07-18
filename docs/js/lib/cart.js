@@ -27,7 +27,13 @@ const DESCRIPTORS = new Set(['large', 'small', 'medium', 'fresh', 'whole', 'peel
 const NAME_ALIASES = new Map([
   ['eggs', 'egg'], ['egg', 'egg'], ['tomatoes', 'tomato'], ['potatoes', 'potato'],
   ['cloves garlic', 'garlic'], ['garlic cloves', 'garlic'], ['extra virgin olive oil', 'olive oil'],
+  ['bottle gourds', 'bottle gourd'], ['bottle gourd', 'bottle gourd'],
 ]);
+// Count-looking words are treated as units only by default. This deliberately
+// small culinary lexicon protects independently verified intrinsic compounds at
+// the quantity parser boundary without making arbitrary "package + noun" text
+// intrinsic. Additions require a real ingredient identity and regression tests.
+const INTRINSIC_COUNT_COMPOUNDS = new Set(['bottle gourd']);
 
 function round(value, places = 9) {
   const numeric = Number(value);
@@ -160,7 +166,13 @@ export function normalizeIngredient(rawValue) {
   let quantity = leading.quantity;
   let rest = leading.rest.trim();
   const unitNames = [...Object.keys(OUNCE_FACTORS), ...COUNT_UNIT_LABELS.keys()].sort((a, b) => b.length - a.length);
-  const unit = unitNames.find((candidate) => rest === candidate || rest.startsWith(candidate + ' ')) || '';
+  const intrinsicWords = rest.toLowerCase().match(/^([a-z]+)\s+([a-z]+)/);
+  const intrinsicPrefix = intrinsicWords
+    ? `${intrinsicWords[1]} ${intrinsicWords[2].replace(/s$/, '')}`
+    : '';
+  const unit = INTRINSIC_COUNT_COMPOUNDS.has(intrinsicPrefix)
+    ? ''
+    : unitNames.find((candidate) => rest === candidate || rest.startsWith(candidate + ' ')) || '';
   if (unit) rest = rest.slice(unit.length).trim();
   if (unit === 'dozen') quantity *= 12;
   const quantityState = leading.quantityState ? { quantityState: leading.quantityState } : {};

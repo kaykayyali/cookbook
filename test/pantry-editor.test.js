@@ -136,6 +136,83 @@ function editorDom() {
 const click = (window, element) => element.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+test('Pantry editor locks body scrolling and restores the exact previous overflow value', () => {
+  const dom = editorDom();
+  globalThis.document = dom.window.document;
+  globalThis.window = dom.window;
+  globalThis.localStorage = dom.window.localStorage;
+  dom.window.document.body.style.overflow = 'scroll';
+  const target = oliveOil();
+  const controller = initPantry({
+    state: { pantry: [target], recipes: [] }, document: dom.window.document, mutate: async () => true,
+  });
+  controller.render();
+
+  click(dom.window, dom.window.document.querySelector(`[data-pantry-id="${target.id}"]`));
+  assert.equal(dom.window.document.getElementById('pantry-item-modal').getAttribute('aria-modal'), 'true');
+  assert.equal(dom.window.document.body.style.overflow, 'hidden');
+
+  assert.equal(controller.closeEditor(), true);
+  assert.equal(dom.window.document.body.style.overflow, 'scroll');
+});
+
+test('Pantry editor owns one body lock and repeated open or close cannot corrupt newer overflow', () => {
+  const dom = editorDom();
+  globalThis.document = dom.window.document;
+  globalThis.window = dom.window;
+  globalThis.localStorage = dom.window.localStorage;
+  const style = dom.window.document.body.style;
+  style.setProperty('overflow', 'scroll', 'important');
+  const target = oliveOil();
+  const controller = initPantry({
+    state: { pantry: [target], recipes: [] }, document: dom.window.document, mutate: async () => true,
+  });
+  controller.render();
+
+  assert.equal(controller.openEditor(target.id), true);
+  assert.equal(style.getPropertyValue('overflow'), 'hidden');
+  assert.equal(controller.openEditor(target.id), false, 'an already-open editor does not reacquire the body lock');
+  assert.equal(controller.closeEditor(), true);
+  assert.equal(style.getPropertyValue('overflow'), 'scroll');
+  assert.equal(style.getPropertyPriority('overflow'), 'important', 'release restores the exact previous priority');
+
+  style.setProperty('overflow', 'clip');
+  assert.equal(controller.closeEditor(), false, 'closing an inactive editor is a no-op');
+  assert.equal(style.getPropertyValue('overflow'), 'clip', 'a repeated close cannot overwrite newer body state');
+  assert.equal(style.getPropertyPriority('overflow'), '');
+});
+
+test('Pantry editor preserves an external overflow owner that takes over during its lock', () => {
+  const dom = editorDom();
+  globalThis.document = dom.window.document;
+  globalThis.window = dom.window;
+  globalThis.localStorage = dom.window.localStorage;
+  const style = dom.window.document.body.style;
+  style.setProperty('overflow', 'scroll', 'important');
+  const target = oliveOil();
+  const controller = initPantry({
+    state: { pantry: [target], recipes: [] }, document: dom.window.document, mutate: async () => true,
+  });
+  controller.render();
+
+  assert.equal(controller.openEditor(target.id), true);
+  assert.equal(style.getPropertyValue('overflow'), 'hidden');
+  style.setProperty('overflow', 'clip', 'important');
+
+  assert.equal(controller.closeEditor(), true);
+  assert.equal(style.getPropertyValue('overflow'), 'clip', 'close preserves the newer external overflow value');
+  assert.equal(style.getPropertyPriority('overflow'), 'important', 'close preserves the newer external priority');
+  assert.equal(controller.closeEditor(), false, 'repeated close remains a no-op after external takeover');
+  assert.equal(style.getPropertyValue('overflow'), 'clip');
+  assert.equal(style.getPropertyPriority('overflow'), 'important');
+
+  assert.equal(controller.openEditor(target.id), true, 'ownership is cleared so a later editor can acquire a new lock');
+  assert.equal(style.getPropertyValue('overflow'), 'hidden');
+  assert.equal(controller.closeEditor(), true);
+  assert.equal(style.getPropertyValue('overflow'), 'clip');
+  assert.equal(style.getPropertyPriority('overflow'), 'important');
+});
+
 test('entire Pantry row opens the edit modal and save updates exactly one stable record', async () => {
   const dom = editorDom();
   globalThis.document = dom.window.document;

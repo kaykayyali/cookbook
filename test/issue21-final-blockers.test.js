@@ -1,0 +1,785 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { performance } from 'node:perf_hooks';
+
+import {
+  addRecipeSelection,
+  aggregateCart,
+  normalizeIngredient,
+} from '../docs/js/lib/cart.js';
+import {
+  applyReviewedIngredientCorrection,
+  buildReviewedIngredientRecord,
+  buildRecipeUsageIndex,
+  ingredientEvidence,
+} from '../docs/js/lib/ingredient-corrections.js';
+import { normalizePantryEntry } from '../docs/js/lib/pantry.js';
+import { createPantryRecipeDiscovery } from '../docs/js/lib/pantry-recipe-discovery.js';
+import { publishRecipeAuthority } from '../docs/js/lib/recipe-authority.js';
+import {
+  prepareRecipeDiscoveryIndex,
+  prepareRecipeDiscoveryPage,
+  queryRecipeDiscoveryIndex,
+  recipeDiscoveryAuthority,
+} from '../docs/js/lib/recipe-discovery-projection.js';
+
+const pantry = (name) => [{ name }];
+const recipe = (id, name, lines, extras = {}) => ({ _id: id, name, recipeIngredient: lines, ...extras });
+
+function reviewed(base, correction, reviewedAt = 10) {
+  const applied = applyReviewedIngredientCorrection(base, {
+    ingredientId: ingredientEvidence(base)[0].id,
+    correction,
+    reviewer: { sub: 'member', name: 'Member' },
+    reviewedAt,
+  });
+  assert.equal(applied.ok, true, applied.error);
+  return applied.recipe;
+}
+
+const basilCorrection = {
+  name: 'basil', amountState: 'numeric', amount: '2', measurementFamily: 'count',
+  sourceUnit: 'count', countLabel: 'leaf',
+};
+
+function versionDelta(before, next) {
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, [before]);
+  const version = state.recipeAuthorityVersion;
+  publishRecipeAuthority(state, [next]);
+  return state.recipeAuthorityVersion - version;
+}
+
+test('quantity-bearing intrinsic bottle gourd stays intrinsic through normalization, cart, Shopping, Pantry, and usage discovery', () => {
+  const matrix = [
+    ['bottle gourd', { name: 'bottle gourd', quantity: null, unit: 'qualitative', countLabel: '' }],
+    ['1 bottle gourd', { name: 'bottle gourd', quantity: 1, unit: 'count', countLabel: '' }],
+    ['2 bottle gourds', { name: 'bottle gourd', quantity: 2, unit: 'count', countLabel: '' }],
+    ['1 bottle of oil', { name: 'oil', quantity: 1, unit: 'count', countLabel: 'bottle' }],
+    ['2 slices of bread', { name: 'bread', quantity: 2, unit: 'count', countLabel: 'slice' }],
+    ['3 cloves garlic', { name: 'garlic', quantity: 3, unit: 'count', countLabel: 'clove' }],
+  ];
+  for (const [raw, expected] of matrix) {
+    const actual = normalizeIngredient(raw);
+    assert.deepEqual({ name: actual.name, quantity: actual.quantity, unit: actual.unit, countLabel: actual.countLabel }, expected, raw);
+  }
+
+  const bottleRecipe = recipe('bottle', 'Bottle Gourd Curry', ['1 bottle gourd', '2 bottle gourds']);
+  const gourdRecipe = recipe('plain', 'Plain Gourd', ['1 gourd']);
+  const cart = addRecipeSelection([], bottleRecipe, bottleRecipe.recipeIngredient.map(normalizeIngredient));
+  const shopping = aggregateCart(cart);
+  assert.deepEqual(shopping.map(({ name, quantity, countLabel }) => ({ name, quantity, countLabel })), [
+    { name: 'bottle gourd', quantity: 3, countLabel: '' },
+  ]);
+  assert.equal(normalizePantryEntry('1 bottle gourd').name, 'bottle gourd');
+  const usage = buildRecipeUsageIndex([bottleRecipe, gourdRecipe]);
+  assert.deepEqual(usage.find('bottle gourd').map(({ recipeId }) => recipeId), ['bottle']);
+  assert.deepEqual(usage.find('gourd').map(({ recipeId }) => recipeId), ['plain']);
+});
+
+test('authority signature follows effective correction validity, winner selection, output fields, recipe presentation, and ignores irrelevant metadata', () => {
+  const raw = recipe('r', 'Pesto', ['2 mystery leaves'], { image: 'https://img.test/a.jpg' });
+  const valid = reviewed(raw, basilCorrection);
+  const record = valid.ingredientNormalizations[0];
+  const relevantMutations = [
+    ['parserVersion invalidates', { parserVersion: 0 }],
+    ['reviewStatus invalidates', { reviewStatus: 'unreviewed' }],
+    ['reviewVersion invalidates', { reviewVersion: 999 }],
+    ['displayName invalidates', { displayName: 'Wrong' }],
+    ['category invalidates', { category: 'produce' }],
+    ['confidence invalidates', { confidence: 0.5 }],
+    ['kind invalidates', { kind: 'divisible' }],
+    ['quantity invalidates', { quantity: 3 }],
+    ['unit invalidates', { unit: 'ounce' }],
+    ['immutable raw evidence invalidates', { raw: 'different evidence' }],
+  ];
+  for (const [label, change] of relevantMutations) {
+    const next = { ...valid, ingredientNormalizations: [{ ...record, ...change }] };
+    assert.equal(versionDelta(valid, next), 1, label);
+  }
+  assert.equal(versionDelta(valid, { ...valid, _id: 'next' }), 1, 'recipe ID');
+  assert.equal(versionDelta(valid, { ...valid, name: 'Renamed' }), 1, 'recipe name');
+  assert.equal(versionDelta(valid, { ...valid, image: 'https://img.test/b.jpg' }), 1, 'recipe image');
+  assert.equal(versionDelta(valid, { ...valid, recipeIngredient: ['different evidence'] }), 1, 'raw ingredient source');
+  assert.equal(versionDelta(valid, {
+    ...valid,
+    ingredientNormalizations: [{ ...record, countLabel: 'slice', reviewedBy: { sub: 'same', name: 'Metadata only' }, irrelevant: { any: 'value' } }],
+    description: 'metadata only',
+  }), 0, 'discovery-irrelevant structured and count-label metadata');
+
+  const evidence = ingredientEvidence(raw)[0];
+  const parsley = buildReviewedIngredientRecord({
+    id: evidence.id,
+    raw: evidence.raw,
+    correction: { ...basilCorrection, name: 'parsley' },
+    reviewedAt: 20,
+  }).record;
+  const basil = { ...record, reviewedAt: 10 };
+  const parsleyWins = { ...raw, ingredientNormalizations: [basil, parsley] };
+  const basilWins = { ...raw, ingredientNormalizations: [basil, { ...parsley, reviewedAt: 5 }] };
+  assert.equal(versionDelta(parsleyWins, basilWins), 1, 'reviewedAt winner ordering');
+});
+
+test('discovery-equivalent ingredient reorder and duplication do not advance authority generation', () => {
+  const before = recipe('r', 'Pesto', ['basil', 'tomato']);
+  assert.equal(versionDelta(before, recipe('r', 'Pesto', ['tomato', 'basil'])), 0);
+  assert.equal(versionDelta(before, recipe('r', 'Pesto', ['basil', 'tomato', 'basil'])), 0);
+});
+
+test('structured discovery signatures ignore order and exact duplicates', () => {
+  const basil = normalizeIngredient('basil');
+  const tomato = normalizeIngredient('tomato');
+  const before = recipe('r', 'Pesto', [basil, tomato]);
+  assert.equal(versionDelta(before, recipe('r', 'Pesto', [tomato, basil])), 0);
+  assert.equal(versionDelta(before, recipe('r', 'Pesto', [basil, tomato, basil])), 0);
+});
+
+test('equal-timestamp reviewed correction winners are input-order independent', () => {
+  const raw = recipe('r', 'Pesto', ['mystery']);
+  const basil = reviewed(raw, basilCorrection, 20).ingredientNormalizations[0];
+  const parsley = reviewed(raw, { ...basilCorrection, name: 'parsley' }, 20).ingredientNormalizations[0];
+  const forward = { ...raw, ingredientNormalizations: [basil, parsley] };
+  const reverse = { ...raw, ingredientNormalizations: [parsley, basil] };
+  assert.equal(versionDelta(forward, reverse), 0);
+  const discover = createPantryRecipeDiscovery();
+  const names = (recipeValue) => ['basil', 'parsley'].filter((name) => discover({ recipes: [recipeValue], pantry: pantry(name), ingredientName: name }).length);
+  assert.deepEqual(names(forward), names(reverse));
+});
+
+test('equivalent warmed large authorities reuse generation and index', async () => {
+  const corpus = Array.from({ length: 201 }, (_, index) => recipe(`r-${index}`, `Recipe ${index}`, ['basil', `item ${index}`]));
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, corpus);
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  await firstRecord.promise;
+  const firstIndex = firstRecord.index;
+  const version = state.recipeAuthorityVersion;
+  const equivalent = corpus.map((item) => ({ ...item, recipeIngredient: [...item.recipeIngredient].reverse() }));
+  publishRecipeAuthority(state, equivalent);
+  const nextRecord = recipeDiscoveryAuthority(state.recipes);
+  assert.equal(state.recipeAuthorityVersion, version);
+  assert.equal(nextRecord.index, firstIndex);
+  const changed = equivalent.map((item, index) => index ? item : { ...item, recipeIngredient: ['parsley'] });
+  publishRecipeAuthority(state, changed);
+  assert.equal(state.recipeAuthorityVersion, version + 1);
+  const changedRecord = recipeDiscoveryAuthority(state.recipes);
+  assert.notEqual(changedRecord.index, firstIndex);
+  await changedRecord.promise;
+});
+
+test('large reviewed metadata-only acknowledgements reuse the exact compact discovery index', async () => {
+  const corrected = reviewed(recipe('reviewed', 'Reviewed', ['2 mystery leaves']), basilCorrection);
+  const corpus = [corrected, ...Array.from({ length: 200 }, (_, index) => (
+    recipe(`r-${index}`, `Recipe ${index}`, ['tomato', `item ${index}`])
+  ))];
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, corpus);
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  await firstRecord.promise;
+  const firstIndex = firstRecord.index;
+  const version = state.recipeAuthorityVersion;
+  const acknowledgement = structuredClone(corpus);
+  acknowledgement[0].ingredientNormalizations[0].reviewedBy = { sub: 'server', name: 'Server metadata' };
+  acknowledgement[0]._updatedAt = 99;
+
+  publishRecipeAuthority(state, acknowledgement);
+
+  assert.equal(state.recipeAuthorityVersion, version);
+  assert.equal(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
+  const oracleRecord = recipeDiscoveryAuthority(structuredClone(acknowledgement));
+  const oracle = await prepareRecipeDiscoveryIndex(oracleRecord);
+  assert.deepEqual(firstIndex.recipes, oracle.recipes);
+});
+
+test('large raw acknowledgement reuses an in-flight equivalent preparation', async () => {
+  const corpus = Array.from({ length: 201 }, (_, index) => (
+    recipe(`r-${index}`, `Recipe ${index}`, ['basil', `item ${index}`])
+  ));
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, corpus);
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  const firstVersion = state.recipeAuthorityVersion;
+  const acknowledgement = corpus.map((item) => ({
+    ...item,
+    recipeIngredient: [...item.recipeIngredient].reverse(),
+    _updatedAt: 50,
+  }));
+
+  publishRecipeAuthority(state, acknowledgement);
+
+  const acknowledgementRecord = recipeDiscoveryAuthority(state.recipes);
+  assert.equal(state.recipeAuthorityVersion, firstVersion);
+  await Promise.all([firstRecord.promise, acknowledgementRecord.promise]);
+  assert.equal(acknowledgementRecord.index, firstRecord.index);
+});
+
+test('large structured acknowledgement certifies asynchronously without publication-stack ingredient work', async () => {
+  const wide = Array.from({ length: 1_001 }, (_, index) => (
+    normalizeIngredient(`${index + 1} cups structured-${index}`)
+  ));
+  const corpus = [
+    recipe('structured', 'Structured', wide),
+    ...Array.from({ length: 200 }, (_, index) => (
+      recipe(`filler-${index}`, `Filler ${index}`, [normalizeIngredient('1 cup tomato')])
+    )),
+  ];
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, corpus);
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  await firstRecord.promise;
+  const firstIndex = firstRecord.index;
+  const version = state.recipeAuthorityVersion;
+
+  let publicationIngredientReads = 0;
+  const acknowledgement = structuredClone(corpus);
+  acknowledgement[0]._updatedAt = 99;
+  acknowledgement[0].recipeIngredient = new Proxy(acknowledgement[0].recipeIngredient, {
+    getOwnPropertyDescriptor(target, property) {
+      if (/^(0|[1-9]\d*)$/.test(String(property))) publicationIngredientReads += 1;
+      return Reflect.getOwnPropertyDescriptor(target, property);
+    },
+  });
+
+  publishRecipeAuthority(state, acknowledgement);
+  const candidate = recipeDiscoveryAuthority(state.recipes);
+
+  assert.ok(publicationIngredientReads <= 50,
+    `publication synchronously read ${publicationIngredientReads} structured ingredients`);
+  assert.equal(state.recipeAuthorityVersion, version);
+  assert.equal(candidate.index, firstIndex, 'the prior certified index remains provisionally available');
+  assert.ok(candidate.certificationPromise instanceof Promise, 'structured equivalence is certified asynchronously');
+  await candidate.certificationPromise;
+  assert.equal(state.recipeAuthorityVersion, version);
+  assert.equal(candidate.index, firstIndex, 'equivalent certification retains the exact prior index');
+});
+
+test('only the newest structured certification invalidates once and exposes changed discovery', async () => {
+  const makeCorpus = (firstName) => [
+    recipe('structured', 'Structured', [normalizeIngredient(`1 cup ${firstName}`)]),
+    ...Array.from({ length: 200 }, (_, index) => (
+      recipe(`filler-${index}`, `Filler ${index}`, [normalizeIngredient('1 cup tomato')])
+    )),
+  ];
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, makeCorpus('basil'));
+  await recipeDiscoveryAuthority(state.recipes).promise;
+  const version = state.recipeAuthorityVersion;
+
+  publishRecipeAuthority(state, makeCorpus('parsley'));
+  const staleCandidate = recipeDiscoveryAuthority(state.recipes);
+  publishRecipeAuthority(state, makeCorpus('cilantro'));
+  const currentCandidate = recipeDiscoveryAuthority(state.recipes);
+
+  assert.equal(state.recipeAuthorityVersion, version, 'unreviewed async work cannot invalidate synchronously');
+  await Promise.all([staleCandidate.certificationPromise, currentCandidate.certificationPromise]);
+  assert.equal(state.recipeAuthorityVersion, version + 1, 'only the current changed certification invalidates');
+  assert.equal(currentCandidate.index.byIngredient.has('cilantro'), true);
+  assert.equal(currentCandidate.index.byIngredient.has('basil'), false);
+  assert.equal(currentCandidate.index.byIngredient.has('parsley'), false);
+});
+
+test('cold immediate structured acknowledgement adopts the in-flight authority without a generation', async () => {
+  const corpus = Array.from({ length: 201 }, (_, index) => recipe(
+    `structured-${index}`,
+    `Structured ${index}`,
+    [normalizeIngredient(`1 cup ingredient-${index}`)],
+  ));
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, corpus);
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  const version = state.recipeAuthorityVersion;
+
+  const acknowledgement = structuredClone(corpus);
+  acknowledgement[0]._updatedAt = 123;
+  publishRecipeAuthority(state, acknowledgement);
+  const candidate = recipeDiscoveryAuthority(state.recipes);
+
+  assert.equal(state.recipeAuthorityVersion, version);
+  assert.ok(candidate.certificationPromise instanceof Promise);
+  await Promise.all([firstRecord.promise, candidate.certificationPromise]);
+  assert.equal(state.recipeAuthorityVersion, version);
+  assert.equal(candidate.index, firstRecord.index);
+});
+
+test('raw semantic signatures ignore losing canonical variants but detect winner changes', async () => {
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, [recipe('r', 'Pesto', ['basil'])]);
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  await firstRecord.promise;
+  const firstIndex = firstRecord.index;
+  const version = state.recipeAuthorityVersion;
+
+  publishRecipeAuthority(state, [recipe('r', 'Pesto', ['basil', 'fresh basil'])]);
+  assert.equal(state.recipeAuthorityVersion, version, 'the discarded raw variant is semantically irrelevant');
+  assert.equal(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
+
+  const winnerState = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(winnerState, [recipe('r', 'Pesto', ['fresh basil'])]);
+  await recipeDiscoveryAuthority(winnerState.recipes).promise;
+  const winnerVersion = winnerState.recipeAuthorityVersion;
+  publishRecipeAuthority(winnerState, [recipe('r', 'Pesto', ['fresh basil', 'basil'])]);
+  assert.equal(winnerState.recipeAuthorityVersion, winnerVersion + 1, 'a new compact raw winner invalidates discovery');
+});
+
+test('warmed large raw duplicates preserve exact canonical winner equivalence', async () => {
+  const corpus = Array.from({ length: 201 }, (_, index) => (
+    recipe(`r-${index}`, `Recipe ${index}`, ['basil', `item ${index}`])
+  ));
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, corpus);
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  await firstRecord.promise;
+  const firstIndex = firstRecord.index;
+  const version = state.recipeAuthorityVersion;
+
+  const reordered = corpus
+    .map((item) => ({ ...item, recipeIngredient: [...item.recipeIngredient].reverse() }))
+    .reverse();
+  reordered.splice(73, 0, {
+    ...corpus[0],
+    recipeIngredient: [...corpus[0].recipeIngredient].reverse(),
+  });
+  publishRecipeAuthority(state, reordered);
+  let candidate = recipeDiscoveryAuthority(state.recipes);
+  assert.equal(state.recipeAuthorityVersion, version, 'an unresolved duplicate cannot invalidate synchronously');
+  assert.ok(candidate.certificationPromise instanceof Promise, 'the duplicate delegates to exact certification');
+  await candidate.certificationPromise;
+  assert.equal(state.recipeAuthorityVersion, version, 'an equivalent duplicate does not advance generation');
+  assert.equal(candidate.index, firstIndex, 'equivalent certification reuses the exact prior index');
+
+  const losingDuplicate = [...corpus].reverse();
+  losingDuplicate.splice(41, 0, recipe('r-0', 'Recipe 0', ['parsley']));
+  publishRecipeAuthority(state, losingDuplicate);
+  candidate = recipeDiscoveryAuthority(state.recipes);
+  assert.equal(state.recipeAuthorityVersion, version, 'a possible losing duplicate remains unresolved');
+  assert.ok(candidate.certificationPromise instanceof Promise);
+  await candidate.certificationPromise;
+  assert.equal(state.recipeAuthorityVersion, version, 'a discarded canonical variant does not advance generation');
+  assert.equal(candidate.index, firstIndex, 'a losing duplicate retains the exact prior index');
+
+  const winningDuplicate = [...corpus].reverse();
+  winningDuplicate.splice(109, 0, recipe('r-0', 'Recipe 0', ['apple']));
+  publishRecipeAuthority(state, winningDuplicate);
+  candidate = recipeDiscoveryAuthority(state.recipes);
+  assert.equal(state.recipeAuthorityVersion, version, 'a possible winning duplicate remains unresolved');
+  assert.equal(candidate.index, firstIndex, 'the prior index remains provisional until exact certification');
+  assert.ok(candidate.certificationPromise instanceof Promise);
+  await candidate.certificationPromise;
+  assert.equal(state.recipeAuthorityVersion, version + 1, 'a changed canonical winner advances generation once');
+  assert.notEqual(candidate.index, firstIndex, 'a changed canonical winner installs its certified index');
+  assert.equal(candidate.index.byIngredient.has('apple'), true);
+  assert.equal(candidate.index.byIngredient.has('basil'), true, 'unrelated recipes remain discoverable');
+});
+
+test('missing-ID derived identities are collision-free for distinct recipes', () => {
+  const recipes = [
+    { name: 'Missing 39494', recipeIngredient: ['basil'] },
+    { name: 'Missing 40089', recipeIngredient: ['basil'] },
+  ];
+  const results = createPantryRecipeDiscovery()({ recipes, pantry: pantry('basil'), ingredientName: 'basil' });
+  assert.deepEqual(results.map(({ recipeName }) => recipeName), ['Missing 39494', 'Missing 40089']);
+  assert.equal(new Set(results.map(({ recipeIdentity }) => recipeIdentity)).size, 2);
+});
+
+test('invalid effective correction publication removes a stale warmed identity', () => {
+  const base = recipe('r', 'Pesto', ['mystery']);
+  const valid = reviewed(base, basilCorrection);
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  const discover = createPantryRecipeDiscovery();
+  publishRecipeAuthority(state, [valid]);
+  assert.equal(discover({ ...state, pantry: pantry('basil'), ingredientName: 'basil' }).length, 1);
+  publishRecipeAuthority(state, [{ ...valid, ingredientNormalizations: [{ ...valid.ingredientNormalizations[0], parserVersion: 0 }] }]);
+  assert.deepEqual(discover({ ...state, pantry: pantry('basil'), ingredientName: 'basil' }), []);
+});
+
+test('authority publication is bounded, getter-safe, cycle-safe, BigInt-safe, and fails before mutating an invalid state', () => {
+  assert.throws(() => publishRecipeAuthority(null, []), { name: 'TypeError', message: /state/i });
+  const state = { recipes: ['sentinel'], recipeAuthorityVersion: 7 };
+  const inherited = Object.create({
+    get name() { throw new Error('inherited getter'); },
+    get recipeIngredient() { throw new Error('inherited ingredients'); },
+  });
+  Object.defineProperty(inherited, 'image', { enumerable: true, get() { throw new Error('own image getter'); } });
+  inherited._id = 'hostile';
+  const cycle = { url: '' };
+  cycle.contentUrl = cycle;
+  const hostileIngredient = Object.create(null);
+  Object.defineProperty(hostileIngredient, 'raw', { enumerable: true, get() { throw new Error('raw getter'); } });
+  const nullPrototype = Object.assign(Object.create(null), {
+    _id: 'null-prototype', name: 'Safe', image: cycle,
+    recipeIngredient: [hostileIngredient, 'basil'],
+    ingredientNormalizations: [{ raw: 'basil', quantity: 1n }],
+  });
+  const authority = [null, inherited, nullPrototype, { _id: 'big', name: 'Big', recipeIngredient: ['x'.repeat(2_000_000)] }];
+  assert.doesNotThrow(() => publishRecipeAuthority(state, authority));
+  assert.equal(state.recipes.length, authority.length, 'full authority publishes even when discovery projection fails closed');
+  assert.equal(state.recipes[1], inherited);
+  assert.ok(state.recipeAuthorityVersion > 7);
+
+  const discover = createPantryRecipeDiscovery();
+  assert.doesNotThrow(() => discover({ ...state, pantry: pantry('basil'), ingredientName: 'basil' }));
+  const version = state.recipeAuthorityVersion;
+  assert.doesNotThrow(() => publishRecipeAuthority(state, authority));
+  assert.ok(state.recipeAuthorityVersion > version, 'fallback publication always invalidates so a stale cache cannot survive');
+
+  const hostileArray = [];
+  Object.defineProperty(hostileArray, '0', { enumerable: true, get() { throw new Error('array index getter'); } });
+  Object.defineProperty(hostileArray, Symbol.iterator, { get() { throw new Error('iterator getter'); } });
+  hostileArray.length = 1;
+  const previousVersion = state.recipeAuthorityVersion;
+  assert.doesNotThrow(() => publishRecipeAuthority(state, hostileArray));
+  assert.equal(state.recipes.length, 1);
+  assert.equal(0 in state.recipes, false, 'hostile element becomes a safe hole without running accessors');
+  assert.ok(state.recipeAuthorityVersion > previousVersion, 'unsafe top-level publication invalidates stale discovery');
+});
+
+test('revoked top-level authority fails closed without retaining stale publication', () => {
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, [recipe('stale', 'Stale', ['basil'])]);
+  const version = state.recipeAuthorityVersion;
+  const { proxy, revoke } = Proxy.revocable([], {});
+  revoke();
+
+  assert.doesNotThrow(() => publishRecipeAuthority(state, proxy));
+  assert.deepEqual(state.recipes, []);
+  assert.equal(state.recipeAuthorityVersion, version + 1);
+});
+
+test('revoked nested array in yielded projection settles fail-closed without retaining stale discovery', { timeout: 5_000 }, async () => {
+  const stale = Array.from({ length: 201 }, (_, index) => (
+    recipe(`r-${index}`, `Recipe ${index}`, ['basil'])
+  ));
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  const discover = createPantryRecipeDiscovery();
+  publishRecipeAuthority(state, stale);
+  await discover.prepare({ recipes: state.recipes, recipeAuthorityVersion: state.recipeAuthorityVersion });
+  assert.equal(discover({
+    recipes: state.recipes,
+    recipeAuthorityVersion: state.recipeAuthorityVersion,
+    pantry: pantry('basil'),
+    ingredientName: 'basil',
+  }).length, stale.length);
+
+  const { proxy, revoke } = Proxy.revocable(['parsley'], {});
+  revoke();
+  const hostile = stale.map((item, index) => ({
+    ...item,
+    recipeIngredient: index === 0 ? proxy : [],
+  }));
+  const previousVersion = state.recipeAuthorityVersion;
+
+  assert.doesNotThrow(() => publishRecipeAuthority(state, hostile));
+  assert.equal(state.recipes.length, hostile.length, 'the complete shallow authority still publishes');
+  assert.equal(state.recipes[0].recipeIngredient, proxy);
+  assert.equal(state.recipeAuthorityVersion, previousVersion + 1);
+
+  const options = {
+    recipes: state.recipes,
+    recipeAuthorityVersion: state.recipeAuthorityVersion,
+    pantry: pantry('basil'),
+    ingredientName: 'basil',
+    limit: 3,
+  };
+  let page = discover.page(options);
+  assert.equal(page.pending, true);
+  await assert.doesNotReject(page.ready, 'the yielded authority preparation must settle');
+  await assert.doesNotReject(discover.prepare(options), 'repeated preparation must stay settled');
+
+  const record = recipeDiscoveryAuthority(state.recipes);
+  assert.equal(record.ok, false);
+  assert.equal(record.source, null, 'hostile authority evidence is released after fail-closed projection');
+  assert.ok(record.snapshot.length <= hostile.length, 'the retained snapshot stays bounded');
+  assert.ok(record.index.recipes.length <= hostile.length, 'the compact index stays bounded');
+  assert.equal(record.index.byIngredient.has('basil'), false, 'stale discovery is removed');
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    page = discover.page(options);
+    if (!page.pending) break;
+    await assert.doesNotReject(page.ready, `page readiness attempt ${attempt + 1} must settle`);
+  }
+  assert.equal(page.pending, false, 'repeated page calls cannot remain permanently pending');
+  assert.deepEqual(page.results, []);
+  assert.equal(page.total, 0);
+  assert.equal(discover.page(options).pending, false, 'settled empty pages remain synchronous');
+});
+
+test('hostile ingredient length during warmed large equivalence fails closed and publishes the new authority', async () => {
+  const corpus = Array.from({ length: 201 }, (_, index) => recipe(`r-${index}`, `Recipe ${index}`, ['basil']));
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, corpus);
+  await recipeDiscoveryAuthority(state.recipes).promise;
+  const version = state.recipeAuthorityVersion;
+  const hostileIngredients = new Proxy(['basil'], {
+    get(target, key, receiver) {
+      if (key === 'length') throw new Error('hostile ingredient length');
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const acknowledgement = corpus.map((item, index) => (
+    index ? { ...item } : { ...item, recipeIngredient: hostileIngredients }
+  ));
+
+  assert.doesNotThrow(() => publishRecipeAuthority(state, acknowledgement));
+  assert.equal(state.recipes[0].recipeIngredient, hostileIngredients);
+  assert.equal(state.recipeAuthorityVersion, version + 1);
+});
+
+test('large-corpus publication and paged discovery stay bounded, responsive, and linear', { timeout: 20_000 }, async (t) => {
+  const corpus = Array.from({ length: 5_000 }, (_, recipeIndex) => recipe(
+    `recipe-${recipeIndex}`,
+    `Recipe ${String(recipeIndex).padStart(5, '0')}`,
+    ['basil', ...Array.from({ length: 19 }, (_, ingredientIndex) => `1 piece ingredient ${recipeIndex}-${ingredientIndex}`)],
+  ));
+  global.gc?.();
+  const heapBefore = process.memoryUsage().heapUsed;
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  const publicationStarted = performance.now();
+  publishRecipeAuthority(state, corpus);
+  const publicationMs = performance.now() - publicationStarted;
+  assert.ok(publicationMs < 50, `authority publication blocked for ${publicationMs}ms`);
+
+  const discover = createPantryRecipeDiscovery();
+  let timerFiredAt = 0;
+  let lastTick = performance.now();
+  let maxTimerGap = 0;
+  const interval = setInterval(() => {
+    const now = performance.now();
+    maxTimerGap = Math.max(maxTimerGap, now - lastTick);
+    lastTick = now;
+  }, 5);
+  t.after(() => clearInterval(interval));
+  const timer = new Promise((resolve) => setTimeout(() => { timerFiredAt = performance.now(); resolve(); }, 0));
+  const prepareStarted = performance.now();
+  const prepareCpuStarted = process.cpuUsage();
+  const preparing = discover.prepare({ recipes: state.recipes, recipeAuthorityVersion: state.recipeAuthorityVersion });
+  await timer;
+  assert.ok(timerFiredAt - prepareStarted < 100, `index preparation blocked the event loop for ${timerFiredAt - prepareStarted}ms`);
+  await preparing;
+  const preparationMs = performance.now() - prepareStarted;
+  const preparationCpu = process.cpuUsage(prepareCpuStarted);
+  const preparationCpuMs = (preparationCpu.user + preparationCpu.system) / 1_000;
+  assert.ok(preparationMs < 5_000, `5k x 20 index took ${preparationMs}ms`);
+  assert.ok(maxTimerGap < 50, `index preparation created a ${maxTimerGap}ms event-loop gap`);
+  const heapDelta = process.memoryUsage().heapUsed - heapBefore;
+  assert.ok(heapDelta < 80 * 1024 * 1024, `incremental heap was ${heapDelta} bytes`);
+
+  const firstIndex = recipeDiscoveryAuthority(state.recipes).index;
+  const authorityVersion = state.recipeAuthorityVersion;
+  const equivalent = corpus.map((item) => ({ ...item, recipeIngredient: [...item.recipeIngredient].reverse() }));
+  const acknowledgementStarted = performance.now();
+  const acknowledgementCpuStarted = process.cpuUsage();
+  publishRecipeAuthority(state, equivalent);
+  const acknowledgementMs = performance.now() - acknowledgementStarted;
+  const acknowledgementCpu = process.cpuUsage(acknowledgementCpuStarted);
+  const acknowledgementCpuMs = (acknowledgementCpu.user + acknowledgementCpu.system) / 1_000;
+  assert.ok(acknowledgementCpuMs < 100, `equivalent 5k acknowledgement used ${acknowledgementCpuMs}ms CPU`);
+  assert.ok(acknowledgementMs < 150, `equivalent 5k acknowledgement blocked for ${acknowledgementMs}ms`);
+  assert.equal(state.recipeAuthorityVersion, authorityVersion);
+  assert.equal(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
+
+  const losingVariant = equivalent.map((item, index) => index ? item : {
+    ...item,
+    recipeIngredient: [...item.recipeIngredient, 'fresh basil'],
+  });
+  const variantStarted = performance.now();
+  const variantCpuStarted = process.cpuUsage();
+  publishRecipeAuthority(state, losingVariant);
+  const variantMs = performance.now() - variantStarted;
+  const variantCpu = process.cpuUsage(variantCpuStarted);
+  const variantCpuMs = (variantCpu.user + variantCpu.system) / 1_000;
+  assert.ok(variantCpuMs < 100, `canonical 5k acknowledgement used ${variantCpuMs}ms CPU`);
+  assert.ok(variantMs < 150, `canonical 5k acknowledgement blocked for ${variantMs}ms`);
+  assert.equal(state.recipeAuthorityVersion, authorityVersion);
+  assert.equal(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
+  t.diagnostic(`5k acknowledgement CPU: equivalent=${acknowledgementCpuMs}ms canonical=${variantCpuMs}ms`);
+
+  maxTimerGap = 0;
+  lastTick = performance.now();
+  const queryStarted = performance.now();
+  const pageOptions = {
+    recipes: state.recipes,
+    recipeAuthorityVersion: state.recipeAuthorityVersion,
+    pantry: pantry('basil'),
+    ingredientName: 'basil',
+    offset: 0,
+    limit: 3,
+  };
+  let page = discover.page(pageOptions);
+  const initialQueryMs = performance.now() - queryStarted;
+  assert.equal(page.pending, true);
+  assert.ok(initialQueryMs < 50, `initial common query call took ${initialQueryMs}ms`);
+  await page.ready;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  clearInterval(interval);
+  page = discover.page(pageOptions);
+  const queryMs = performance.now() - queryStarted;
+  assert.equal(page.pending, false);
+  assert.equal(page.results.length, 3);
+  assert.equal(page.total, 5_000);
+  assert.equal(page.hasMore, true);
+  assert.ok(queryMs < 3_000, `yielded common query took ${queryMs}ms`);
+  assert.ok(maxTimerGap < 50, `paged query created a ${maxTimerGap}ms event-loop gap`);
+
+  const half = corpus.slice(0, 1_250);
+  const halfDiscover = createPantryRecipeDiscovery();
+  const halfStarted = performance.now();
+  const halfCpuStarted = process.cpuUsage();
+  await halfDiscover.prepare({ recipes: half, recipeAuthorityVersion: 1 });
+  const halfMs = performance.now() - halfStarted;
+  const halfCpu = process.cpuUsage(halfCpuStarted);
+  const halfCpuMs = (halfCpu.user + halfCpu.system) / 1_000;
+  assert.ok(preparationCpuMs < (halfCpuMs * 6) + 100,
+    `4x scaling exceeded linear CPU target: 1.25k=${halfCpuMs}ms 5k=${preparationCpuMs}ms (wall ${halfMs}ms/${preparationMs}ms)`);
+});
+
+test('warmed 5k raw acknowledgements reuse one exact prior summary and scan only candidate evidence', { timeout: 20_000 }, async () => {
+  const recipeCount = 5_000;
+  const ingredientsPerRecipe = 20;
+  const numericKey = /^(?:0|[1-9]\d*)$/;
+  const observeIngredientEvidence = (values, counter) => new Proxy(values, {
+    getOwnPropertyDescriptor(target, key) {
+      if (typeof key === 'string' && numericKey.test(key)) counter.reads += 1;
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+  });
+  const backing = Array.from({ length: recipeCount }, (_, recipeIndex) => [
+    'basil',
+    ...Array.from(
+      { length: ingredientsPerRecipe - 1 },
+      (_, ingredientIndex) => `1 piece ingredient ${recipeIndex}-${ingredientIndex}`,
+    ),
+  ]);
+  const priorEvidence = { reads: 0 };
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, backing.map((ingredients, index) => recipe(
+    `summary-${index}`,
+    `Summary ${String(index).padStart(5, '0')}`,
+    observeIngredientEvidence(ingredients, priorEvidence),
+  )));
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  await firstRecord.promise;
+  const expectedPriorReads = recipeCount * ingredientsPerRecipe;
+  assert.equal(priorEvidence.reads, expectedPriorReads, 'the certified prior reads each raw ingredient exactly once');
+
+  let retainedSummaryReads = 0;
+  for (const item of firstRecord.snapshot) {
+    item.signatureRow.ingredients = new Proxy(item.signatureRow.ingredients, {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && numericKey.test(key)) retainedSummaryReads += 1;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+  }
+  const firstIndex = firstRecord.index;
+  const generation = state.recipeAuthorityVersion;
+  const equivalentEvidence = { reads: 0 };
+  const equivalent = backing.map((ingredients, index) => recipe(
+    `summary-${index}`,
+    `Summary ${String(index).padStart(5, '0')}`,
+    observeIngredientEvidence([...ingredients].reverse(), equivalentEvidence),
+  ));
+  publishRecipeAuthority(state, equivalent);
+  const equivalentRecord = recipeDiscoveryAuthority(state.recipes);
+  assert.equal(equivalentEvidence.reads, expectedPriorReads, 'equivalence scans candidate evidence exactly once');
+  assert.equal(retainedSummaryReads, 0, 'equivalence reuses the certified prior summary without rescanning it');
+  assert.equal(state.recipeAuthorityVersion, generation);
+  assert.equal(equivalentRecord.index, firstIndex);
+
+  const losingEvidence = { reads: 0 };
+  const losingVariant = backing.map((ingredients, index) => {
+    const values = [...ingredients].reverse();
+    if (index === 0) values.push('fresh basil');
+    return recipe(
+      `summary-${index}`,
+      `Summary ${String(index).padStart(5, '0')}`,
+      observeIngredientEvidence(values, losingEvidence),
+    );
+  });
+  publishRecipeAuthority(state, losingVariant);
+  assert.equal(losingEvidence.reads, expectedPriorReads + 1, 'losing-variant equivalence scans only candidate evidence');
+  assert.equal(retainedSummaryReads, 0, 'the adopted record carries the exact prior summary cache');
+  assert.equal(priorEvidence.reads, expectedPriorReads, 'neither acknowledgement rereads user prior evidence');
+  assert.equal(state.recipeAuthorityVersion, generation);
+  assert.equal(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
+});
+
+function allocationProbedDiscoveryIndex(size) {
+  let resultLikeReads = 0;
+  const recipes = Array.from({ length: size }, (_, index) => {
+    const names = index === 0 || index === 3 ? ['basil']
+      : index % 2 ? ['basil', 'tomato']
+        : ['basil', 'tomato', `missing-${index}`];
+    const raws = names.map((name) => `1 piece ${name}`);
+    return {
+      recipeId: `recipe-${index}`,
+      recipeIdentity: `id:recipe-${index}`,
+      recipeName: `Recipe ${String(index).padStart(5, '0')}`,
+      imageUrl: '',
+      canOpen: true,
+      names,
+      get raws() {
+        resultLikeReads += 1;
+        return raws;
+      },
+    };
+  });
+  return {
+    index: { recipes, byIngredient: new Map([['basil', recipes.map((_, index) => index)]]) },
+    resultLikeReads: () => resultLikeReads,
+  };
+}
+
+test('paged discovery materializes result-like data only for the retained offset and limit', async (t) => {
+  const expectedIds = ['recipe-3', 'recipe-1', 'recipe-5'];
+  const options = { offset: 1, limit: 3 };
+  for (const [name, query] of [
+    ['synchronous query', (index) => queryRecipeDiscoveryIndex(index, pantry('basil'), 'basil', options)],
+    ['yielded query', (index) => prepareRecipeDiscoveryPage(index, pantry('basil'), 'basil', options)],
+  ]) {
+    await t.test(name, async () => {
+      const probe = allocationProbedDiscoveryIndex(5_000);
+      const page = await query(probe.index);
+      assert.deepEqual(page.results.map(({ recipeId }) => recipeId), expectedIds, 'rank buckets retain stable index order');
+      assert.deepEqual(page.results.map(({ availability }) => availability.label), ['All', 'Some', 'Some']);
+      assert.equal(page.total, 5_000);
+      assert.equal(page.hasMore, true);
+      assert.equal(probe.resultLikeReads(), page.results.length,
+        `${name} should read matching evidence only while materializing selected results`);
+      assert.ok(probe.resultLikeReads() <= options.offset + options.limit,
+        `${name} materialized matching evidence for ${probe.resultLikeReads()} results while retaining ${options.offset + options.limit}`);
+    });
+  }
+});
+
+test('stale asynchronous index preparation is cancelled when recipe authority changes', async () => {
+  const discover = createPantryRecipeDiscovery();
+  const stale = Array.from({ length: 2_000 }, (_, index) => recipe(`old-${index}`, `Old ${index}`, ['basil']));
+  const current = [recipe('new', 'Current', ['basil'])];
+  const stalePreparation = discover.prepare({ recipes: stale, recipeAuthorityVersion: 1 });
+  await discover.prepare({ recipes: current, recipeAuthorityVersion: 2 });
+  await stalePreparation;
+  const options = { recipes: current, recipeAuthorityVersion: 2, pantry: pantry('basil'), ingredientName: 'basil', limit: 3 };
+  let page = discover.page(options);
+  if (page.pending) { await page.ready; page = discover.page(options); }
+  assert.deepEqual(page.results.map(({ recipeId }) => recipeId), ['new']);
+});
+
+test('oversized publication preserves complete shallow authority while bounding only discovery projection', async () => {
+  const authority = Array.from({ length: 10_001 }, (_, index) => recipe(
+    `oversized-${index}`,
+    `Oversized ${index}`,
+    [],
+  ));
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  const published = publishRecipeAuthority(state, authority);
+
+  assert.equal(published.length, authority.length);
+  assert.equal(state.recipes.length, authority.length);
+  assert.equal(state.recipes[10_000], authority[10_000], 'shallow publication preserves the final element identity');
+  assert.equal(state.recipeAuthorityVersion, 1);
+
+  const projection = recipeDiscoveryAuthority(state.recipes);
+  await projection.promise;
+  assert.equal(projection.ok, false, 'oversized discovery projection fails safe');
+  assert.equal(projection.snapshot.length, 10_000, 'only discovery work is bounded');
+});

@@ -8,7 +8,8 @@ import { esc, pluralize } from '../lib/format.js';
 import { toSchema, parseImport } from '../lib/schema.js';
 import { save as persist } from '../lib/store.js';
 import { theme as defaultTheme } from '../lib/theme.js';
-import { importRecipes as importToServer } from '../lib/api.js';
+import { importRecipes as importToServer, fetchRecipes } from '../lib/api.js';
+import { publishRecipeAuthority } from '../lib/recipe-authority.js';
 import { interactionFeedback as defaultFeedback } from '../lib/interaction-feedback.js';
 
 const THEME_PALETTES = {
@@ -33,6 +34,7 @@ const DEFAULT_THEME = 'light';
  * @param {(opts) => void} [deps.initGoogleSignIn]
  * @param {(msg) => void} [deps.toast]
  * @param {() => void} [deps.exportRecipes]
+ * @param {object|null} [deps.recipeRuntime] - versioned recipe authority owner
  * @param {() => void} [deps.onChange] - re-render after import
  * @param {() => string|null} [deps.getStoredTheme] - read current theme
  * @param {object} [deps.theme] - { getStored, set, apply } — defaults to singleton
@@ -48,6 +50,9 @@ export function initSettings({
   initGoogleSignIn: initGoogleSignInDep = initGoogleSignIn,
   toast: toastDep = toast,
   exportRecipes: exportRecipesDep = defaultExportRecipes,
+  importToServer: importToServerDep = importToServer,
+  fetchRecipes: fetchRecipesDep = fetchRecipes,
+  recipeRuntime = null,
   onChange = null,
   getStoredTheme = defaultTheme.getStored,
   theme: themeDep = defaultTheme,
@@ -56,6 +61,7 @@ export function initSettings({
   onSignedOut = null,
 } = {}) {
   let settingsRendered = false;
+  let importGeneration = 0;
 
   function renderAuth() {
     const zone = document.getElementById('settings-auth-zone');
@@ -86,24 +92,71 @@ export function initSettings({
   }
 
   async function importRecipes(file) {
+    const generation = ++importGeneration;
+    const isCurrentImport = () => generation === importGeneration;
+    const report = (message) => { if (isCurrentImport()) toastDep(message); };
     const reader = new FileReader();
     reader.onload = async (e) => {
+      let imported;
       try {
-        const imported = parseImport(JSON.parse(e.target.result));
-        if (!imported.length) { toastDep('No valid recipes found in file'); return; }
-        // Send canonical JSON-LD to server
-        const canonicals = imported.map(toSchema);
-        const res = await importToServer(canonicals);
-        if (!res.ok) { toastDep('Could not import recipes'); return; }
-        // Reload recipes from server to get server-assigned ids
-        const { fetchRecipes } = await import('../lib/api.js');
-        const fres = await fetchRecipes();
-        if (fres.ok) state.recipes = fres.recipes;
-        if (onChange) onChange();
-        toastDep(`Imported ${pluralize(res.imported || imported.length, 'recipe')}`);
-      } catch { toastDep('Could not read file — expected JSON-LD'); }
+        imported = parseImport(JSON.parse(e.target.result));
+      } catch {
+        report('Could not read file — expected JSON-LD');
+        return;
+      }
+      if (!imported.length) { report('No valid recipes found in file'); return; }
+
+      let res;
+      try { res = await importToServerDep(imported.map(toSchema)); }
+      catch { report('Could not import recipes'); return; }
+      if (!res?.ok) { report('Could not import recipes'); return; }
+
+      // Capture the runtime generation before starting the GET. A mutation can
+      // be acknowledged while it is in flight, making that response stale even
+      // though no pending row remains to reapply over it.
+      const mutationVersion = recipeRuntime?.version?.();
+      let fres;
+      try { fres = await fetchRecipesDep(); }
+      catch { report('Recipes imported, but could not refresh'); return; }
+      if (!fres?.ok || !Array.isArray(fres.recipes)) {
+        report('Recipes imported, but could not refresh');
+        return;
+      }
+      // Runtime mutation versions order aggregate reads against outbox changes,
+      // not against other imports. Only the latest selected file may replace
+      // authority or report the outcome of its workflow.
+      if (!isCurrentImport()) return;
+
+      if (recipeRuntime) {
+        const accepted = await recipeRuntime.setAuthority(
+          fres.recipes,
+          { mutationVersion },
+        ).catch(() => false);
+        if (!isCurrentImport()) return;
+        if (!accepted) {
+          // fetchRecipes does not publish today, but restoring from the runtime
+          // keeps this handoff safe if a fetch helper ever touches shared state.
+          publishRecipeAuthority(state, recipeRuntime.current());
+          const refreshed = await recipeRuntime.refresh?.().catch(() => false);
+          if (!isCurrentImport()) return;
+          if (!refreshed) {
+            if (onChange) onChange();
+            report('Recipes imported, but could not refresh');
+            return;
+          }
+        }
+      } else publishRecipeAuthority(state, fres.recipes);
+
+      if (onChange) onChange();
+      const importedCount = res.imported ?? imported.length;
+      const importedMessage = `Imported ${pluralize(importedCount, 'recipe')}`;
+      report(res.failed > 0
+        ? `${importedMessage}; ${res.failed} failed.`
+        : importedMessage);
     };
-    reader.readAsText(file);
+    reader.onerror = () => report('Could not read file');
+    try { reader.readAsText(file); }
+    catch { report('Could not read file'); }
   }
 
   function renderThemePicker() {

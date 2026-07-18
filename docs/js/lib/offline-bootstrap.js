@@ -1,4 +1,5 @@
 import { applyWorkspace } from './store.js';
+import { publishRecipeAuthority } from './recipe-authority.js';
 
 export async function hydrateOfflineState({ repo, authSub, state }) {
   if (!repo || !authSub) return { cached: false, householdId: null };
@@ -12,7 +13,7 @@ export async function hydrateOfflineState({ repo, authSub, state }) {
   if (!Array.isArray(recipes) || !workspace) return { cached: false, householdId };
   state.household = membership;
   state.householdEligible = true;
-  state.recipes = recipes;
+  publishRecipeAuthority(state, recipes);
   state.recipesLoaded = true;
   applyWorkspace(workspace, state);
   state.offlineCache = true;

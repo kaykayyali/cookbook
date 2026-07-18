@@ -2,6 +2,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import 'fake-indexeddb/auto';
+import { importRecipes as importRecipesApi } from '../../docs/js/lib/api.js';
+import { openOfflineDb } from '../../docs/js/lib/offline-db.js';
+import { initRecipeRuntime } from '../../docs/js/lib/recipe-runtime.js';
 
 if (typeof globalThis.localStorage === 'undefined') {
   globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
@@ -9,6 +13,12 @@ if (typeof globalThis.localStorage === 'undefined') {
 
 let mod;
 try { mod = await import('../../docs/js/controllers/settings.js'); } catch (e) { mod = {}; }
+
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+};
 
 function makeDom() {
   const ids = [
@@ -142,6 +152,519 @@ test('renderSettings wires export button to exportRecipes', () => {
   ctrl.renderSettings();
   elements['settings-export-btn'].click();
   assert.equal(exported, true, 'export button click should call exportRecipes');
+});
+
+test('Settings import publishes fetched recipe authority once and renders once', async () => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const importedRecipe = {
+    '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Pesto',
+    recipeIngredient: ['basil'], recipeInstructions: ['Blend'],
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([importedRecipe]) } }));
+    }
+  };
+  const state = {
+    recipes: [{ _id: 'removed', name: 'Removed', recipeIngredient: ['parsley'] }],
+    recipeAuthorityVersion: 0,
+  };
+  let changes = 0;
+  let resolveChanged;
+  const changed = new Promise((resolve) => { resolveChanged = resolve; });
+  const ctrl = mod.initSettings({
+    state,
+    document,
+    importToServer: async () => ({ ok: true, imported: 1 }),
+    fetchRecipes: async () => ({
+      ok: true,
+      recipes: [{ _id: 'imported', name: 'Imported Pesto', recipeIngredient: ['basil'] }],
+    }),
+    onChange: () => { changes += 1; resolveChanged(); },
+    toast: () => {},
+  });
+  try {
+    ctrl._importRecipes({});
+    await changed;
+    assert.equal(changes, 1, 'one import acknowledgement publishes and renders once');
+    assert.equal(state.recipeAuthorityVersion, 1);
+    assert.deepEqual(state.recipes.map(({ _id }) => _id), ['imported']);
+  } finally {
+    globalThis.FileReader = originalFileReader;
+  }
+});
+
+test('Settings reports an import transport failure as an import failure, not malformed JSON', async () => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const importedSchema = {
+    '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Pesto',
+    recipeIngredient: ['basil'], recipeInstructions: ['Blend'],
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([importedSchema]) } }));
+    }
+  };
+  const toasted = deferred();
+  const ctrl = mod.initSettings({
+    state: { recipes: [] }, document,
+    importToServer: async () => { throw new Error('network unavailable'); },
+    toast: toasted.resolve,
+  });
+  try {
+    ctrl._importRecipes({});
+    assert.equal(await toasted.promise, 'Could not import recipes');
+  } finally {
+    globalThis.FileReader = originalFileReader;
+  }
+});
+
+test('production import wiring preserves prior authority when every recipe POST fails', async (t) => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const originalFetch = globalThis.fetch;
+  const importedSchemas = [
+    {
+      '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Pesto',
+      recipeIngredient: ['basil'], recipeInstructions: ['Blend'],
+    },
+    {
+      '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Soup',
+      recipeIngredient: ['stock'], recipeInstructions: ['Simmer'],
+    },
+  ];
+  let posts = 0;
+  let gets = 0;
+  globalThis.fetch = async (url, init = {}) => {
+    assert.equal(new URL(url, 'https://cookbook.test').pathname, '/api/community');
+    if (init.method === 'POST') {
+      posts += 1;
+      return new Response(JSON.stringify({ error: 'unavailable' }), {
+        status: 503, headers: { 'content-type': 'application/json' },
+      });
+    }
+    gets += 1;
+    return new Response(JSON.stringify({ recipes: [], nextCursor: null }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify(importedSchemas) } }));
+    }
+  };
+  t.after(() => {
+    globalThis.FileReader = originalFileReader;
+    globalThis.fetch = originalFetch;
+  });
+
+  const apiResult = await importRecipesApi(importedSchemas);
+  assert.deepEqual(apiResult, { ok: false, imported: 0, failed: 2 });
+
+  const oldRecipe = { id: 'old', _id: 'old', name: 'Old Soup', recipeIngredient: ['stock'] };
+  const state = {
+    household: { household: { id: 'home' } }, recipes: [oldRecipe], recipeAuthorityVersion: 0,
+  };
+  const repo = await openOfflineDb({ indexedDB, name: `settings-import-all-failed-${Date.now()}` });
+  await repo.putRecipes('cook', 'home', [oldRecipe]);
+  const runtime = await initRecipeRuntime({
+    state, repo, authSub: 'cook',
+    document: { hidden: false, getElementById: () => null, addEventListener() {}, removeEventListener() {} },
+    window: { navigator: { onLine: false }, addEventListener() {}, removeEventListener() {} },
+    BroadcastChannel: null, schedule: () => ({ unref() {} }), clearSchedule() {},
+  });
+  const toasted = deferred();
+  const ctrl = mod.initSettings({ state, document, recipeRuntime: runtime, toast: toasted.resolve });
+  try {
+    ctrl._importRecipes({});
+    assert.equal(await toasted.promise, 'Could not import recipes');
+    assert.equal(posts, 4, 'the API and Settings each attempt every recipe POST');
+    assert.equal(gets, 0, 'Settings does not fetch authority after an all-failed import');
+    assert.deepEqual(state.recipes.map(({ id }) => id), ['old']);
+    assert.deepEqual(runtime.current().map(({ id }) => id), ['old']);
+    assert.deepEqual((await repo.getRecipes('cook', 'home')).map(({ id }) => id), ['old']);
+  } finally {
+    runtime.destroy();
+    repo.close();
+  }
+});
+
+test('partial production imports report succeeded and failed counts and refresh authority', async (t) => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const originalFetch = globalThis.fetch;
+  const importedSchemas = [
+    {
+      '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Pesto',
+      recipeIngredient: ['basil'], recipeInstructions: ['Blend'],
+    },
+    {
+      '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Soup',
+      recipeIngredient: ['stock'], recipeInstructions: ['Simmer'],
+    },
+  ];
+  const fetchedRecipe = {
+    id: 'imported', recipe: importedSchemas[0], author: { sub: 'cook', name: 'Cook' },
+    createdAt: 1, updatedAt: 1,
+  };
+  let posts = 0;
+  let gets = 0;
+  globalThis.fetch = async (url, init = {}) => {
+    assert.equal(new URL(url, 'https://cookbook.test').pathname, '/api/community');
+    if (init.method === 'POST') {
+      posts += 1;
+      if (posts % 2 === 1) {
+        return new Response(JSON.stringify(fetchedRecipe), {
+          status: 201, headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ error: 'unavailable' }), {
+        status: 503, headers: { 'content-type': 'application/json' },
+      });
+    }
+    gets += 1;
+    return new Response(JSON.stringify({ recipes: [fetchedRecipe], nextCursor: null }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify(importedSchemas) } }));
+    }
+  };
+  t.after(() => {
+    globalThis.FileReader = originalFileReader;
+    globalThis.fetch = originalFetch;
+  });
+
+  assert.deepEqual(await importRecipesApi(importedSchemas), { ok: true, imported: 1, failed: 1 });
+
+  const state = { recipes: [{ id: 'old', _id: 'old', name: 'Old Soup' }], recipeAuthorityVersion: 0 };
+  const toasted = deferred();
+  const ctrl = mod.initSettings({ state, document, toast: toasted.resolve });
+  ctrl._importRecipes({});
+  assert.equal(await toasted.promise, 'Imported 1 recipe; 1 failed.');
+  assert.equal(posts, 4, 'the API and Settings each attempt every recipe POST');
+  assert.equal(gets, 1, 'partial success refreshes authoritative recipes once');
+  assert.deepEqual(state.recipes.map(({ _id }) => _id), ['imported']);
+});
+
+test('Settings preserves an explicit zero imported count', async () => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const importedSchema = {
+    '@context': 'https://schema.org', '@type': 'Recipe', name: 'No-op import',
+    recipeIngredient: ['water'], recipeInstructions: ['Wait'],
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([importedSchema]) } }));
+    }
+  };
+  const toasted = deferred();
+  const ctrl = mod.initSettings({
+    state: { recipes: [] }, document,
+    importToServer: async () => ({ ok: true, imported: 0, failed: 0 }),
+    fetchRecipes: async () => ({ ok: true, recipes: [] }),
+    toast: toasted.resolve,
+  });
+  try {
+    ctrl._importRecipes({});
+    assert.equal(await toasted.promise, 'Imported 0 recipes');
+  } finally {
+    globalThis.FileReader = originalFileReader;
+  }
+});
+
+test('Settings reports a post-import fetch failure separately from malformed JSON', async () => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const importedSchema = {
+    '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Pesto',
+    recipeIngredient: ['basil'], recipeInstructions: ['Blend'],
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([importedSchema]) } }));
+    }
+  };
+  const toasted = deferred();
+  const ctrl = mod.initSettings({
+    state: { recipes: [] }, document,
+    importToServer: async () => ({ ok: true, imported: 1 }),
+    fetchRecipes: async () => { throw new Error('network unavailable'); },
+    toast: toasted.resolve,
+  });
+  try {
+    ctrl._importRecipes({});
+    assert.equal(await toasted.promise, 'Recipes imported, but could not refresh');
+  } finally {
+    globalThis.FileReader = originalFileReader;
+  }
+});
+
+test('Settings restores runtime authority when refreshed authority persistence fails', async () => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const importedSchema = {
+    '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Pesto',
+    recipeIngredient: ['basil'], recipeInstructions: ['Blend'],
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([importedSchema]) } }));
+    }
+  };
+  const current = [{ id: 'newer', _id: 'newer', name: 'Newer authority' }];
+  const state = { recipes: [] };
+  const toasted = deferred();
+  const ctrl = mod.initSettings({
+    state, document,
+    importToServer: async () => ({ ok: true, imported: 1 }),
+    fetchRecipes: async () => ({ ok: true, recipes: [{ id: 'stale', _id: 'stale', name: 'Stale' }] }),
+    recipeRuntime: {
+      version: () => 4,
+      setAuthority: async () => { throw new Error('idb_failed'); },
+      current: () => current,
+      refresh: async () => false,
+    },
+    toast: toasted.resolve,
+  });
+  try {
+    ctrl._importRecipes({});
+    assert.equal(await toasted.promise, 'Recipes imported, but could not refresh');
+    assert.deepEqual(state.recipes.map(({ id }) => id), ['newer']);
+  } finally {
+    globalThis.FileReader = originalFileReader;
+  }
+});
+
+test('Settings import synchronizes runtime and durable authority before the next offline optimistic create', async () => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const importedSchema = {
+    '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Pesto',
+    recipeIngredient: ['basil'], recipeInstructions: ['Blend'],
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([importedSchema]) } }));
+    }
+  };
+  const oldRecipe = { id: 'old', _id: 'old', name: 'Old Soup', recipeIngredient: ['stock'] };
+  const importedRecipe = { id: 'imported', _id: 'imported', name: 'Imported Pesto', recipeIngredient: ['basil'] };
+  const state = {
+    household: { household: { id: 'home' } }, recipes: [oldRecipe], recipeAuthorityVersion: 0,
+  };
+  const repo = await openOfflineDb({ indexedDB, name: `settings-import-runtime-${Date.now()}` });
+  const runtimeDocument = {
+    hidden: false, getElementById: () => null, addEventListener() {}, removeEventListener() {},
+  };
+  const runtimeWindow = {
+    navigator: { onLine: false }, addEventListener() {}, removeEventListener() {},
+  };
+  const runtime = await initRecipeRuntime({
+    state, repo, authSub: 'cook', document: runtimeDocument, window: runtimeWindow,
+    BroadcastChannel: null, schedule: () => ({ unref() {} }), clearSchedule() {},
+    send: async () => assert.fail('offline import probe must not send'),
+  });
+  let imported;
+  const importFinished = new Promise((resolve) => { imported = resolve; });
+  const ctrl = mod.initSettings({
+    state,
+    document,
+    importToServer: async () => ({ ok: true, imported: 1 }),
+    fetchRecipes: async () => ({ ok: true, recipes: [importedRecipe] }),
+    recipeRuntime: runtime,
+    toast: (message) => { if (message.startsWith('Imported ')) imported(); },
+  });
+  try {
+    ctrl._importRecipes({});
+    await importFinished;
+    assert.deepEqual(state.recipes.map(({ id }) => id), ['imported']);
+    assert.deepEqual(runtime.current().map(({ id }) => id), ['imported']);
+    assert.deepEqual((await repo.getRecipes('cook', 'home')).map(({ id }) => id), ['imported']);
+
+    assert.equal(await runtime.mutate('recipe.create', {
+      id: 'offline', item: { id: 'offline', _id: 'offline', name: 'Offline Pie', recipeIngredient: ['apple'] },
+    }), true);
+    assert.deepEqual(new Set(state.recipes.map(({ id }) => id)), new Set(['imported', 'offline']));
+    assert.deepEqual(new Set(runtime.current().map(({ id }) => id)), new Set(['imported', 'offline']));
+  } finally {
+    runtime.destroy();
+    repo.close();
+    globalThis.FileReader = originalFileReader;
+  }
+});
+
+test('overlapping production Settings imports keep the newest fetched authority', async (t) => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const originalFetch = globalThis.fetch;
+  const schema = (name) => ({
+    '@context': 'https://schema.org', '@type': 'Recipe', name,
+    recipeIngredient: ['water'], recipeInstructions: ['Simmer'],
+  });
+  globalThis.FileReader = class {
+    readAsText(file) {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([file.recipe]) } }));
+    }
+  };
+  t.after(() => {
+    globalThis.FileReader = originalFileReader;
+    globalThis.fetch = originalFetch;
+  });
+
+  const ids = (recipes) => recipes.map(({ id, _id }) => id ?? _id);
+  const oldRecipe = { id: 'old', _id: 'old', name: 'Old authority' };
+  const staleRecipe = {
+    id: 'stale-a', recipe: schema('Stale A'), author: { sub: 'cook', name: 'Cook' },
+    createdAt: 1, updatedAt: 1,
+  };
+  const newestRecipe = {
+    id: 'newest-b', recipe: schema('Newest B'), author: { sub: 'cook', name: 'Cook' },
+    createdAt: 2, updatedAt: 2,
+  };
+  const aggregateGets = [];
+  const bothGetsStarted = deferred();
+  let posts = 0;
+  globalThis.fetch = async (url, init = {}) => {
+    assert.equal(new URL(url, 'https://cookbook.test').pathname, '/api/community');
+    if (init.method === 'POST') {
+      posts += 1;
+      return new Response(JSON.stringify(posts === 1 ? staleRecipe : newestRecipe), {
+        status: 201, headers: { 'content-type': 'application/json' },
+      });
+    }
+    const response = deferred();
+    aggregateGets.push(response);
+    if (aggregateGets.length === 2) bothGetsStarted.resolve();
+    return response.promise;
+  };
+
+  const state = {
+    household: { household: { id: 'home' } }, recipes: [oldRecipe], recipeAuthorityVersion: 0,
+  };
+  const repo = await openOfflineDb({ indexedDB, name: `settings-import-overlap-${Date.now()}` });
+  await repo.putRecipes('cook', 'home', [oldRecipe]);
+  const runtime = await initRecipeRuntime({
+    state, repo, authSub: 'cook',
+    document: { hidden: false, getElementById: () => null, addEventListener() {}, removeEventListener() {} },
+    window: { navigator: { onLine: false }, addEventListener() {}, removeEventListener() {} },
+    BroadcastChannel: null, schedule: () => ({ unref() {} }), clearSchedule() {},
+  });
+  const capturedVersions = [];
+  const settingsRuntime = {
+    version: () => { const version = runtime.version(); capturedVersions.push(version); return version; },
+    setAuthority: (...args) => runtime.setAuthority(...args),
+    current: () => runtime.current(),
+    refresh: () => runtime.refresh(),
+  };
+  const toasts = [];
+  let changes = 0;
+  const newestFinished = deferred();
+  const ctrl = mod.initSettings({
+    state, document, recipeRuntime: settingsRuntime,
+    onChange: () => { changes += 1; },
+    toast: (message) => { toasts.push(message); if (message.startsWith('Imported ')) newestFinished.resolve(); },
+  });
+  try {
+    ctrl._importRecipes({ recipe: schema('Import A') });
+    ctrl._importRecipes({ recipe: schema('Import B') });
+    await bothGetsStarted.promise;
+    assert.equal(posts, 2, 'both selected files complete one upload');
+    assert.equal(aggregateGets.length, 2, 'both successful uploads start one aggregate GET');
+    assert.deepEqual(capturedVersions, [0, 0]);
+
+    aggregateGets[1].resolve(new Response(JSON.stringify({ recipes: [newestRecipe], nextCursor: null }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }));
+    await newestFinished.promise;
+    assert.deepEqual(ids(state.recipes), ['newest-b']);
+    assert.deepEqual(ids(runtime.current()), ['newest-b']);
+    assert.deepEqual(ids(await repo.getRecipes('cook', 'home')), ['newest-b']);
+
+    aggregateGets[0].resolve(new Response(JSON.stringify({ recipes: [staleRecipe], nextCursor: null }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }));
+    // Drain the fetch/controller continuation and fake IndexedDB transaction queues.
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(ids(state.recipes), ['newest-b']);
+    assert.deepEqual(ids(runtime.current()), ['newest-b']);
+    assert.deepEqual(ids(await repo.getRecipes('cook', 'home')), ['newest-b']);
+    assert.equal(changes, 1, 'only the current import renders refreshed authority');
+    assert.deepEqual(toasts, ['Imported 1 recipe'], 'the superseded import must not report success');
+  } finally {
+    runtime.destroy();
+    repo.close();
+  }
+});
+
+test('production Settings runtime wiring rejects a stale import fetch after a newer acknowledgement', async () => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const importedSchema = {
+    '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Pesto',
+    recipeIngredient: ['basil'], recipeInstructions: ['Blend'],
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([importedSchema]) } }));
+    }
+  };
+  const oldRecipe = { id: 'old', _id: 'old', name: 'Old Soup', recipeIngredient: ['stock'] };
+  const importedRecipe = { id: 'imported', _id: 'imported', name: 'Imported Pesto', recipeIngredient: ['basil'] };
+  const staleFetch = deferred();
+  const fetchStarted = deferred();
+  const importFinished = deferred();
+  const state = {
+    household: { household: { id: 'home' } }, recipes: [oldRecipe], recipeAuthorityVersion: 0,
+  };
+  const repo = await openOfflineDb({ indexedDB, name: `settings-import-stale-${Date.now()}` });
+  const runtimeDocument = {
+    hidden: false, getElementById: () => null, addEventListener() {}, removeEventListener() {},
+  };
+  const runtimeWindow = {
+    navigator: { onLine: true }, addEventListener() {}, removeEventListener() {},
+  };
+  let safeRefreshes = 0;
+  const runtime = await initRecipeRuntime({
+    state, repo, authSub: 'cook', document: runtimeDocument, window: runtimeWindow,
+    BroadcastChannel: null, schedule: () => ({ unref() {} }), clearSchedule() {},
+    send: async () => ({ ok: true, recipes: [importedRecipe] }),
+    refreshAuthority: async () => { safeRefreshes += 1; return { ok: true, recipes: [importedRecipe] }; },
+  });
+  const ctrl = mod.initSettings({
+    state,
+    document,
+    importToServer: async () => ({ ok: true, imported: 1 }),
+    fetchRecipes: async () => { fetchStarted.resolve(); return staleFetch.promise; },
+    recipeRuntime: runtime,
+    toast: (message) => { if (message.startsWith('Imported ')) importFinished.resolve(); },
+  });
+  try {
+    ctrl._importRecipes({});
+    await fetchStarted.promise;
+    assert.equal(await runtime.mutate('recipe.delete', { id: 'old' }), true);
+    assert.equal(await runtime.drain(), true);
+    assert.deepEqual(runtime.current().map(({ id }) => id), ['imported']);
+
+    staleFetch.resolve({ ok: true, recipes: [oldRecipe, importedRecipe] });
+    await importFinished.promise;
+
+    assert.equal(safeRefreshes, 1, 'stale authority triggers a guarded runtime refresh');
+    assert.deepEqual(state.recipes.map(({ id }) => id), ['imported']);
+    assert.deepEqual(runtime.current().map(({ id }) => id), ['imported']);
+    assert.deepEqual((await repo.getRecipes('cook', 'home')).map(({ id }) => id), ['imported']);
+  } finally {
+    runtime.destroy();
+    repo.close();
+    globalThis.FileReader = originalFileReader;
+  }
 });
 
 test('renderSettings keeps sound and haptic preferences independent and hides unsupported haptics', () => {

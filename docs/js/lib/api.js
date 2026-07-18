@@ -157,11 +157,17 @@ export function deleteCookHistory(eventId, eventRevision, options = {}) {
 /** Import canonical JSON-LD recipes into the shared cookbook. */
 export async function importRecipes(recipes, { onUnauthorized } = {}) {
   let imported = 0;
+  let failed = 0;
   for (const recipe of recipes) {
-    const res = await shareRecipe(recipe, { onUnauthorized });
-    if (res.ok) imported++;
+    try {
+      const res = await shareRecipe(recipe, { onUnauthorized });
+      if (res.ok) imported++;
+      else failed++;
+    } catch {
+      failed++;
+    }
   }
-  return { ok: true, imported };
+  return { ok: imported > 0 || failed === 0, imported, failed };
 }
 
 export async function fetchWorkspace({ onUnauthorized, request = authFetch } = {}) {
