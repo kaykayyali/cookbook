@@ -399,6 +399,7 @@ export function initPantry({
       overlay.hidden = false;
       overlay.classList?.add('open');
     }
+    if (document.body?.style) document.body.style.overflow = 'hidden';
     renderRecipeDiscovery();
     if (sourceEvent) feedback.emit('select', { target, sourceEvent });
     globalThis.setTimeout?.(() => get('pantry-item-name')?.focus?.(), 0);

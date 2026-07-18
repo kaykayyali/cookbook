@@ -136,6 +136,26 @@ function editorDom() {
 const click = (window, element) => element.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+test('Pantry editor locks body scrolling and restores the exact previous overflow value', () => {
+  const dom = editorDom();
+  globalThis.document = dom.window.document;
+  globalThis.window = dom.window;
+  globalThis.localStorage = dom.window.localStorage;
+  dom.window.document.body.style.overflow = 'scroll';
+  const target = oliveOil();
+  const controller = initPantry({
+    state: { pantry: [target], recipes: [] }, document: dom.window.document, mutate: async () => true,
+  });
+  controller.render();
+
+  click(dom.window, dom.window.document.querySelector(`[data-pantry-id="${target.id}"]`));
+  assert.equal(dom.window.document.getElementById('pantry-item-modal').getAttribute('aria-modal'), 'true');
+  assert.equal(dom.window.document.body.style.overflow, 'hidden');
+
+  assert.equal(controller.closeEditor(), true);
+  assert.equal(dom.window.document.body.style.overflow, 'scroll');
+});
+
 test('entire Pantry row opens the edit modal and save updates exactly one stable record', async () => {
   const dom = editorDom();
   globalThis.document = dom.window.document;

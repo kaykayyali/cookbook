@@ -221,6 +221,7 @@ test('desktop Pantry row opens an immediately editable item modal', { timeout: 6
     assert.equal(await modal.getAttribute('aria-hidden'), 'true');
     assert.equal(await modal.getAttribute('inert'), '');
     assert.equal((await modal.ariaSnapshot()).trim(), '', 'closed Pantry editor contributes no accessibility tree');
+    await page.locator('body').evaluate((element) => { element.style.overflow = 'clip'; });
     await page.locator('[data-pantry-id="pantry-olive-oil"]').click();
     assert.equal(await modal.count(), 1, 'clicking the Pantry row should expose an item editor modal');
     await modal.waitFor({ state: 'visible' });
@@ -229,6 +230,8 @@ test('desktop Pantry row opens an immediately editable item modal', { timeout: 6
     assert.equal(await modal.getAttribute('aria-labelledby'), 'pantry-item-title');
     assert.equal(await modal.getAttribute('aria-hidden'), null);
     assert.equal(await modal.getAttribute('inert'), null);
+    assert.equal(await page.locator('body').evaluate((element) => element.style.overflow), 'hidden',
+      'aria-modal Pantry editor locks page scrolling');
     assert.equal(await page.locator('#pantry-item-name').inputValue(), 'Olive Oil');
     assert.equal(await page.locator('#pantry-item-family').inputValue(), 'fluid');
     assert.equal(await page.locator('#pantry-item-quantity').inputValue(), '2');
@@ -241,6 +244,10 @@ test('desktop Pantry row opens an immediately editable item modal', { timeout: 6
     assert.equal(await page.locator('#pantry-item-quantity-group').isHidden(), true);
     assert.match(await page.locator('#pantry-item-status').textContent(), /clears the trusted amount/i);
     assert.match(await page.locator('#pantry-item-raw').textContent(), /2 cups Olive Oil/i, 'Not sure retains raw context');
+    await page.keyboard.press('Escape');
+    await modal.waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('body').evaluate((element) => element.style.overflow), 'clip',
+      'closing restores the exact pre-existing body overflow value');
     assert.deepEqual(browserErrors, []);
   } finally {
     await context.close();

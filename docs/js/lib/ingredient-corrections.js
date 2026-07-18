@@ -377,6 +377,77 @@ export function effectiveIngredientRecords(recipe) {
   return ingredientEvidence(recipe);
 }
 
+/**
+ * Async equivalent used by responsive discovery projection. The callback returns
+ * a promise only when the shared ingredient budget is exhausted, avoiding one
+ * microtask per ingredient while preserving the synchronous public path.
+ */
+export async function effectiveIngredientRecordsYielded(recipe, yieldIngredient = null) {
+  const normalizations = Array.isArray(recipe?.ingredientNormalizations) ? recipe.ingredientNormalizations : [];
+  const reviewedByEvidence = new Map();
+  const normalizationByEvidence = new Map();
+  const anonymousByRaw = new Map();
+
+  for (const record of normalizations) {
+    if (reviewedRecord(record)) {
+      const key = `${record.raw}\u0000${record.id}`;
+      reviewedByEvidence.set(key, reviewedWinner(reviewedByEvidence.get(key), record));
+    }
+    if (typeof record?.raw === 'string' && legacyNormalizedRecord(record)) {
+      if (typeof record.id === 'string' && record.id) {
+        const key = `${record.raw}\u0000${record.id}`;
+        if (!normalizationByEvidence.has(key)) normalizationByEvidence.set(key, record);
+      } else if (!anonymousByRaw.has(record.raw)) {
+        anonymousByRaw.set(record.raw, record);
+      }
+    }
+    const pending = yieldIngredient?.();
+    if (pending) await pending;
+  }
+
+  const occurrences = new Map();
+  const baseRecords = [];
+  const sources = Array.isArray(recipe?.recipeIngredient) ? recipe.recipeIngredient : [];
+  for (const source of sources) {
+    const valid = (typeof source === 'string' && source.trim())
+      || (source && typeof source === 'object' && typeof source.raw === 'string' && source.raw.trim());
+    if (valid) {
+      const raw = typeof source === 'string' ? source : source.raw;
+      const occurrence = occurrences.get(raw) || 0;
+      occurrences.set(raw, occurrence + 1);
+      const id = ingredientEvidenceId(raw, occurrence);
+      const legacyId = legacyEvidenceId(raw, occurrence);
+      const cached = normalizationByEvidence.get(`${raw}\u0000${id}`)
+        || normalizationByEvidence.get(`${raw}\u0000${legacyId}`)
+        || anonymousByRaw.get(raw);
+      const structured = typeof source === 'object' && legacyNormalizedRecord(source) ? source : null;
+      const parsed = normalizeIngredient(raw);
+      baseRecords.push({
+        ...compatibilityMetadata(cached || structured || parsed),
+        raw,
+        id,
+        evidenceOccurrence: occurrence,
+      });
+    }
+    const pending = yieldIngredient?.();
+    if (pending) await pending;
+  }
+
+  const effective = [];
+  for (const base of baseRecords) {
+    const legacyId = legacyEvidenceId(base.raw, base.evidenceOccurrence);
+    const current = reviewedByEvidence.get(`${base.raw}\u0000${base.id}`);
+    const legacy = reviewedByEvidence.get(`${base.raw}\u0000${legacyId}`);
+    const reviewed = reviewedWinner(current, legacy);
+    effective.push(reviewed
+      ? { ...clone(reviewed), id: base.id, evidenceOccurrence: base.evidenceOccurrence }
+      : base);
+    const pending = yieldIngredient?.();
+    if (pending) await pending;
+  }
+  return effective;
+}
+
 const SOURCE_UNIT_ALIASES = Object.freeze({
   tsp: 'tsp', teaspoon: 'tsp', teaspoons: 'tsp', tbsp: 'tbsp', tablespoon: 'tbsp', tablespoons: 'tbsp',
   cup: 'cup', cups: 'cup', 'fl oz': 'fl-oz', 'fluid ounce': 'fl-oz', 'fluid ounces': 'fl-oz',

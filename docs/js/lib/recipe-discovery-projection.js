@@ -2,6 +2,7 @@ import { NORMALIZATION_VERSION, normalizeIngredient } from './cart.js';
 import {
   canonicalIngredientIdentity,
   effectiveIngredientRecords,
+  effectiveIngredientRecordsYielded,
 } from './ingredient-corrections.js';
 
 const MAX_RECIPES = 10_000;
@@ -499,6 +500,72 @@ function finishIndex(build) {
   return Object.freeze({ recipes: build, byIngredient });
 }
 
+async function addCompactRecipeYielded(build, item, caches, budget) {
+  const unique = new Map();
+  const ingredients = item.effective || item.recipe.recipeIngredient;
+  for (const value of ingredients) {
+    let ingredient = value;
+    if (!item.effective) {
+      let parsed = caches.parsed.get(value);
+      if (!parsed) {
+        try {
+          parsed = normalizeIngredient(value);
+          caches.parsed.set(value, parsed);
+        } catch { parsed = null; }
+      }
+      ingredient = parsed;
+    }
+    if (ingredient) {
+      const sourceName = typeof ingredient?.name === 'string' ? ingredient.name : '';
+      let identity = caches.identities.get(sourceName);
+      if (identity === undefined) {
+        identity = canonicalIngredientIdentity(sourceName);
+        caches.identities.set(sourceName, identity);
+      }
+      if (identity) {
+        const raw = typeof ingredient?.raw === 'string' ? ingredient.raw : '';
+        const current = unique.get(identity);
+        if (current === undefined || compareText(raw, current) < 0) unique.set(identity, raw);
+      }
+    }
+    const pending = spendIngredientBudget(budget);
+    if (pending) await pending;
+  }
+  const names = [...unique.keys()].sort(compareText);
+  const raws = [];
+  for (const name of names) {
+    raws.push(unique.get(name) || '');
+    const pending = spendIngredientBudget(budget);
+    if (pending) await pending;
+  }
+  build.push({
+    recipeId: item.id || item.identity,
+    recipeIdentity: item.identity,
+    recipeName: item.name,
+    imageUrl: item.image,
+    canOpen: Boolean(item.id),
+    names,
+    raws,
+  });
+}
+
+async function finishIndexYielded(build, budget) {
+  build.sort((left, right) => compareText(left.recipeName.toLocaleLowerCase('en-US'), right.recipeName.toLocaleLowerCase('en-US'))
+    || compareText(left.recipeName, right.recipeName)
+    || compareText(left.recipeIdentity, right.recipeIdentity));
+  const byIngredient = new Map();
+  for (let recipeIndex = 0; recipeIndex < build.length; recipeIndex += 1) {
+    for (const name of build[recipeIndex].names) {
+      let refs = byIngredient.get(name);
+      if (!refs) { refs = []; byIngredient.set(name, refs); }
+      refs.push(recipeIndex);
+      const pending = spendIngredientBudget(budget);
+      if (pending) await pending;
+    }
+  }
+  return Object.freeze({ recipes: build, byIngredient });
+}
+
 export function buildRecipeDiscoveryIndexSync(record) {
   if (record.index) return record.index;
   if (!record.snapshot) {
@@ -526,6 +593,104 @@ const yieldTask = () => {
   return new Promise((resolve) => setTimeout(resolve, 0));
 };
 
+function spendIngredientBudget(budget) {
+  budget.work += 1;
+  if (budget.work < YIELD_INGREDIENT_CHUNK) return null;
+  budget.work = 0;
+  return yieldTask();
+}
+
+async function sanitizeArrayYielded(value, context, limit, mapper, budget) {
+  if (!Array.isArray(value)) return [];
+  let length;
+  try { length = value.length; } catch { context.ok = false; return []; }
+  if (!Number.isSafeInteger(length) || length < 0 || length > limit) {
+    context.ok = false;
+    length = Math.min(Number.isSafeInteger(length) && length > 0 ? length : 0, limit);
+  }
+  const output = [];
+  for (let index = 0; index < length; index += 1) {
+    const item = ownValue(value, String(index), context);
+    if (item !== MISSING) {
+      const mapped = mapper(item);
+      if (mapped !== null && mapped !== undefined) output.push(mapped);
+    }
+    const pending = spendIngredientBudget(budget);
+    if (pending) await pending;
+  }
+  return output;
+}
+
+async function sanitizeRecipeYielded(value, context, totals, budget) {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return null;
+  const id = boundedText(ownValue(value, '_id', context), '', context)
+    || boundedText(ownValue(value, 'id', context), '', context);
+  const name = boundedText(ownValue(value, 'name', context), 'Untitled', context);
+  const image = safeRecipeImageUrlValue(ownValue(value, 'image', context), context);
+  let allRaw = true;
+  const ingredientValue = ownValue(value, 'recipeIngredient', context);
+  const recipeIngredient = await sanitizeArrayYielded(
+    ingredientValue, context, MAX_INGREDIENTS_PER_RECIPE,
+    (item) => {
+      totals.ingredients += 1;
+      if (totals.ingredients > MAX_TOTAL_INGREDIENTS) { context.ok = false; return null; }
+      if (typeof item === 'string') {
+        if (item.length > MAX_TEXT) { context.ok = false; return null; }
+        return item;
+      }
+      const record = sanitizeRecord(item, context);
+      if (record) allRaw = false;
+      return record;
+    },
+    budget,
+  );
+  const normalizationValue = ownValue(value, 'ingredientNormalizations', context);
+  const ingredientNormalizations = await sanitizeArrayYielded(
+    normalizationValue, context, MAX_INGREDIENTS_PER_RECIPE,
+    (item) => {
+      totals.ingredients += 1;
+      if (totals.ingredients > MAX_TOTAL_INGREDIENTS) { context.ok = false; return null; }
+      return sanitizeRecord(item, context);
+    },
+    budget,
+  );
+  const rawOnly = allRaw && ingredientNormalizations.length === 0;
+  const sanitized = { _id: id, name, image, recipeIngredient, ingredientNormalizations };
+  let effective = null;
+  let signatureIngredients;
+  if (rawOnly) {
+    const unique = new Set();
+    for (const ingredient of recipeIngredient) {
+      unique.add(ingredient);
+      const pending = spendIngredientBudget(budget);
+      if (pending) await pending;
+    }
+    signatureIngredients = ['raw-v', NORMALIZATION_VERSION, ...[...unique].sort(compareText)];
+  } else {
+    try {
+      effective = await effectiveIngredientRecordsYielded(
+        sanitized,
+        () => spendIngredientBudget(budget),
+      );
+      const unique = new Set();
+      for (const ingredient of effective) {
+        unique.add(JSON.stringify(effectiveRow(ingredient)));
+        const pending = spendIngredientBudget(budget);
+        if (pending) await pending;
+      }
+      signatureIngredients = ['effective', ...[...unique].sort(compareText)];
+    } catch {
+      context.ok = false;
+      effective = [];
+      signatureIngredients = ['invalid'];
+    }
+  }
+  const signatureRow = { id, name, image, ingredients: signatureIngredients };
+  const candidateKey = JSON.stringify(signatureRow);
+  const identity = id ? `id:${id}` : `derived:${name}\u0000${candidateKey}`;
+  return { id, name, image, identity, candidateKey, recipe: sanitized, effective, rawOnly, signatureRow };
+}
+
 function prepareAuthoritySnapshot(record) {
   if (record.snapshot) return Promise.resolve(record.snapshot);
   if (record.authorityPromise) return record.authorityPromise;
@@ -534,19 +699,15 @@ function prepareAuthoritySnapshot(record) {
     const recipes = record.source || [];
     const context = { ok: true };
     const totals = { ingredients: 0 };
+    const budget = { work: 0 };
     const projected = [];
-    let lastYieldIngredients = 0;
     const length = Math.min(recipes.length, MAX_RECIPES);
     if (recipes.length > MAX_RECIPES) context.ok = false;
     for (let index = 0; index < length; index += 1) {
       const value = ownValue(recipes, String(index), context);
       if (value !== MISSING) {
-        const item = sanitizeRecipe(value, context, totals);
+        const item = await sanitizeRecipeYielded(value, context, totals, budget);
         if (item) projected.push(item);
-      }
-      if (totals.ingredients - lastYieldIngredients >= YIELD_INGREDIENT_CHUNK) {
-        lastYieldIngredients = totals.ingredients;
-        await yieldTask();
       }
     }
     finishAuthorityRecord(record, context, projected);
@@ -563,17 +724,12 @@ export function prepareRecipeDiscoveryIndex(record) {
     const build = [];
     const caches = record.caches || { parsed: new Map(), identities: new Map() };
     record.caches = caches;
-    let ingredientBudget = 0;
+    const budget = { work: 0 };
     for (let index = 0; index < record.snapshot.length; index += 1) {
       if (record.index) return record.index;
-      addCompactRecipe(build, record.snapshot[index], caches);
-      ingredientBudget += build[build.length - 1]?.names.length || 1;
-      if (ingredientBudget >= YIELD_INGREDIENT_CHUNK) {
-        ingredientBudget = 0;
-        await yieldTask();
-      }
+      await addCompactRecipeYielded(build, record.snapshot[index], caches, budget);
     }
-    if (!record.index) record.index = finishIndex(build);
+    if (!record.index) record.index = await finishIndexYielded(build, budget);
     return record.index;
   })().finally(() => { record.promise = null; });
   return record.promise;
@@ -587,6 +743,23 @@ function rankedRecipe(source, canonical, available) {
     const label = total && have === total ? 'All' : ratio >= 0.5 ? 'Some' : 'Few';
     const rank = label === 'All' ? 0 : label === 'Some' ? 1 : 2;
     const matchIndex = source.names.indexOf(canonical);
+  return { rank, item: { source, matchingLine: matchIndex >= 0 ? source.raws[matchIndex] : '', availability: { label, have, total, ratio } } };
+}
+
+async function rankedRecipeYielded(source, canonical, available, budget) {
+  let have = 0;
+  let matchIndex = -1;
+  for (let index = 0; index < source.names.length; index += 1) {
+    const name = source.names[index];
+    if (available.has(name)) have += 1;
+    if (matchIndex < 0 && name === canonical) matchIndex = index;
+    const pending = spendIngredientBudget(budget);
+    if (pending) await pending;
+  }
+  const total = source.names.length;
+  const ratio = total ? have / total : 0;
+  const label = total && have === total ? 'All' : ratio >= 0.5 ? 'Some' : 'Few';
+  const rank = label === 'All' ? 0 : label === 'Some' ? 1 : 2;
   return { rank, item: { source, matchingLine: matchIndex >= 0 ? source.raws[matchIndex] : '', availability: { label, have, total, ratio } } };
 }
 
@@ -638,17 +811,12 @@ export function queryRecipeDiscoveryIndex(index, pantryNames, ingredientName, { 
 export async function prepareRecipeDiscoveryPage(index, pantryNames, ingredientName, { offset = 0, limit = Infinity } = {}) {
   const { canonical, refs, available, cap } = queryInputs(index, pantryNames, ingredientName, offset, limit);
   const buckets = [[], [], []];
-  let ingredientBudget = 0;
+  const budget = { work: 0 };
   await yieldTask();
   for (const ref of refs) {
     const source = index.recipes[ref];
-    const ranked = rankedRecipe(source, canonical, available);
+    const ranked = await rankedRecipeYielded(source, canonical, available, budget);
     if (buckets[ranked.rank].length < cap) buckets[ranked.rank].push(ranked.item);
-    ingredientBudget += source.names.length || 1;
-    if (ingredientBudget >= YIELD_INGREDIENT_CHUNK) {
-      ingredientBudget = 0;
-      await yieldTask();
-    }
   }
   return pageFromBuckets(buckets, refs.length, offset, limit);
 }
