@@ -644,9 +644,8 @@ function spendIngredientBudget(budget) {
 }
 
 async function sanitizeArrayYielded(value, context, limit, mapper, budget) {
-  if (!Array.isArray(value)) return [];
-  let length;
-  try { length = value.length; } catch { context.ok = false; return []; }
+  if (!safeArrayCheck(value, context)) return [];
+  let length = safeArrayLength(value, context);
   if (!Number.isSafeInteger(length) || length < 0 || length > limit) {
     context.ok = false;
     length = Math.min(Number.isSafeInteger(length) && length > 0 ? length : 0, limit);

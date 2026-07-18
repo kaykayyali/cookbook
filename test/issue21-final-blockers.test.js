@@ -395,6 +395,64 @@ test('revoked top-level authority fails closed without retaining stale publicati
   assert.equal(state.recipeAuthorityVersion, version + 1);
 });
 
+test('revoked nested array in yielded projection settles fail-closed without retaining stale discovery', { timeout: 5_000 }, async () => {
+  const stale = Array.from({ length: 201 }, (_, index) => (
+    recipe(`r-${index}`, `Recipe ${index}`, ['basil'])
+  ));
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  const discover = createPantryRecipeDiscovery();
+  publishRecipeAuthority(state, stale);
+  await discover.prepare({ recipes: state.recipes, recipeAuthorityVersion: state.recipeAuthorityVersion });
+  assert.equal(discover({
+    recipes: state.recipes,
+    recipeAuthorityVersion: state.recipeAuthorityVersion,
+    pantry: pantry('basil'),
+    ingredientName: 'basil',
+  }).length, stale.length);
+
+  const { proxy, revoke } = Proxy.revocable(['parsley'], {});
+  revoke();
+  const hostile = stale.map((item, index) => ({
+    ...item,
+    recipeIngredient: index === 0 ? proxy : [],
+  }));
+  const previousVersion = state.recipeAuthorityVersion;
+
+  assert.doesNotThrow(() => publishRecipeAuthority(state, hostile));
+  assert.equal(state.recipes.length, hostile.length, 'the complete shallow authority still publishes');
+  assert.equal(state.recipes[0].recipeIngredient, proxy);
+  assert.equal(state.recipeAuthorityVersion, previousVersion + 1);
+
+  const options = {
+    recipes: state.recipes,
+    recipeAuthorityVersion: state.recipeAuthorityVersion,
+    pantry: pantry('basil'),
+    ingredientName: 'basil',
+    limit: 3,
+  };
+  let page = discover.page(options);
+  assert.equal(page.pending, true);
+  await assert.doesNotReject(page.ready, 'the yielded authority preparation must settle');
+  await assert.doesNotReject(discover.prepare(options), 'repeated preparation must stay settled');
+
+  const record = recipeDiscoveryAuthority(state.recipes);
+  assert.equal(record.ok, false);
+  assert.equal(record.source, null, 'hostile authority evidence is released after fail-closed projection');
+  assert.ok(record.snapshot.length <= hostile.length, 'the retained snapshot stays bounded');
+  assert.ok(record.index.recipes.length <= hostile.length, 'the compact index stays bounded');
+  assert.equal(record.index.byIngredient.has('basil'), false, 'stale discovery is removed');
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    page = discover.page(options);
+    if (!page.pending) break;
+    await assert.doesNotReject(page.ready, `page readiness attempt ${attempt + 1} must settle`);
+  }
+  assert.equal(page.pending, false, 'repeated page calls cannot remain permanently pending');
+  assert.deepEqual(page.results, []);
+  assert.equal(page.total, 0);
+  assert.equal(discover.page(options).pending, false, 'settled empty pages remain synchronous');
+});
+
 test('hostile ingredient length during warmed large equivalence fails closed and publishes the new authority', async () => {
   const corpus = Array.from({ length: 201 }, (_, index) => recipe(`r-${index}`, `Recipe ${index}`, ['basil']));
   const state = { recipes: [], recipeAuthorityVersion: 0 };
