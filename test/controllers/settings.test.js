@@ -13,6 +13,12 @@ if (typeof globalThis.localStorage === 'undefined') {
 let mod;
 try { mod = await import('../../docs/js/controllers/settings.js'); } catch (e) { mod = {}; }
 
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+};
+
 function makeDom() {
   const ids = [
     'settings-auth-zone', 'settings-import-btn', 'settings-export-btn',
@@ -188,6 +194,95 @@ test('Settings import publishes fetched recipe authority once and renders once',
   }
 });
 
+test('Settings reports an import transport failure as an import failure, not malformed JSON', async () => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const importedSchema = {
+    '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Pesto',
+    recipeIngredient: ['basil'], recipeInstructions: ['Blend'],
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([importedSchema]) } }));
+    }
+  };
+  const toasted = deferred();
+  const ctrl = mod.initSettings({
+    state: { recipes: [] }, document,
+    importToServer: async () => { throw new Error('network unavailable'); },
+    toast: toasted.resolve,
+  });
+  try {
+    ctrl._importRecipes({});
+    assert.equal(await toasted.promise, 'Could not import recipes');
+  } finally {
+    globalThis.FileReader = originalFileReader;
+  }
+});
+
+test('Settings reports a post-import fetch failure separately from malformed JSON', async () => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const importedSchema = {
+    '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Pesto',
+    recipeIngredient: ['basil'], recipeInstructions: ['Blend'],
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([importedSchema]) } }));
+    }
+  };
+  const toasted = deferred();
+  const ctrl = mod.initSettings({
+    state: { recipes: [] }, document,
+    importToServer: async () => ({ ok: true, imported: 1 }),
+    fetchRecipes: async () => { throw new Error('network unavailable'); },
+    toast: toasted.resolve,
+  });
+  try {
+    ctrl._importRecipes({});
+    assert.equal(await toasted.promise, 'Recipes imported, but could not refresh');
+  } finally {
+    globalThis.FileReader = originalFileReader;
+  }
+});
+
+test('Settings restores runtime authority when refreshed authority persistence fails', async () => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const importedSchema = {
+    '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Pesto',
+    recipeIngredient: ['basil'], recipeInstructions: ['Blend'],
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([importedSchema]) } }));
+    }
+  };
+  const current = [{ id: 'newer', _id: 'newer', name: 'Newer authority' }];
+  const state = { recipes: [] };
+  const toasted = deferred();
+  const ctrl = mod.initSettings({
+    state, document,
+    importToServer: async () => ({ ok: true, imported: 1 }),
+    fetchRecipes: async () => ({ ok: true, recipes: [{ id: 'stale', _id: 'stale', name: 'Stale' }] }),
+    recipeRuntime: {
+      version: () => 4,
+      setAuthority: async () => { throw new Error('idb_failed'); },
+      current: () => current,
+      refresh: async () => false,
+    },
+    toast: toasted.resolve,
+  });
+  try {
+    ctrl._importRecipes({});
+    assert.equal(await toasted.promise, 'Recipes imported, but could not refresh');
+    assert.deepEqual(state.recipes.map(({ id }) => id), ['newer']);
+  } finally {
+    globalThis.FileReader = originalFileReader;
+  }
+});
+
 test('Settings import synchronizes runtime and durable authority before the next offline optimistic create', async () => {
   const { document } = makeDom();
   const originalFileReader = globalThis.FileReader;
@@ -224,7 +319,7 @@ test('Settings import synchronizes runtime and durable authority before the next
     document,
     importToServer: async () => ({ ok: true, imported: 1 }),
     fetchRecipes: async () => ({ ok: true, recipes: [importedRecipe] }),
-    setRecipeAuthority: runtime.setAuthority,
+    recipeRuntime: runtime,
     toast: (message) => { if (message.startsWith('Imported ')) imported(); },
   });
   try {
@@ -239,6 +334,69 @@ test('Settings import synchronizes runtime and durable authority before the next
     }), true);
     assert.deepEqual(new Set(state.recipes.map(({ id }) => id)), new Set(['imported', 'offline']));
     assert.deepEqual(new Set(runtime.current().map(({ id }) => id)), new Set(['imported', 'offline']));
+  } finally {
+    runtime.destroy();
+    repo.close();
+    globalThis.FileReader = originalFileReader;
+  }
+});
+
+test('production Settings runtime wiring rejects a stale import fetch after a newer acknowledgement', async () => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const importedSchema = {
+    '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Pesto',
+    recipeIngredient: ['basil'], recipeInstructions: ['Blend'],
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([importedSchema]) } }));
+    }
+  };
+  const oldRecipe = { id: 'old', _id: 'old', name: 'Old Soup', recipeIngredient: ['stock'] };
+  const importedRecipe = { id: 'imported', _id: 'imported', name: 'Imported Pesto', recipeIngredient: ['basil'] };
+  const staleFetch = deferred();
+  const fetchStarted = deferred();
+  const importFinished = deferred();
+  const state = {
+    household: { household: { id: 'home' } }, recipes: [oldRecipe], recipeAuthorityVersion: 0,
+  };
+  const repo = await openOfflineDb({ indexedDB, name: `settings-import-stale-${Date.now()}` });
+  const runtimeDocument = {
+    hidden: false, getElementById: () => null, addEventListener() {}, removeEventListener() {},
+  };
+  const runtimeWindow = {
+    navigator: { onLine: true }, addEventListener() {}, removeEventListener() {},
+  };
+  let safeRefreshes = 0;
+  const runtime = await initRecipeRuntime({
+    state, repo, authSub: 'cook', document: runtimeDocument, window: runtimeWindow,
+    BroadcastChannel: null, schedule: () => ({ unref() {} }), clearSchedule() {},
+    send: async () => ({ ok: true, recipes: [importedRecipe] }),
+    refreshAuthority: async () => { safeRefreshes += 1; return { ok: true, recipes: [importedRecipe] }; },
+  });
+  const ctrl = mod.initSettings({
+    state,
+    document,
+    importToServer: async () => ({ ok: true, imported: 1 }),
+    fetchRecipes: async () => { fetchStarted.resolve(); return staleFetch.promise; },
+    recipeRuntime: runtime,
+    toast: (message) => { if (message.startsWith('Imported ')) importFinished.resolve(); },
+  });
+  try {
+    ctrl._importRecipes({});
+    await fetchStarted.promise;
+    assert.equal(await runtime.mutate('recipe.delete', { id: 'old' }), true);
+    assert.equal(await runtime.drain(), true);
+    assert.deepEqual(runtime.current().map(({ id }) => id), ['imported']);
+
+    staleFetch.resolve({ ok: true, recipes: [oldRecipe, importedRecipe] });
+    await importFinished.promise;
+
+    assert.equal(safeRefreshes, 1, 'stale authority triggers a guarded runtime refresh');
+    assert.deepEqual(state.recipes.map(({ id }) => id), ['imported']);
+    assert.deepEqual(runtime.current().map(({ id }) => id), ['imported']);
+    assert.deepEqual((await repo.getRecipes('cook', 'home')).map(({ id }) => id), ['imported']);
   } finally {
     runtime.destroy();
     repo.close();

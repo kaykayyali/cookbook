@@ -34,7 +34,7 @@ const DEFAULT_THEME = 'light';
  * @param {(opts) => void} [deps.initGoogleSignIn]
  * @param {(msg) => void} [deps.toast]
  * @param {() => void} [deps.exportRecipes]
- * @param {(recipes: object[]) => Promise<boolean>|boolean} [deps.setRecipeAuthority]
+ * @param {object|null} [deps.recipeRuntime] - versioned recipe authority owner
  * @param {() => void} [deps.onChange] - re-render after import
  * @param {() => string|null} [deps.getStoredTheme] - read current theme
  * @param {object} [deps.theme] - { getStored, set, apply } — defaults to singleton
@@ -52,7 +52,7 @@ export function initSettings({
   exportRecipes: exportRecipesDep = defaultExportRecipes,
   importToServer: importToServerDep = importToServer,
   fetchRecipes: fetchRecipesDep = fetchRecipes,
-  setRecipeAuthority = null,
+  recipeRuntime = null,
   onChange = null,
   getStoredTheme = defaultTheme.getStored,
   theme: themeDep = defaultTheme,
@@ -93,25 +93,56 @@ export function initSettings({
   async function importRecipes(file) {
     const reader = new FileReader();
     reader.onload = async (e) => {
+      let imported;
       try {
-        const imported = parseImport(JSON.parse(e.target.result));
-        if (!imported.length) { toastDep('No valid recipes found in file'); return; }
-        // Send canonical JSON-LD to server
-        const canonicals = imported.map(toSchema);
-        const res = await importToServerDep(canonicals);
-        if (!res.ok) { toastDep('Could not import recipes'); return; }
-        // Reload recipes from server to get server-assigned ids and publish the
-        // one authoritative replacement before the existing render callback.
-        const fres = await fetchRecipesDep();
-        if (fres.ok) {
-          if (setRecipeAuthority) await setRecipeAuthority(fres.recipes);
-          else publishRecipeAuthority(state, fres.recipes);
+        imported = parseImport(JSON.parse(e.target.result));
+      } catch {
+        toastDep('Could not read file — expected JSON-LD');
+        return;
+      }
+      if (!imported.length) { toastDep('No valid recipes found in file'); return; }
+
+      let res;
+      try { res = await importToServerDep(imported.map(toSchema)); }
+      catch { toastDep('Could not import recipes'); return; }
+      if (!res?.ok) { toastDep('Could not import recipes'); return; }
+
+      // Capture the runtime generation before starting the GET. A mutation can
+      // be acknowledged while it is in flight, making that response stale even
+      // though no pending row remains to reapply over it.
+      const mutationVersion = recipeRuntime?.version?.();
+      let fres;
+      try { fres = await fetchRecipesDep(); }
+      catch { toastDep('Recipes imported, but could not refresh'); return; }
+      if (!fres?.ok || !Array.isArray(fres.recipes)) {
+        toastDep('Recipes imported, but could not refresh');
+        return;
+      }
+
+      if (recipeRuntime) {
+        const accepted = await recipeRuntime.setAuthority(
+          fres.recipes,
+          { mutationVersion },
+        ).catch(() => false);
+        if (!accepted) {
+          // fetchRecipes does not publish today, but restoring from the runtime
+          // keeps this handoff safe if a fetch helper ever touches shared state.
+          publishRecipeAuthority(state, recipeRuntime.current());
+          const refreshed = await recipeRuntime.refresh?.().catch(() => false);
+          if (!refreshed) {
+            if (onChange) onChange();
+            toastDep('Recipes imported, but could not refresh');
+            return;
+          }
         }
-        if (onChange) onChange();
-        toastDep(`Imported ${pluralize(res.imported || imported.length, 'recipe')}`);
-      } catch { toastDep('Could not read file — expected JSON-LD'); }
+      } else publishRecipeAuthority(state, fres.recipes);
+
+      if (onChange) onChange();
+      toastDep(`Imported ${pluralize(res.imported || imported.length, 'recipe')}`);
     };
-    reader.readAsText(file);
+    reader.onerror = () => toastDep('Could not read file');
+    try { reader.readAsText(file); }
+    catch { toastDep('Could not read file'); }
   }
 
   function renderThemePicker() {

@@ -93,7 +93,7 @@ export function wireAuthenticatedUi({ state, runtime, recipeRuntime = null, cook
   });
   const settings = initSettings({
     state, exportRecipes: () => exportRecipesToFile(state),
-    setRecipeAuthority: recipeRuntime?.setAuthority, onSignedIn, onSignedOut,
+    recipeRuntime, onSignedIn, onSignedOut,
   });
   panels.register('week', week.render);
   panels.register('recipes', recipes.render);
