@@ -12,7 +12,7 @@ const MAX_IMAGE_TEXT = 2_048;
 const MAX_IMAGE_NODES = 64;
 const MAX_IMAGE_DEPTH = 8;
 const SYNC_RECIPE_LIMIT = 200;
-const YIELD_INGREDIENT_CHUNK = 200;
+const YIELD_INGREDIENT_CHUNK = 100;
 const MISSING = Symbol('missing');
 const cache = new WeakMap();
 
