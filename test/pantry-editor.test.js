@@ -182,6 +182,37 @@ test('Pantry editor owns one body lock and repeated open or close cannot corrupt
   assert.equal(style.getPropertyPriority('overflow'), '');
 });
 
+test('Pantry editor preserves an external overflow owner that takes over during its lock', () => {
+  const dom = editorDom();
+  globalThis.document = dom.window.document;
+  globalThis.window = dom.window;
+  globalThis.localStorage = dom.window.localStorage;
+  const style = dom.window.document.body.style;
+  style.setProperty('overflow', 'scroll', 'important');
+  const target = oliveOil();
+  const controller = initPantry({
+    state: { pantry: [target], recipes: [] }, document: dom.window.document, mutate: async () => true,
+  });
+  controller.render();
+
+  assert.equal(controller.openEditor(target.id), true);
+  assert.equal(style.getPropertyValue('overflow'), 'hidden');
+  style.setProperty('overflow', 'clip', 'important');
+
+  assert.equal(controller.closeEditor(), true);
+  assert.equal(style.getPropertyValue('overflow'), 'clip', 'close preserves the newer external overflow value');
+  assert.equal(style.getPropertyPriority('overflow'), 'important', 'close preserves the newer external priority');
+  assert.equal(controller.closeEditor(), false, 'repeated close remains a no-op after external takeover');
+  assert.equal(style.getPropertyValue('overflow'), 'clip');
+  assert.equal(style.getPropertyPriority('overflow'), 'important');
+
+  assert.equal(controller.openEditor(target.id), true, 'ownership is cleared so a later editor can acquire a new lock');
+  assert.equal(style.getPropertyValue('overflow'), 'hidden');
+  assert.equal(controller.closeEditor(), true);
+  assert.equal(style.getPropertyValue('overflow'), 'clip');
+  assert.equal(style.getPropertyPriority('overflow'), 'important');
+});
+
 test('entire Pantry row opens the edit modal and save updates exactly one stable record', async () => {
   const dom = editorDom();
   globalThis.document = dom.window.document;

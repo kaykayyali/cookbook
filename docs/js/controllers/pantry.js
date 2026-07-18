@@ -86,6 +86,7 @@ export function initPantry({
   let editorActive = false;
   let editorBodyOverflow = '';
   let editorBodyOverflowPriority = '';
+  let editorBodyLockPriority = '';
   let editorBodyLockOwned = false;
 
   const byId = (id) => state.pantry.find((entry) => entry.id === id);
@@ -103,18 +104,27 @@ export function initPantry({
     editorBodyOverflowPriority = style.getPropertyPriority?.('overflow') || '';
     if (style.setProperty) style.setProperty('overflow', 'hidden');
     else style.overflow = 'hidden';
+    editorBodyLockPriority = style.getPropertyPriority?.('overflow') || '';
     editorBodyLockOwned = true;
   };
   const releaseEditorBodyLock = () => {
     if (!editorBodyLockOwned) return;
     const style = document.body?.style;
-    if (style?.setProperty) {
-      if (editorBodyOverflow) style.setProperty('overflow', editorBodyOverflow, editorBodyOverflowPriority);
-      else style.removeProperty('overflow');
-    } else if (style) style.overflow = editorBodyOverflow;
-    editorBodyOverflow = '';
-    editorBodyOverflowPriority = '';
-    editorBodyLockOwned = false;
+    try {
+      const overflow = style?.getPropertyValue?.('overflow') ?? style?.overflow ?? '';
+      const priority = style?.getPropertyPriority?.('overflow') || '';
+      if (overflow === 'hidden' && priority === editorBodyLockPriority) {
+        if (style?.setProperty) {
+          if (editorBodyOverflow) style.setProperty('overflow', editorBodyOverflow, editorBodyOverflowPriority);
+          else style.removeProperty('overflow');
+        } else if (style) style.overflow = editorBodyOverflow;
+      }
+    } finally {
+      editorBodyOverflow = '';
+      editorBodyOverflowPriority = '';
+      editorBodyLockPriority = '';
+      editorBodyLockOwned = false;
+    }
   };
   const setText = (id, value) => { const node = get(id); if (node) node.textContent = value || ''; };
   const setError = (message) => {
