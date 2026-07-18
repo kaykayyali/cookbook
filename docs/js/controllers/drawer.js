@@ -40,6 +40,7 @@ export function initDrawer({
   update = updateRecipe,
   mutateRecipe = null,
   feedback = defaultFeedback,
+  scheduleFocus = globalThis.setTimeout,
 }) {
   let customSave = null;
   function openSheet() {
@@ -48,7 +49,9 @@ export function initDrawer({
     if (drawer) drawer.classList.add('open');
     if (overlay) overlay.classList.add('open');
     document.body.style.overflow = 'hidden';
-    setTimeout(() => document.getElementById('f-name')?.focus(), 80);
+    scheduleFocus?.(() => {
+      if (drawer?.classList.contains('open')) document.getElementById('f-name')?.focus();
+    }, 80);
   }
 
   function closeSheet() {

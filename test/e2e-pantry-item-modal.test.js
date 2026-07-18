@@ -348,27 +348,69 @@ test('selected Pantry ingredient discovers canonical recipe uses and opens detai
   }
 });
 
-test('online-only recipe fallback invalidates warmed Pantry discovery after a rename', { timeout: 60_000 }, async () => {
-  const recipe = { _id: 'fallback-pesto', name: 'Fallback Pesto', recipeIngredient: ['basil'], recipeInstructions: ['Mix.'] };
+test('online-only recipe fallback refreshes every field in an already-open detail after an edit', { timeout: 60_000 }, async () => {
+  const recipe = {
+    _id: 'fallback-pesto', name: 'Basil Starter', image: 'javascript:alert(1)',
+    recipeCategory: 'Starter', recipeCuisine: 'Italian', recipeYield: '2 servings',
+    prepTime: 'PT5M', cookTime: 'PT10M', totalTime: 'PT15M', cookingMethod: 'Stovetop',
+    recipeIngredient: ['basil'], recipeInstructions: ['Mix.'], nutrition: { calories: '100 kcal' },
+  };
   const { context, page, browserErrors } = await createPantryPage(
     { width: 1280, height: 900 },
     { recipes: [recipe], disableIndexedDb: true },
   );
   try {
     await page.locator('[data-pantry-id="pantry-basil"]').click();
-    assert.match(await page.locator('#pantry-recipe-discovery').innerText(), /Fallback Pesto/);
+    const discovery = page.locator('#pantry-recipe-discovery');
+    assert.match(await discovery.innerText(), /Basil Starter/);
+    assert.equal(await discovery.locator('img').count(), 0, 'unsafe authority images never become browser image sources');
+    assert.equal(await discovery.locator('.pantry-recipe-image-fallback').count(), 1);
     await page.locator('#pantry-item-close').click();
     await page.locator('button[data-panel="recipes"]').click();
-    await page.locator('.recipe-card[data-id="fallback-pesto"] [data-action="edit"]').click();
-    await page.locator('#f-name').fill('Renamed Fallback Pesto');
+    const card = page.locator('.recipe-card[data-id="fallback-pesto"]');
+    await card.click();
+    const detail = page.locator('#detail-modal.open');
+    await detail.waitFor();
+    assert.equal(await page.locator('#dm-title').textContent(), 'Basil Starter');
+
+    await card.locator('[data-action="edit"]').evaluate((button) => button.click());
+    await page.locator('#recipe-drawer.open').waitFor();
+    await page.locator('#f-name').fill('Parsley Starter');
+    await page.locator('#f-category').selectOption('Side Dish');
+    await page.locator('#f-cuisine').fill('French');
+    await page.locator('#f-yield').fill('6 servings');
+    await page.locator('#f-method').selectOption('Roasting');
+    await page.locator('#f-prep').fill('PT20M');
+    await page.locator('#f-cook').fill('PT25M');
+    await page.locator('#f-total').fill('PT45M');
+    await page.locator('#ing-editor input').first().fill('2 cups fresh basil');
+    await page.locator('#steps-list textarea').first().fill('Roast until crisp.');
+    await page.locator('#f-calories').fill('240 kcal');
+    await page.locator('#f-protein').fill('8 g');
     const responsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/community/fallback-pesto'
       && response.request().method() === 'PUT' && response.ok());
     await page.locator('#save-recipe-btn').click();
     await responsePromise;
 
+    assert.equal(await detail.count(), 1, 'fallback save keeps the existing detail modal open');
+    assert.equal(await page.locator('#dm-title').textContent(), 'Parsley Starter');
+    assert.equal(await page.locator('#dm-eyebrow').textContent(), 'Side Dish · French');
+    assert.match(await page.locator('#dm-meta').innerText(), /Prep\s*20m[\s\S]*Cook\s*25m[\s\S]*Total\s*45m[\s\S]*Serves\s*6[\s\S]*Method\s*Roasting/i);
+    assert.match(await page.locator('#dm-ingredients').innerText(), /2 cups fresh basil/);
+    assert.match(await page.locator('#dm-steps').innerText(), /Roast until crisp/);
+    assert.match(await page.locator('#dm-nutrition-grid').innerText(), /240 kcal[\s\S]*8 g/);
+    const focusState = await page.evaluate(() => ({
+      activeId: document.activeElement?.id || '',
+      drawerOpen: document.getElementById('recipe-drawer')?.classList.contains('open'),
+      pantryOpen: !document.getElementById('pantry-item-modal')?.hidden,
+      urlOpen: document.getElementById('url-overlay')?.classList.contains('open'),
+    }));
+    assert.equal(focusState.activeId, 'detail-close-btn', `focus falls back inside the still-open detail: ${JSON.stringify(focusState)}`);
+    await page.locator('#detail-close-btn').click();
+
     await page.locator('button[data-panel="pantry"]').click();
     await page.locator('[data-pantry-id="pantry-basil"]').click();
-    assert.match(await page.locator('#pantry-recipe-discovery').innerText(), /Renamed Fallback Pesto/);
+    assert.match(await page.locator('#pantry-recipe-discovery').innerText(), /Parsley Starter[\s\S]*2 cups fresh basil/);
     assert.deepEqual(browserErrors, []);
   } finally {
     await context.close();

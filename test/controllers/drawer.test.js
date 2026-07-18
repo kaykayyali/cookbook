@@ -253,6 +253,23 @@ test('save returns an object describing the result', async () => {
   assert.equal(result.ok, false, 'save without required fields returns ok:false');
 });
 
+test('closing before delayed initial focus does not steal focus back into the hidden drawer', () => {
+  const { document, elements } = makeDom();
+  const scheduled = [];
+  let focused = 0;
+  elements['f-name'].focus = () => { focused += 1; };
+  const ctrl = mod.initDrawer({
+    state: { recipes: [SAMPLE], editingId: null },
+    document,
+    scheduleFocus: (callback) => { scheduled.push(callback); },
+  });
+  ctrl.open('r1');
+  ctrl.close();
+  assert.equal(scheduled.length, 1);
+  scheduled[0]();
+  assert.equal(focused, 0, 'a closed drawer cannot reclaim focus from the resumed detail');
+});
+
 test('close removes .open class from drawer + overlay and clears editingId', () => {
   if (!mod.initDrawer) return;
   const { document, elements } = makeDom();

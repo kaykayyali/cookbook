@@ -129,10 +129,10 @@ export function initDetail({
   let suspendedDetailState = null;
   const pendingAudits = new Set();
 
-  function openRecipe(r, ctx = { source: 'local' }) {
+  function renderRecipePresentation() {
+    const r = current?.r;
+    const ctx = current?.ctx || { source: 'local' };
     if (!r) return;
-    current = { r, ctx };
-    state.detailId = ctx.source === 'local' ? r._id : null;
 
     const eyebrow = document.getElementById('dm-eyebrow');
     if (eyebrow) {
@@ -152,6 +152,8 @@ export function initDetail({
         badge.innerHTML = householdIdentityHTML(ctx.author);
         badge.style.display = '';
       } else {
+        badge.replaceChildren?.();
+        if (!badge.replaceChildren) badge.innerHTML = '';
         badge.style.display = 'none';
       }
     }
@@ -160,18 +162,26 @@ export function initDetail({
     setDisplay('dm-edit-btn', ctx.source === 'local' && ctx.isAuthor !== false ? '' : 'none');
     setDisplay('dm-schema-btn', ctx.source === 'local' ? '' : 'none');
 
-
     renderIngredients();
     const stepsEl = document.getElementById('dm-steps');
     if (stepsEl) stepsEl.innerHTML = stepsHTML(r.recipeInstructions);
     const nut = nutritionHTML(r.nutrition);
     const nutWrap = document.getElementById('dm-nutrition');
+    const grid = document.getElementById('dm-nutrition-grid');
     if (nut) {
-      const grid = document.getElementById('dm-nutrition-grid');
       if (grid) grid.innerHTML = nut;
       if (nutWrap) nutWrap.style.display = '';
-    } else if (nutWrap) nutWrap.style.display = 'none';
+    } else {
+      if (grid) grid.innerHTML = '';
+      if (nutWrap) nutWrap.style.display = 'none';
+    }
+  }
 
+  function openRecipe(r, ctx = { source: 'local' }) {
+    if (!r) return;
+    current = { r, ctx };
+    state.detailId = ctx.source === 'local' ? r._id : null;
+    renderRecipePresentation();
     renderHistory();
     openSheet();
   }
@@ -461,9 +471,46 @@ export function initDetail({
     if (note) {
       const html = pantryNoteHTML(ingredients, state.pantry);
       note.style.display = html ? '' : 'none';
-      if (html) note.innerHTML = html;
+      note.innerHTML = html || '';
     }
     renderAddButtonState();
+  }
+
+  function detailFocusSnapshot(element = document.activeElement) {
+    const modal = document.getElementById('detail-modal');
+    if (!element || !modal?.contains?.(element)) return null;
+    const action = element.closest?.('[data-action]') || element;
+    return {
+      element,
+      id: element.id || '',
+      action: action?.dataset?.action || '',
+      ingredientId: action?.dataset?.ingredientId || '',
+    };
+  }
+
+  function resolveDetailFocus(snapshot) {
+    if (!snapshot) return null;
+    const modal = document.getElementById('detail-modal');
+    if (snapshot.element?.isConnected && modal?.contains?.(snapshot.element)) return snapshot.element;
+    if (snapshot.id) {
+      const byId = document.getElementById(snapshot.id);
+      if (byId && modal?.contains?.(byId)) return byId;
+    }
+    if (snapshot.action) {
+      return [...(modal?.querySelectorAll?.('[data-action]') || [])].find((candidate) =>
+        candidate.dataset.action === snapshot.action
+        && (!snapshot.ingredientId || candidate.dataset.ingredientId === snapshot.ingredientId)) || null;
+    }
+    return null;
+  }
+
+  function refreshCorrectionAuthority(recipe, record) {
+    correction.record = record;
+    const raw = document.getElementById('ingredient-correction-raw');
+    if (raw) raw.textContent = record.raw;
+    renderProvenance(recipe._provenance);
+    const status = document.getElementById('ingredient-correction-review-status');
+    if (status) status.textContent = correctionStatusText(record);
   }
 
   function reconcileRecipes(meta = {}) {
@@ -471,14 +518,49 @@ export function initDetail({
     const id = String(current.r._id || current.r.id || '');
     const latest = (state.recipes || []).find((recipe) => String(recipe._id || recipe.id || '') === id);
     if (!latest) { closeSheet(); return true; }
-    current.r = latest;
+
+    const scroller = document.querySelector?.('.detail-body');
+    const scrollTop = scroller?.scrollTop;
+    const focusSnapshot = detailFocusSnapshot();
+    const correctionFocusSnapshot = correction ? detailFocusSnapshot(correctionOpener) : null;
+    let correctionClosed = false;
+
+    const source = current.ctx?.source || 'local';
+    const author = latest._author || null;
+    current = {
+      r: latest,
+      ctx: {
+        ...current.ctx,
+        source,
+        author,
+        isAuthor: source !== 'local' ? current.ctx?.isAuthor
+          : (!author || !!(state.auth?.sub && author.sub === state.auth.sub)),
+      },
+    };
     if (correction && (meta.discarded || meta.refreshed || meta.authoritative)) {
       const latestRecord = effectiveIngredientRecords(latest).find((record) => record.id === correction.ingredientId);
       const changed = !latestRecord || JSON.stringify(latestRecord) !== JSON.stringify(correction.record);
-      if (changed && !correctionPending) closeCorrection({ restoreFocus: false });
-      else if (latestRecord) correction.record = latestRecord;
+      if (changed && !correctionPending) {
+        closeCorrection({ restoreFocus: false });
+        correctionClosed = true;
+      } else if (latestRecord) refreshCorrectionAuthority(latest, latestRecord);
     }
-    renderIngredients();
+
+    renderRecipePresentation();
+    if (scroller && Number.isFinite(scrollTop)) scroller.scrollTop = scrollTop;
+
+    const correctionOpen = correctionElement('modal') && !correctionElement('modal').hidden;
+    if (!correctionOpen) {
+      const modal = document.getElementById('detail-modal');
+      const anotherModalOpen = document.getElementById('recipe-drawer')?.classList.contains('open')
+        || document.getElementById('url-overlay')?.classList.contains('open')
+        || (document.getElementById('pantry-item-modal') && !document.getElementById('pantry-item-modal').hidden);
+      const activeInside = modal?.contains?.(document.activeElement);
+      if (!anotherModalOpen && (focusSnapshot || correctionClosed || !activeInside)) {
+        (resolveDetailFocus(focusSnapshot || (correctionClosed ? correctionFocusSnapshot : null))
+          || document.getElementById('detail-close-btn'))?.focus?.();
+      }
+    }
     return true;
   }
 
