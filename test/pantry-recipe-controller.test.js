@@ -97,6 +97,23 @@ test('Pantry editor rerenders reuse recipe index and authority refresh preserves
   assert.match(dom.window.document.getElementById('pantry-recipe-discovery').textContent, /Remote Shared Pesto/);
 });
 
+test('async discovery refresh restores focus to the previously focused recipe row', async () => {
+  const base = { _id: 'shared', name: 'A Shared Pesto', recipeIngredient: ['basil'] };
+  const { dom, state, controller } = setup(base);
+  const document = dom.window.document;
+  document.querySelector('[data-pantry-recipe-id="shared"]').focus();
+  state.recipes = [base, ...Array.from({ length: 249 }, (_, index) => ({
+    _id: `recipe-${index}`, name: `Recipe ${index}`, recipeIngredient: ['basil'],
+  }))];
+  state.recipeAuthorityVersion = 1;
+  controller.render();
+  assert.equal(document.activeElement, document.body, 'pending placeholder temporarily removes the row');
+  for (let index = 0; index < 100 && document.activeElement?.dataset?.pantryRecipeId !== 'shared'; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(document.activeElement?.dataset?.pantryRecipeId, 'shared');
+});
+
 test('resuming after recipe detail exposes remote Pantry conflicts before save', () => {
   const base = { _id: 'shared', name: 'Shared Pesto', recipeIngredient: ['basil'] };
   const runtime = setup(base);

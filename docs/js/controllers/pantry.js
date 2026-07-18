@@ -80,6 +80,7 @@ export function initPantry({
   let recipeVisibleLimit = 3;
   let discoveryHasMore = false;
   let discoveryRequest = 0;
+  let discoveryReturnFocusId = '';
   let editorSuspended = false;
   let suspendedRecipeId = '';
   let editorBodyOverflow = '';
@@ -114,7 +115,7 @@ export function initPantry({
     }
     const body = section.closest?.('.pantry-item-body');
     const scrollTop = body?.scrollTop || 0;
-    const focusedRecipeId = document.activeElement?.dataset?.pantryRecipeId || '';
+    const focusedRecipeId = document.activeElement?.dataset?.pantryRecipeId || discoveryReturnFocusId;
     const ingredientLabel = record.displayName || record.name;
     setText('pantry-recipe-title', `Recipes using ${ingredientLabel}`);
     const request = ++discoveryRequest;
@@ -135,6 +136,7 @@ export function initPantry({
       page = discoverRecipes.page({ ...discoveryOptions, offset: 0, limit: recipeVisibleLimit });
     }
     if (page.pending) {
+      if (focusedRecipeId) discoveryReturnFocusId = focusedRecipeId;
       resultsNode.innerHTML = '<div class="pantry-recipe-empty" role="status"><strong>Finding recipes…</strong><p>You can keep editing while recipe discovery refreshes.</p></div>';
       section.hidden = false;
       toggle.hidden = true;
@@ -177,7 +179,8 @@ export function initPantry({
     if (focusToggle) toggle.focus?.();
     else if (focusedRecipeId) {
       const escaped = globalThis.CSS?.escape?.(focusedRecipeId) || focusedRecipeId;
-      section.querySelector?.(`[data-pantry-recipe-id="${escaped}"]`)?.focus?.();
+      const target = section.querySelector?.(`[data-pantry-recipe-id="${escaped}"]`);
+      if (target) { target.focus?.(); discoveryReturnFocusId = ''; }
     }
   }
 
@@ -369,6 +372,7 @@ export function initPantry({
     recipeVisibleLimit = 3;
     discoveryHasMore = false;
     discoveryRequest += 1;
+    discoveryReturnFocusId = '';
     editorSuspended = false;
     suspendedRecipeId = '';
     editorBodyOverflow = document.body?.style?.overflow || '';
@@ -427,6 +431,7 @@ export function initPantry({
     recipeVisibleLimit = 3;
     discoveryHasMore = false;
     discoveryRequest += 1;
+    discoveryReturnFocusId = '';
     editorSuspended = false;
     suspendedRecipeId = '';
     editorBodyOverflow = '';

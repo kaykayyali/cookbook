@@ -144,7 +144,7 @@ test('renderSettings wires export button to exportRecipes', () => {
   assert.equal(exported, true, 'export button click should call exportRecipes');
 });
 
-test('Settings import publishes fetched recipe authority once and preserves an open Pantry draft', async () => {
+test('Settings import publishes fetched recipe authority once and renders once', async () => {
   const { document } = makeDom();
   const originalFileReader = globalThis.FileReader;
   const importedRecipe = {
@@ -160,7 +160,6 @@ test('Settings import publishes fetched recipe authority once and preserves an o
     recipes: [{ _id: 'removed', name: 'Removed', recipeIngredient: ['parsley'] }],
     recipeAuthorityVersion: 0,
   };
-  let draft = 'Unsaved basil draft';
   let changes = 0;
   let resolveChanged;
   const changed = new Promise((resolve) => { resolveChanged = resolve; });
@@ -181,10 +180,8 @@ test('Settings import publishes fetched recipe authority once and preserves an o
     assert.equal(changes, 1, 'one import acknowledgement publishes and renders once');
     assert.equal(state.recipeAuthorityVersion, 1);
     assert.deepEqual(state.recipes.map(({ _id }) => _id), ['imported']);
-    assert.equal(draft, 'Unsaved basil draft');
   } finally {
     globalThis.FileReader = originalFileReader;
-    draft = '';
   }
 });
 

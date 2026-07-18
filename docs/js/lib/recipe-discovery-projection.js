@@ -11,7 +11,8 @@ const MAX_TEXT = 4_096;
 const MAX_IMAGE_TEXT = 2_048;
 const MAX_IMAGE_NODES = 64;
 const MAX_IMAGE_DEPTH = 8;
-const YIELD_RECIPE_CHUNK = 200;
+const SYNC_RECIPE_LIMIT = 200;
+const YIELD_INGREDIENT_CHUNK = 400;
 const MISSING = Symbol('missing');
 const cache = new WeakMap();
 
@@ -151,15 +152,6 @@ function effectiveRow(record) {
   return row;
 }
 
-function compactHash(value) {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(36);
-}
-
 function sanitizeRecipe(value, context, totals) {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return null;
   const id = boundedText(ownValue(value, '_id', context), '', context)
@@ -189,7 +181,7 @@ function sanitizeRecipe(value, context, totals) {
   if (rawOnly) {
     // Raw evidence plus the parser version is a complete effective projection for
     // unstructured, unreviewed ingredients and avoids eagerly parsing 100k lines.
-    signatureIngredients = ['raw-v', NORMALIZATION_VERSION, ...recipeIngredient];
+    signatureIngredients = ['raw-v', NORMALIZATION_VERSION, ...[...new Set(recipeIngredient)].sort(compareText)];
   } else {
     try {
       effective = effectiveIngredientRecords(sanitized).map(effectiveRow);
@@ -202,8 +194,23 @@ function sanitizeRecipe(value, context, totals) {
   }
   const signatureRow = { id, name, image, ingredients: signatureIngredients };
   const candidateKey = JSON.stringify(signatureRow);
-  const identity = id ? `id:${id}` : `derived:${compactHash(`${name}\u0000${candidateKey}`)}`;
+  // Missing-ID data is uncommon and bounded. Keep its exact deterministic key;
+  // truncating it to a non-cryptographic hash can silently merge real recipes.
+  const identity = id ? `id:${id}` : `derived:${name}\u0000${candidateKey}`;
   return { id, name, image, identity, candidateKey, recipe: sanitized, effective, rawOnly, signatureRow };
+}
+
+function finishAuthorityRecord(record, context, projected) {
+  const winners = new Map();
+  for (const item of projected) {
+    const current = winners.get(item.identity);
+    if (!current || compareText(item.candidateKey, current.candidateKey) < 0) winners.set(item.identity, item);
+  }
+  record.snapshot = [...winners.values()].sort((left, right) => compareText(left.identity, right.identity));
+  try { record.signature = JSON.stringify(record.snapshot.map((item) => item.signatureRow)); } catch { context.ok = false; }
+  record.ok = context.ok;
+  record.source = null;
+  return record;
 }
 
 function makeAuthorityRecord(recipes) {
@@ -218,22 +225,16 @@ function makeAuthorityRecord(recipes) {
     const item = sanitizeRecipe(value, context, totals);
     if (item) projected.push(item);
   }
-  const winners = new Map();
-  for (const item of projected) {
-    const current = winners.get(item.identity);
-    if (!current || compareText(item.candidateKey, current.candidateKey) < 0) winners.set(item.identity, item);
-  }
-  const snapshot = [...winners.values()].sort((left, right) => compareText(left.identity, right.identity));
-  let signature = '';
-  try { signature = JSON.stringify(snapshot.map((item) => item.signatureRow)); } catch { context.ok = false; }
-  return { ok: context.ok, signature, snapshot, index: null, promise: null };
+  return finishAuthorityRecord({ ok: false, signature: '', snapshot: null, source: recipes, index: null, promise: null, authorityPromise: null }, context, projected);
 }
 
 export function recipeDiscoveryAuthority(recipes) {
   if (!Array.isArray(recipes)) throw new TypeError('Recipe authority must be an array.');
   let record = cache.get(recipes);
   if (!record) {
-    record = makeAuthorityRecord(recipes);
+    record = recipes.length <= SYNC_RECIPE_LIMIT
+      ? makeAuthorityRecord(recipes)
+      : { ok: false, signature: '', snapshot: null, source: recipes, index: null, promise: null, authorityPromise: null };
     cache.set(recipes, record);
   }
   return record;
@@ -298,6 +299,10 @@ function finishIndex(build) {
 
 export function buildRecipeDiscoveryIndexSync(record) {
   if (record.index) return record.index;
+  if (!record.snapshot) {
+    const materialized = makeAuthorityRecord(record.source || []);
+    Object.assign(record, materialized);
+  }
   const build = [];
   const caches = { parsed: new Map(), identities: new Map() };
   for (const item of record.snapshot) addCompactRecipe(build, item, caches);
@@ -305,19 +310,62 @@ export function buildRecipeDiscoveryIndexSync(record) {
   return record.index;
 }
 
-const yieldTask = () => new Promise((resolve) => setTimeout(resolve, 0));
+const yieldTask = () => {
+  if (typeof globalThis.scheduler?.yield === 'function') return globalThis.scheduler.yield();
+  if (typeof globalThis.setImmediate === 'function') return new Promise((resolve) => globalThis.setImmediate(resolve));
+  if (typeof globalThis.MessageChannel === 'function') return new Promise((resolve) => {
+    const channel = new globalThis.MessageChannel();
+    channel.port1.onmessage = () => { channel.port1.close(); channel.port2.close(); resolve(); };
+    channel.port2.postMessage(null);
+  });
+  return new Promise((resolve) => setTimeout(resolve, 0));
+};
+
+function prepareAuthoritySnapshot(record) {
+  if (record.snapshot) return Promise.resolve(record.snapshot);
+  if (record.authorityPromise) return record.authorityPromise;
+  record.authorityPromise = (async () => {
+    await yieldTask();
+    const recipes = record.source || [];
+    const context = { ok: true };
+    const totals = { ingredients: 0 };
+    const projected = [];
+    let lastYieldIngredients = 0;
+    const length = Math.min(recipes.length, MAX_RECIPES);
+    if (recipes.length > MAX_RECIPES) context.ok = false;
+    for (let index = 0; index < length; index += 1) {
+      const value = ownValue(recipes, String(index), context);
+      if (value !== MISSING) {
+        const item = sanitizeRecipe(value, context, totals);
+        if (item) projected.push(item);
+      }
+      if (totals.ingredients - lastYieldIngredients >= YIELD_INGREDIENT_CHUNK) {
+        lastYieldIngredients = totals.ingredients;
+        await yieldTask();
+      }
+    }
+    finishAuthorityRecord(record, context, projected);
+    return record.snapshot;
+  })().finally(() => { record.authorityPromise = null; });
+  return record.authorityPromise;
+}
 
 export function prepareRecipeDiscoveryIndex(record) {
   if (record.index) return Promise.resolve(record.index);
   if (record.promise) return record.promise;
   record.promise = (async () => {
+    await prepareAuthoritySnapshot(record);
     const build = [];
     const caches = { parsed: new Map(), identities: new Map() };
-    for (let start = 0; start < record.snapshot.length; start += YIELD_RECIPE_CHUNK) {
+    let ingredientBudget = 0;
+    for (let index = 0; index < record.snapshot.length; index += 1) {
       if (record.index) return record.index;
-      const end = Math.min(record.snapshot.length, start + YIELD_RECIPE_CHUNK);
-      for (let index = start; index < end; index += 1) addCompactRecipe(build, record.snapshot[index], caches);
-      await yieldTask();
+      addCompactRecipe(build, record.snapshot[index], caches);
+      ingredientBudget += build[build.length - 1]?.names.length || 1;
+      if (ingredientBudget >= YIELD_INGREDIENT_CHUNK) {
+        ingredientBudget = 0;
+        await yieldTask();
+      }
     }
     if (!record.index) record.index = finishIndex(build);
     return record.index;
@@ -325,14 +373,7 @@ export function prepareRecipeDiscoveryIndex(record) {
   return record.promise;
 }
 
-export function queryRecipeDiscoveryIndex(index, pantryNames, ingredientName, { offset = 0, limit = Infinity } = {}) {
-  const canonical = canonicalIngredientIdentity(ingredientName);
-  const refs = index.byIngredient.get(canonical) || [];
-  const available = new Set((Array.isArray(pantryNames) ? pantryNames : [])
-    .map((item) => canonicalIngredientIdentity(item?.name || item)).filter(Boolean));
-  const buckets = [[], [], []];
-  for (const ref of refs) {
-    const source = index.recipes[ref];
+function rankedRecipe(source, canonical, available) {
     let have = 0;
     for (const name of source.names) if (available.has(name)) have += 1;
     const total = source.names.length;
@@ -340,9 +381,10 @@ export function queryRecipeDiscoveryIndex(index, pantryNames, ingredientName, { 
     const label = total && have === total ? 'All' : ratio >= 0.5 ? 'Some' : 'Few';
     const rank = label === 'All' ? 0 : label === 'Some' ? 1 : 2;
     const matchIndex = source.names.indexOf(canonical);
-    buckets[rank].push({ source, matchingLine: matchIndex >= 0 ? source.raws[matchIndex] : '', availability: { label, have, total, ratio } });
-  }
-  const total = refs.length;
+  return { rank, item: { source, matchingLine: matchIndex >= 0 ? source.raws[matchIndex] : '', availability: { label, have, total, ratio } } };
+}
+
+function pageFromBuckets(buckets, total, offset, limit) {
   const start = Math.max(0, Number(offset) || 0);
   const count = Number.isFinite(limit) ? Math.max(0, Number(limit) || 0) : total;
   const selected = [];
@@ -365,4 +407,42 @@ export function queryRecipeDiscoveryIndex(index, pantryNames, ingredientName, { 
     canOpen: source.canOpen,
   }));
   return { results, total, hasMore: start + results.length < total, pending: false };
+}
+
+function queryInputs(index, pantryNames, ingredientName, offset, limit) {
+  const canonical = canonicalIngredientIdentity(ingredientName);
+  const refs = index.byIngredient.get(canonical) || [];
+  const available = new Set((Array.isArray(pantryNames) ? pantryNames : [])
+    .map((item) => canonicalIngredientIdentity(item?.name || item)).filter(Boolean));
+  const start = Math.max(0, Number(offset) || 0);
+  const count = Number.isFinite(limit) ? Math.max(0, Number(limit) || 0) : refs.length;
+  return { canonical, refs, available, cap: Math.min(refs.length, start + count) };
+}
+
+export function queryRecipeDiscoveryIndex(index, pantryNames, ingredientName, { offset = 0, limit = Infinity } = {}) {
+  const { canonical, refs, available, cap } = queryInputs(index, pantryNames, ingredientName, offset, limit);
+  const buckets = [[], [], []];
+  for (const ref of refs) {
+    const ranked = rankedRecipe(index.recipes[ref], canonical, available);
+    if (buckets[ranked.rank].length < cap) buckets[ranked.rank].push(ranked.item);
+  }
+  return pageFromBuckets(buckets, refs.length, offset, limit);
+}
+
+export async function prepareRecipeDiscoveryPage(index, pantryNames, ingredientName, { offset = 0, limit = Infinity } = {}) {
+  const { canonical, refs, available, cap } = queryInputs(index, pantryNames, ingredientName, offset, limit);
+  const buckets = [[], [], []];
+  let ingredientBudget = 0;
+  await yieldTask();
+  for (const ref of refs) {
+    const source = index.recipes[ref];
+    const ranked = rankedRecipe(source, canonical, available);
+    if (buckets[ranked.rank].length < cap) buckets[ranked.rank].push(ranked.item);
+    ingredientBudget += source.names.length || 1;
+    if (ingredientBudget >= YIELD_INGREDIENT_CHUNK) {
+      ingredientBudget = 0;
+      await yieldTask();
+    }
+  }
+  return pageFromBuckets(buckets, refs.length, offset, limit);
 }

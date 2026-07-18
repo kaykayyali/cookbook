@@ -2,6 +2,7 @@ import { canonicalIngredientIdentity } from './ingredient-corrections.js';
 import {
   buildRecipeDiscoveryIndexSync,
   prepareRecipeDiscoveryIndex,
+  prepareRecipeDiscoveryPage,
   queryRecipeDiscoveryIndex,
   recipeDiscoveryAuthority,
   safeRecipeImageUrlValue,
@@ -45,6 +46,9 @@ export function createPantryRecipeDiscovery({ onIndexBuild = () => {} } = {}) {
   let record = null;
   let generation = 0;
   let notifiedRecord = null;
+  let pageKey = '';
+  let pageResult = null;
+  let pagePromise = null;
 
   function select({ recipes, recipeAuthorityVersion } = {}) {
     const allRecipes = Array.isArray(recipes) ? recipes : [];
@@ -57,6 +61,9 @@ export function createPantryRecipeDiscovery({ onIndexBuild = () => {} } = {}) {
       authorityVersion = recipeAuthorityVersion;
       record = recipeDiscoveryAuthority(allRecipes);
       generation += 1;
+      pageKey = '';
+      pageResult = null;
+      pagePromise = null;
     }
     return { allRecipes, record, generation };
   }
@@ -82,10 +89,27 @@ export function createPantryRecipeDiscovery({ onIndexBuild = () => {} } = {}) {
       return { results: [], total: 0, hasMore: false, pending: true, ready };
     }
     notifyBuilt(selected);
-    return queryRecipeDiscoveryIndex(selected.record.index, options.pantry, options.ingredientName, {
-      offset: options.offset,
-      limit: options.limit,
-    });
+    const pantryKey = [...pantryCanonicalNames(options.pantry)].sort().join('\u0000');
+    const nextKey = `${generation}\u0001${canonicalIngredientIdentity(options.ingredientName)}\u0001${pantryKey}\u0001${options.offset || 0}\u0001${options.limit ?? 'all'}`;
+    if (nextKey !== pageKey) {
+      pageKey = nextKey;
+      pageResult = null;
+      pagePromise = null;
+    }
+    if (!pageResult) {
+      if (!pagePromise) {
+        const expectedKey = pageKey;
+        pagePromise = prepareRecipeDiscoveryPage(selected.record.index, options.pantry, options.ingredientName, {
+          offset: options.offset,
+          limit: options.limit,
+        }).then((result) => {
+          if (pageKey === expectedKey) pageResult = result;
+          return result;
+        }).finally(() => { if (pageKey === expectedKey) pagePromise = null; });
+      }
+      return { results: [], total: 0, hasMore: false, pending: true, ready: pagePromise };
+    }
+    return pageResult;
   }
 
   function discover(options = {}) {

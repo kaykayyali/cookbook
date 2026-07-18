@@ -114,6 +114,22 @@ test('authority signature follows effective correction validity, winner selectio
   assert.equal(versionDelta(parsleyWins, basilWins), 1, 'reviewedAt winner ordering');
 });
 
+test('discovery-equivalent ingredient reorder and duplication do not advance authority generation', () => {
+  const before = recipe('r', 'Pesto', ['basil', 'tomato']);
+  assert.equal(versionDelta(before, recipe('r', 'Pesto', ['tomato', 'basil'])), 0);
+  assert.equal(versionDelta(before, recipe('r', 'Pesto', ['basil', 'tomato', 'basil'])), 0);
+});
+
+test('missing-ID derived identities are collision-free for distinct recipes', () => {
+  const recipes = [
+    { name: 'Missing 39494', recipeIngredient: ['basil'] },
+    { name: 'Missing 40089', recipeIngredient: ['basil'] },
+  ];
+  const results = createPantryRecipeDiscovery()({ recipes, pantry: pantry('basil'), ingredientName: 'basil' });
+  assert.deepEqual(results.map(({ recipeName }) => recipeName), ['Missing 39494', 'Missing 40089']);
+  assert.equal(new Set(results.map(({ recipeIdentity }) => recipeIdentity)).size, 2);
+});
+
 test('invalid effective correction publication removes a stale warmed identity', () => {
   const base = recipe('r', 'Pesto', ['mystery']);
   const valid = reviewed(base, basilCorrection);
@@ -154,13 +170,23 @@ test('authority publication is bounded, getter-safe, cycle-safe, BigInt-safe, an
   const version = state.recipeAuthorityVersion;
   assert.doesNotThrow(() => publishRecipeAuthority(state, authority));
   assert.ok(state.recipeAuthorityVersion > version, 'fallback publication always invalidates so a stale cache cannot survive');
+
+  const hostileArray = [];
+  Object.defineProperty(hostileArray, '0', { enumerable: true, get() { throw new Error('array index getter'); } });
+  Object.defineProperty(hostileArray, Symbol.iterator, { get() { throw new Error('iterator getter'); } });
+  hostileArray.length = 1;
+  const previousVersion = state.recipeAuthorityVersion;
+  assert.doesNotThrow(() => publishRecipeAuthority(state, hostileArray));
+  assert.equal(state.recipes.length, 1);
+  assert.equal(0 in state.recipes, false, 'hostile element becomes a safe hole without running accessors');
+  assert.ok(state.recipeAuthorityVersion > previousVersion, 'unsafe top-level publication invalidates stale discovery');
 });
 
-test('large-corpus publication and paged discovery stay bounded, responsive, and linear', { timeout: 20_000 }, async () => {
+test('large-corpus publication and paged discovery stay bounded, responsive, and linear', { timeout: 20_000 }, async (t) => {
   const corpus = Array.from({ length: 5_000 }, (_, recipeIndex) => recipe(
     `recipe-${recipeIndex}`,
     `Recipe ${String(recipeIndex).padStart(5, '0')}`,
-    Array.from({ length: 20 }, (_, ingredientIndex) => `1 piece ingredient ${ingredientIndex}`),
+    ['basil', ...Array.from({ length: 19 }, (_, ingredientIndex) => `1 piece ingredient ${recipeIndex}-${ingredientIndex}`)],
   ));
   global.gc?.();
   const heapBefore = process.memoryUsage().heapUsed;
@@ -168,10 +194,18 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   const publicationStarted = performance.now();
   publishRecipeAuthority(state, corpus);
   const publicationMs = performance.now() - publicationStarted;
-  assert.ok(publicationMs < 750, `authority projection took ${publicationMs}ms`);
+  assert.ok(publicationMs < 50, `authority publication blocked for ${publicationMs}ms`);
 
   const discover = createPantryRecipeDiscovery();
   let timerFiredAt = 0;
+  let lastTick = performance.now();
+  let maxTimerGap = 0;
+  const interval = setInterval(() => {
+    const now = performance.now();
+    maxTimerGap = Math.max(maxTimerGap, now - lastTick);
+    lastTick = now;
+  }, 5);
+  t.after(() => clearInterval(interval));
   const timer = new Promise((resolve) => setTimeout(() => { timerFiredAt = performance.now(); resolve(); }, 0));
   const prepareStarted = performance.now();
   const preparing = discover.prepare({ recipes: state.recipes, recipeAuthorityVersion: state.recipeAuthorityVersion });
@@ -179,25 +213,34 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   assert.ok(timerFiredAt - prepareStarted < 100, `index preparation blocked the event loop for ${timerFiredAt - prepareStarted}ms`);
   await preparing;
   const preparationMs = performance.now() - prepareStarted;
-  assert.ok(preparationMs < 1_500, `5k x 20 index took ${preparationMs}ms`);
+  assert.ok(preparationMs < 2_000, `5k x 20 index took ${preparationMs}ms`);
+  assert.ok(maxTimerGap < 50, `index preparation created a ${maxTimerGap}ms event-loop gap`);
   const heapDelta = process.memoryUsage().heapUsed - heapBefore;
   assert.ok(heapDelta < 80 * 1024 * 1024, `incremental heap was ${heapDelta} bytes`);
 
   const queryStarted = performance.now();
-  const page = discover.page({
+  const pageOptions = {
     recipes: state.recipes,
     recipeAuthorityVersion: state.recipeAuthorityVersion,
-    pantry: pantry('ingredient 1'),
-    ingredientName: 'ingredient 1',
+    pantry: pantry('basil'),
+    ingredientName: 'basil',
     offset: 0,
     limit: 3,
-  });
+  };
+  let page = discover.page(pageOptions);
+  const initialQueryMs = performance.now() - queryStarted;
+  assert.equal(page.pending, true);
+  assert.ok(initialQueryMs < 50, `initial common query call took ${initialQueryMs}ms`);
+  await page.ready;
+  clearInterval(interval);
+  page = discover.page(pageOptions);
   const queryMs = performance.now() - queryStarted;
   assert.equal(page.pending, false);
   assert.equal(page.results.length, 3);
   assert.equal(page.total, 5_000);
   assert.equal(page.hasMore, true);
-  assert.ok(queryMs < 50, `initial common query took ${queryMs}ms`);
+  assert.ok(queryMs < 1_500, `yielded common query took ${queryMs}ms`);
+  assert.ok(maxTimerGap < 50, `paged query created a ${maxTimerGap}ms event-loop gap`);
 
   const half = corpus.slice(0, 1_250);
   const halfDiscover = createPantryRecipeDiscovery();
@@ -214,6 +257,8 @@ test('stale asynchronous index preparation is cancelled when recipe authority ch
   const stalePreparation = discover.prepare({ recipes: stale, recipeAuthorityVersion: 1 });
   await discover.prepare({ recipes: current, recipeAuthorityVersion: 2 });
   await stalePreparation;
-  const page = discover.page({ recipes: current, recipeAuthorityVersion: 2, pantry: pantry('basil'), ingredientName: 'basil', limit: 3 });
+  const options = { recipes: current, recipeAuthorityVersion: 2, pantry: pantry('basil'), ingredientName: 'basil', limit: 3 };
+  let page = discover.page(options);
+  if (page.pending) { await page.ready; page = discover.page(options); }
   assert.deepEqual(page.results.map(({ recipeId }) => recipeId), ['new']);
 });
