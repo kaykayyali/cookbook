@@ -45,7 +45,7 @@ export function createPantryRecipeDiscovery({ onIndexBuild = () => {} } = {}) {
   let authorityVersion;
   let record = null;
   let generation = 0;
-  let notifiedRecord = null;
+  let notifiedIndex = null;
   let pageKey = '';
   let pageResult = null;
   let pagePromise = null;
@@ -53,9 +53,8 @@ export function createPantryRecipeDiscovery({ onIndexBuild = () => {} } = {}) {
   function select({ recipes, recipeAuthorityVersion } = {}) {
     const allRecipes = Array.isArray(recipes) ? recipes : [];
     const hasVersion = recipeAuthorityVersion !== undefined && recipeAuthorityVersion !== null;
-    const changed = !record || (hasVersion
-      ? authorityVersion !== recipeAuthorityVersion
-      : authority !== allRecipes);
+    const changed = !record || authority !== allRecipes
+      || (hasVersion && authorityVersion !== recipeAuthorityVersion);
     if (changed) {
       authority = allRecipes;
       authorityVersion = recipeAuthorityVersion;
@@ -69,14 +68,16 @@ export function createPantryRecipeDiscovery({ onIndexBuild = () => {} } = {}) {
   }
 
   function notifyBuilt(selected) {
-    if (selected.record.index && notifiedRecord !== selected.record) {
-      notifiedRecord = selected.record;
+    if (selected.record.index && notifiedIndex !== selected.record.index) {
+      notifiedIndex = selected.record.index;
       onIndexBuild(selected.allRecipes);
     }
   }
 
   async function prepare(options = {}) {
     const selected = select(options);
+    const certification = selected.record.certificationPromise;
+    if (certification) await certification;
     await prepareRecipeDiscoveryIndex(selected.record);
     if (record === selected.record && generation === selected.generation) notifyBuilt(selected);
     return selected.record.index;
@@ -84,7 +85,7 @@ export function createPantryRecipeDiscovery({ onIndexBuild = () => {} } = {}) {
 
   function page(options = {}) {
     const selected = select(options);
-    if (!selected.record.index) {
+    if (selected.record.certificationPromise || !selected.record.index) {
       const ready = prepare(options);
       return { results: [], total: 0, hasMore: false, pending: true, ready };
     }

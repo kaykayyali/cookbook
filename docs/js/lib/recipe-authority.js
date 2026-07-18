@@ -73,7 +73,7 @@ export function publishRecipeAuthority(state, recipes) {
     const certification = certifyRecipeDiscoveryAuthority(previousRecord, projection);
     adoptRecipeDiscoveryRecord(projection, previousRecord);
     discoverySignatures.set(state, previous);
-    projection.certificationPromise = certification.then(({ equivalent, record }) => {
+    const settlement = certification.then(({ equivalent, record }) => {
       if (discoveryRecords.get(state) !== projection) return { stale: true, equivalent };
       if (equivalent) {
         adoptRecipeDiscoveryRecord(projection, previousRecord);
@@ -101,6 +101,10 @@ export function publishRecipeAuthority(state, recipes) {
       }
       return { stale: discoveryRecords.get(state) !== projection, equivalent: false };
     });
+    const tracked = settlement.finally(() => {
+      if (projection.certificationPromise === tracked) projection.certificationPromise = null;
+    });
+    projection.certificationPromise = tracked;
     return next;
   }
 

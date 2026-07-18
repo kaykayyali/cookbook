@@ -185,10 +185,9 @@ export function initPantry({
       section.hidden = false;
       toggle.hidden = true;
       const authority = state.recipes;
-      const version = state.recipeAuthorityVersion;
       void page.ready.then(() => {
         if (request === discoveryRequest && editorId === record.id
-            && state.recipes === authority && state.recipeAuthorityVersion === version && modalOpen()) {
+            && state.recipes === authority && modalOpen()) {
           renderRecipeDiscovery();
         }
       }).catch(() => {});
