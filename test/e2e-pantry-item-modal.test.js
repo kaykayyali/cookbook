@@ -355,6 +355,108 @@ test('selected Pantry ingredient discovers canonical recipe uses and opens detai
   }
 });
 
+test('async recipe discovery never reclaims focus after the editor takes ownership', { timeout: 60_000 }, async () => {
+  const recipes = [
+    { _id: 'shared-pesto', name: 'A Shared Pesto', recipeIngredient: ['basil'], recipeInstructions: ['Mix.'] },
+    ...Array.from({ length: 249 }, (_, index) => ({
+      _id: `large-recipe-${index}`,
+      name: `Large Recipe ${String(index).padStart(3, '0')}`,
+      recipeIngredient: ['basil'],
+      recipeInstructions: ['Mix.'],
+    })),
+  ];
+  const fixture = await createPantryPage({ width: 1280, height: 900 }, { recipes });
+  const { context, page: writer, browserErrors } = fixture;
+  const editor = await context.newPage();
+  const editorErrors = [];
+  editor.on('pageerror', (error) => editorErrors.push(error.message));
+  editor.on('console', (message) => {
+    if (message.type() === 'error' && !message.text().includes('Failed to load resource')) editorErrors.push(message.text());
+  });
+  try {
+    await editor.goto(baseUrl, { waitUntil: 'networkidle' });
+    await editor.locator('button[data-panel="pantry"]').click();
+    await editor.locator('[data-pantry-id="pantry-basil"]').click();
+    const discovery = editor.locator('#pantry-recipe-discovery');
+    const sharedRow = discovery.locator('[data-pantry-recipe-id="shared-pesto"]');
+    await sharedRow.waitFor({ state: 'visible' });
+    await sharedRow.focus();
+    await editor.evaluate(() => {
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      Object.defineProperty(globalThis, 'scheduler', {
+        configurable: true,
+        value: { yield: () => gate },
+      });
+      globalThis.__releaseDiscovery = release;
+    });
+
+    await writer.locator('button[data-panel="recipes"]').click();
+    const card = writer.locator('.recipe-card[data-id="shared-pesto"]');
+    await card.locator('[data-action="edit"]').click();
+    await writer.locator('#f-name').fill('A Renamed Shared Pesto');
+    const pendingRefresh = discovery.getByText('Finding recipes…').waitFor({ state: 'visible' });
+    const renamed = writer.waitForResponse((response) => new URL(response.url()).pathname === '/api/recipe-mutations'
+      && response.request().postDataJSON()?.op === 'recipe.update' && response.ok());
+    await writer.locator('#save-recipe-btn').click();
+    await renamed;
+    await pendingRefresh;
+
+    const name = editor.locator('#pantry-item-name');
+    await name.fill('Unsaved basil draft');
+    await editor.evaluate(() => globalThis.__releaseDiscovery());
+    await discovery.getByText('A Renamed Shared Pesto').waitFor({ state: 'visible' });
+    assert.equal(await name.evaluate((element) => element === document.activeElement), true,
+      'async completion must not override newer editor focus');
+    assert.equal(await name.inputValue(), 'Unsaved basil draft');
+    assert.deepEqual(browserErrors, []);
+    assert.deepEqual(editorErrors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('async View all restores focus to its temporarily hidden toggle', { timeout: 60_000 }, async () => {
+  const recipes = Array.from({ length: 250 }, (_, index) => ({
+    _id: `large-recipe-${index}`,
+    name: `Large Recipe ${String(index).padStart(3, '0')}`,
+    recipeIngredient: ['basil'],
+    recipeInstructions: ['Mix.'],
+  }));
+  const { context, page, browserErrors } = await createPantryPage({ width: 1280, height: 900 }, { recipes });
+  try {
+    await page.locator('[data-pantry-id="pantry-basil"]').click();
+    const discovery = page.locator('#pantry-recipe-discovery');
+    const rows = discovery.locator('[data-pantry-recipe-id]');
+    await page.waitForFunction(() => document.querySelectorAll('#pantry-recipe-results [data-pantry-recipe-id]').length === 3);
+    const toggle = discovery.locator('#pantry-recipe-toggle');
+    await toggle.waitFor({ state: 'visible' });
+    await page.evaluate(() => {
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      Object.defineProperty(globalThis, 'scheduler', {
+        configurable: true,
+        value: { yield: () => gate },
+      });
+      globalThis.__releaseDiscovery = release;
+    });
+
+    await toggle.click();
+    assert.equal(await toggle.isHidden(), true, 'the async placeholder temporarily hides the toggle');
+    assert.match(await discovery.textContent(), /Finding recipes/i);
+    await page.evaluate(() => globalThis.__releaseDiscovery());
+    await page.waitForFunction(() => document.querySelectorAll('#pantry-recipe-results [data-pantry-recipe-id]').length === 50);
+
+    assert.equal(await rows.count(), 50);
+    assert.equal(await toggle.evaluate((element) => element === document.activeElement), true,
+      'completion restores the View all control that initiated the async render');
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+    assert.deepEqual(browserErrors, []);
+  } finally {
+    await context.close();
+  }
+});
+
 test('online-only recipe fallback refreshes every field in an already-open detail after an edit', { timeout: 60_000 }, async () => {
   const recipe = {
     _id: 'fallback-pesto', name: 'Basil Starter', image: 'javascript:alert(1)',

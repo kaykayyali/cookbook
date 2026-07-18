@@ -101,6 +101,7 @@ test('async discovery refresh restores focus to the previously focused recipe ro
   const base = { _id: 'shared', name: 'A Shared Pesto', recipeIngredient: ['basil'] };
   const { dom, state, controller } = setup(base);
   const document = dom.window.document;
+  await new Promise((resolve) => setTimeout(resolve, 0));
   document.querySelector('[data-pantry-recipe-id="shared"]').focus();
   state.recipes = [base, ...Array.from({ length: 249 }, (_, index) => ({
     _id: `recipe-${index}`, name: `Recipe ${index}`, recipeIngredient: ['basil'],
@@ -112,6 +113,27 @@ test('async discovery refresh restores focus to the previously focused recipe ro
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   assert.equal(document.activeElement?.dataset?.pantryRecipeId, 'shared');
+});
+
+test('async discovery refresh does not override newer editor focus', async () => {
+  const base = { _id: 'shared', name: 'A Shared Pesto', recipeIngredient: ['basil'] };
+  const { dom, state, controller } = setup(base);
+  const document = dom.window.document;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  document.querySelector('[data-pantry-recipe-id="shared"]').focus();
+  state.recipes = [base, ...Array.from({ length: 249 }, (_, index) => ({
+    _id: `recipe-${index}`, name: `Recipe ${index}`, recipeIngredient: ['basil'],
+  }))];
+  state.recipeAuthorityVersion = 1;
+  controller.render();
+  assert.equal(document.activeElement, document.body, 'pending replacement owns the focus loss');
+  const name = document.getElementById('pantry-item-name');
+  name.focus();
+  for (let index = 0; index < 100 && !document.querySelector('[data-pantry-recipe-id="shared"]'); index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.ok(document.querySelector('[data-pantry-recipe-id="shared"]'), 'async discovery completed');
+  assert.equal(document.activeElement, name, 'newer editor focus keeps ownership after completion');
 });
 
 test('resuming after recipe detail exposes remote Pantry conflicts before save', () => {

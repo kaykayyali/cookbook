@@ -81,6 +81,7 @@ export function initPantry({
   let discoveryHasMore = false;
   let discoveryRequest = 0;
   let discoveryReturnFocusId = '';
+  let discoveryReturnToggleFocus = false;
   let editorSuspended = false;
   let suspendedRecipeId = '';
   let editorActive = false;
@@ -144,11 +145,18 @@ export function initPantry({
       section.hidden = true;
       resultsNode.innerHTML = '';
       toggle.hidden = true;
+      discoveryReturnFocusId = '';
+      discoveryReturnToggleFocus = false;
       return;
     }
     const body = section.closest?.('.pantry-item-body');
     const scrollTop = body?.scrollTop || 0;
-    const focusedRecipeId = document.activeElement?.dataset?.pantryRecipeId || discoveryReturnFocusId;
+    const activeRecipeId = document.activeElement?.dataset?.pantryRecipeId || '';
+    const focusedRecipeId = activeRecipeId || discoveryReturnFocusId;
+    if (focusToggle) {
+      discoveryReturnToggleFocus = true;
+      discoveryReturnFocusId = '';
+    }
     const ingredientLabel = record.displayName || record.name;
     setText('pantry-recipe-title', `Recipes using ${ingredientLabel}`);
     const request = ++discoveryRequest;
@@ -169,7 +177,10 @@ export function initPantry({
       page = discoverRecipes.page({ ...discoveryOptions, offset: 0, limit: recipeVisibleLimit });
     }
     if (page.pending) {
-      if (focusedRecipeId) discoveryReturnFocusId = focusedRecipeId;
+      if (activeRecipeId) {
+        discoveryReturnFocusId = activeRecipeId;
+        discoveryReturnToggleFocus = false;
+      }
       resultsNode.innerHTML = '<div class="pantry-recipe-empty" role="status"><strong>Finding recipes…</strong><p>You can keep editing while recipe discovery refreshes.</p></div>';
       section.hidden = false;
       toggle.hidden = true;
@@ -209,11 +220,15 @@ export function initPantry({
     toggle.setAttribute?.('aria-expanded', String(expanded));
     toggle.dataset.feedback = expanded && !discoveryHasMore ? 'toggle-off' : 'toggle-on';
     if (body) body.scrollTop = scrollTop;
-    if (focusToggle) toggle.focus?.();
-    else if (focusedRecipeId) {
-      const escaped = globalThis.CSS?.escape?.(focusedRecipeId) || focusedRecipeId;
+    const returnToggleFocus = discoveryReturnToggleFocus;
+    const returnRecipeFocusId = returnToggleFocus ? '' : focusedRecipeId;
+    discoveryReturnToggleFocus = false;
+    discoveryReturnFocusId = '';
+    if (returnToggleFocus) toggle.focus?.();
+    else if (returnRecipeFocusId) {
+      const escaped = globalThis.CSS?.escape?.(returnRecipeFocusId) || returnRecipeFocusId;
       const target = section.querySelector?.(`[data-pantry-recipe-id="${escaped}"]`);
-      if (target) { target.focus?.(); discoveryReturnFocusId = ''; }
+      target?.focus?.();
     }
   }
 
@@ -407,6 +422,7 @@ export function initPantry({
     discoveryHasMore = false;
     discoveryRequest += 1;
     discoveryReturnFocusId = '';
+    discoveryReturnToggleFocus = false;
     editorSuspended = false;
     suspendedRecipeId = '';
     setEditorPending(false);
@@ -468,6 +484,7 @@ export function initPantry({
     discoveryHasMore = false;
     discoveryRequest += 1;
     discoveryReturnFocusId = '';
+    discoveryReturnToggleFocus = false;
     editorSuspended = false;
     suspendedRecipeId = '';
     editorActive = false;
@@ -813,6 +830,12 @@ export function initPantry({
     });
     get('pantry-recipe-results')?.addEventListener?.('click', openDiscoveredRecipe);
     get('pantry-recipe-results')?.addEventListener?.('error', fallbackRecipeImage, true);
+    document.addEventListener?.('focusin', (event) => {
+      if (event.target === document.body || event.target === document.documentElement) return;
+      const focusedRecipeId = event.target?.dataset?.pantryRecipeId || '';
+      if (discoveryReturnFocusId && focusedRecipeId !== discoveryReturnFocusId) discoveryReturnFocusId = '';
+      if (discoveryReturnToggleFocus && event.target !== get('pantry-recipe-toggle')) discoveryReturnToggleFocus = false;
+    });
     get('pantry-recipe-toggle')?.addEventListener?.('click', () => {
       if (recipeVisibleLimit === 3) recipeVisibleLimit = 50;
       else if (discoveryHasMore) recipeVisibleLimit += 50;
