@@ -1,6 +1,6 @@
 import {
   adoptRecipeDiscoveryRecord,
-  equivalentWarmedRawRecipeAuthority,
+  equivalentRecipeDiscoveryAuthority,
   prepareRecipeDiscoveryIndex,
   recipeDiscoveryAuthority,
 } from './recipe-discovery-projection.js';
@@ -15,9 +15,9 @@ function assertState(state) {
 }
 
 function snapshotAuthority(recipes) {
-  let array = false;
-  try { array = Array.isArray(recipes); } catch { return { next: [], ok: false }; }
-  if (!array) return { next: [], ok: true };
+  let isArray;
+  try { isArray = Array.isArray(recipes); } catch { return { next: [], ok: false }; }
+  if (!isArray) return { next: [], ok: true };
   let length = 0;
   let ok = true;
   try {
@@ -51,23 +51,41 @@ export function publishRecipeAuthority(state, recipes) {
   const projection = recipeDiscoveryAuthority(next);
   const previous = discoverySignatures.get(state);
   const previousRecord = discoveryRecords.get(state);
-  const equivalentLarge = snapshot.ok && !projection.ok
-    && equivalentWarmedRawRecipeAuthority(previousRecord, next)
-    && adoptRecipeDiscoveryRecord(projection, previousRecord);
-  const ok = snapshot.ok && projection.ok;
-  const changed = previous === undefined || (!equivalentLarge
-    && (!previous.ok || !ok || previous.signature !== projection.signature));
-  state.recipes = next;
-  if (changed) {
-    state.recipeAuthorityVersion = (Number(state.recipeAuthorityVersion) || 0) + 1;
-    discoveryRecords.set(state, projection);
-    void prepareRecipeDiscoveryIndex(projection).catch(() => {});
-  } else {
-    if (!equivalentLarge && previousRecord?.index) adoptRecipeDiscoveryRecord(projection, previousRecord);
-    discoveryRecords.set(state, projection.index ? projection : previousRecord || projection);
+  let ok = snapshot.ok && projection.ok;
+  const signatureChanged = previous === undefined
+    || !previous.ok || !ok || previous.signature !== projection.signature;
+  let equivalent = false;
+  if (snapshot.ok && previousRecord && signatureChanged) {
+    try {
+      equivalent = equivalentRecipeDiscoveryAuthority(previousRecord, projection);
+      if (equivalent) adoptRecipeDiscoveryRecord(projection, previousRecord);
+    } catch { equivalent = false; }
+    ok = snapshot.ok && projection.ok;
   }
+  const changed = previous === undefined || (signatureChanged && !equivalent);
+  state.recipes = next;
+  if (changed) state.recipeAuthorityVersion = (Number(state.recipeAuthorityVersion) || 0) + 1;
+  if (!changed && !equivalent && previousRecord) {
+    try { adoptRecipeDiscoveryRecord(projection, previousRecord); } catch {}
+  }
+  discoveryRecords.set(state, projection);
   discoverySignatures.set(state, changed
     ? { ok, signature: projection.signature }
-    : previous || { ok: projection.ok, signature: projection.signature });
+    : previous || { ok, signature: projection.signature });
+
+  // Warm (or follow an equivalent in-flight warm) outside the publication stack.
+  // Only the current publication may certify its eventual asynchronous signature.
+  void prepareRecipeDiscoveryIndex(projection).then(() => {
+    if (discoveryRecords.get(state) === projection) {
+      discoverySignatures.set(state, {
+        ok: snapshot.ok && projection.ok,
+        signature: projection.signature,
+      });
+    }
+  }).catch(() => {
+    if (discoveryRecords.get(state) === projection) {
+      discoverySignatures.set(state, { ok: false, signature: '' });
+    }
+  });
   return next;
 }

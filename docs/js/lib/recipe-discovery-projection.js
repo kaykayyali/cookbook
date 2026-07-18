@@ -41,6 +41,22 @@ function ownValue(value, key, context) {
   }
 }
 
+function safeArrayCheck(value, context) {
+  try { return Array.isArray(value); } catch {
+    context.ok = false;
+    return false;
+  }
+}
+
+function safeArrayLength(value, context) {
+  try {
+    const length = value.length;
+    if (Number.isSafeInteger(length) && length >= 0) return length;
+  } catch {}
+  context.ok = false;
+  return 0;
+}
+
 function boundedText(value, fallback, context, max = MAX_TEXT) {
   if (value === MISSING || value === undefined || value === null) return fallback;
   let text;
@@ -83,9 +99,8 @@ function sanitizeRecord(value, context) {
 }
 
 function sanitizeArray(value, context, limit, mapper) {
-  if (!Array.isArray(value)) return [];
-  let length;
-  try { length = value.length; } catch { context.ok = false; return []; }
+  if (!safeArrayCheck(value, context)) return [];
+  let length = safeArrayLength(value, context);
   if (!Number.isSafeInteger(length) || length < 0 || length > limit) {
     context.ok = false;
     length = Math.min(Number.isSafeInteger(length) && length > 0 ? length : 0, limit);
@@ -115,9 +130,8 @@ function imageCandidate(value, context, seen = new Set(), depth = 0, counter = {
     return '';
   }
   seen.add(value);
-  if (Array.isArray(value)) {
-    let length;
-    try { length = value.length; } catch { context.ok = false; return ''; }
+  if (safeArrayCheck(value, context)) {
+    let length = safeArrayLength(value, context);
     if (!Number.isSafeInteger(length) || length > MAX_IMAGE_NODES) {
       context.ok = false;
       length = Math.min(Number.isSafeInteger(length) ? length : 0, MAX_IMAGE_NODES);
@@ -226,7 +240,10 @@ function makeAuthorityRecord(recipes) {
     const item = sanitizeRecipe(value, context, totals);
     if (item) projected.push(item);
   }
-  return finishAuthorityRecord({ ok: false, signature: '', snapshot: null, source: recipes, index: null, promise: null, authorityPromise: null }, context, projected);
+  return finishAuthorityRecord({
+    ok: false, signature: '', snapshot: null, source: recipes, index: null,
+    promise: null, authorityPromise: null, caches: null,
+  }, context, projected);
 }
 
 export function recipeDiscoveryAuthority(recipes) {
@@ -235,7 +252,10 @@ export function recipeDiscoveryAuthority(recipes) {
   if (!record) {
     record = recipes.length <= SYNC_RECIPE_LIMIT
       ? makeAuthorityRecord(recipes)
-      : { ok: false, signature: '', snapshot: null, source: recipes, index: null, promise: null, authorityPromise: null };
+      : {
+        ok: false, signature: '', snapshot: null, source: recipes, index: null,
+        promise: null, authorityPromise: null, caches: null,
+      };
     cache.set(recipes, record);
   }
   return record;
@@ -249,12 +269,14 @@ function rawOnlyRecipeSummary(value, context, totals) {
   const name = boundedText(ownValue(value, 'name', context), 'Untitled', context);
   const image = safeRecipeImageUrlValue(ownValue(value, 'image', context), context);
   const normalizations = ownValue(value, 'ingredientNormalizations', context);
-  if (Array.isArray(normalizations) && normalizations.length > 0) return null;
+  if (safeArrayCheck(normalizations, context) && safeArrayLength(normalizations, context) > 0) return null;
+  if (!context.ok) return null;
   const ingredientValue = ownValue(value, 'recipeIngredient', context);
   const ingredients = new Set();
-  if (Array.isArray(ingredientValue)) {
-    const length = Math.min(ingredientValue.length, MAX_INGREDIENTS_PER_RECIPE);
-    if (ingredientValue.length > MAX_INGREDIENTS_PER_RECIPE) context.ok = false;
+  if (safeArrayCheck(ingredientValue, context)) {
+    const sourceLength = safeArrayLength(ingredientValue, context);
+    const length = Math.min(sourceLength, MAX_INGREDIENTS_PER_RECIPE);
+    if (sourceLength > MAX_INGREDIENTS_PER_RECIPE) context.ok = false;
     for (let index = 0; index < length; index += 1) {
       totals.ingredients += 1;
       if (totals.ingredients > MAX_TOTAL_INGREDIENTS) { context.ok = false; break; }
@@ -264,42 +286,160 @@ function rawOnlyRecipeSummary(value, context, totals) {
       ingredients.add(ingredient);
     }
   }
-  return { id, name, image, ingredients };
+  return context.ok ? { id, name, image, ingredients } : null;
 }
 
-export function equivalentWarmedRawRecipeAuthority(record, recipes) {
-  if (!record?.ok || !record.index || !Array.isArray(record.snapshot) || !Array.isArray(recipes)
-      || recipes.length !== record.snapshot.length) return false;
-  const previous = new Map();
-  for (const item of record.snapshot) {
-    if (!item.rawOnly || !item.id || previous.has(item.id)) return false;
-    previous.set(item.id, item);
+function rawSummariesFromSnapshot(snapshot) {
+  if (!snapshot) return null;
+  const summaries = new Map();
+  for (const item of snapshot) {
+    if (!item?.rawOnly || !item.id || summaries.has(item.id)
+        || item.signatureRow?.ingredients?.[0] !== 'raw-v') return null;
+    summaries.set(item.id, {
+      id: item.id,
+      name: item.name,
+      image: item.image,
+      ingredients: new Set(item.signatureRow.ingredients.slice(2)),
+    });
   }
+  return summaries;
+}
+
+function rawSummariesFromRecipes(recipes) {
   const context = { ok: true };
+  if (!safeArrayCheck(recipes, context)) return null;
+  const length = safeArrayLength(recipes, context);
+  if (!context.ok || length > MAX_RECIPES) return null;
   const totals = { ingredients: 0 };
-  const seen = new Set();
-  for (let index = 0; index < recipes.length; index += 1) {
+  const summaries = new Map();
+  for (let index = 0; index < length; index += 1) {
     const value = ownValue(recipes, String(index), context);
-    if (value === MISSING) { context.ok = false; continue; }
+    if (value === MISSING) { context.ok = false; break; }
     const summary = rawOnlyRecipeSummary(value, context, totals);
-    if (!summary || seen.has(summary.id)) return false;
-    seen.add(summary.id);
-    const prior = previous.get(summary.id);
-    if (!prior || prior.name !== summary.name || prior.image !== summary.image) return false;
-    const priorIngredients = prior.signatureRow.ingredients.slice(2);
-    if (priorIngredients.length !== summary.ingredients.size
-        || priorIngredients.some((ingredient) => !summary.ingredients.has(ingredient))) return false;
+    if (!summary || summaries.has(summary.id)) return null;
+    summaries.set(summary.id, summary);
   }
-  return context.ok && seen.size === previous.size;
+  return context.ok ? summaries : null;
+}
+
+function rawSummaries(record) {
+  return rawSummariesFromSnapshot(record?.snapshot)
+    || rawSummariesFromRecipes(record?.source);
+}
+
+function normalizedRawName(raw, caches) {
+  let parsed;
+  if (caches.parsed.has(raw)) parsed = caches.parsed.get(raw);
+  else {
+    try { parsed = normalizeIngredient(raw); } catch { parsed = null; }
+    if (caches.parsed.size < MAX_TOTAL_INGREDIENTS) caches.parsed.set(raw, parsed);
+  }
+  return typeof parsed?.name === 'string' ? parsed.name : '';
+}
+
+function compactRawRows(summary, caches) {
+  const unique = new Map();
+  for (const raw of summary.ingredients) {
+    const sourceName = normalizedRawName(raw, caches);
+    let identity = caches.identities.get(sourceName);
+    if (identity === undefined) {
+      identity = canonicalIngredientIdentity(sourceName);
+      if (caches.identities.size < MAX_TOTAL_INGREDIENTS) caches.identities.set(sourceName, identity);
+    }
+    if (!identity) continue;
+    const current = unique.get(identity);
+    if (current === undefined || compareText(raw, current) < 0) unique.set(identity, raw);
+  }
+  const names = [...unique.keys()].sort(compareText);
+  return { names, raws: names.map((name) => unique.get(name) || '') };
+}
+
+function compareRawAuthorities(previousRecord, candidateRecord) {
+  const previous = rawSummaries(previousRecord);
+  const candidate = rawSummaries(candidateRecord);
+  if (!previous || !candidate) return null;
+  if (previous.size !== candidate.size) return false;
+  const changed = [];
+  for (const [id, summary] of candidate) {
+    const prior = previous.get(id);
+    if (!prior || prior.name !== summary.name || prior.image !== summary.image) return false;
+    if (prior.ingredients.size !== summary.ingredients.size
+        || [...summary.ingredients].some((ingredient) => !prior.ingredients.has(ingredient))) changed.push(summary);
+  }
+  if (!changed.length) return true;
+  if (!previousRecord.index) return false;
+  const previousRows = new Map(previousRecord.index.recipes.map((row) => [row.recipeId, row]));
+  const caches = previousRecord.caches || { parsed: new Map(), identities: new Map() };
+  previousRecord.caches = caches;
+  candidateRecord.caches = caches;
+  for (const summary of changed) {
+    const prior = previousRows.get(summary.id);
+    const compact = compactRawRows(summary, caches);
+    if (!prior || !sameTextList(prior.names, compact.names) || !sameTextList(prior.raws, compact.raws)) return false;
+  }
+  return true;
+}
+
+function sameTextList(left, right) {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) if (left[index] !== right[index]) return false;
+  return true;
+}
+
+function sameCompactIndexes(left, right) {
+  if (!left || !right || left.recipes.length !== right.recipes.length) return false;
+  for (let index = 0; index < left.recipes.length; index += 1) {
+    const before = left.recipes[index];
+    const next = right.recipes[index];
+    if (before.recipeId !== next.recipeId || before.recipeIdentity !== next.recipeIdentity
+        || before.recipeName !== next.recipeName || before.imageUrl !== next.imageUrl
+        || before.canOpen !== next.canOpen || !sameTextList(before.names, next.names)
+        || !sameTextList(before.raws, next.raws)) return false;
+  }
+  return true;
+}
+
+/**
+ * Prove exact compact discovery equivalence. Identical raw evidence can be
+ * certified without parsing (including while the first preparation is still in
+ * flight). Otherwise compare the exact compact rows, whose canonical raw winner
+ * discards aliases such as a losing "fresh basil" variant.
+ */
+export function equivalentRecipeDiscoveryAuthority(previous, candidate) {
+  if (!previous || !candidate) return false;
+  const rawComparison = compareRawAuthorities(previous, candidate);
+  if (rawComparison !== null) return rawComparison;
+  if (!previous.ok || !previous.index) return false;
+  candidate.caches = previous.caches || candidate.caches;
+  const candidateIndex = buildRecipeDiscoveryIndexSync(candidate);
+  return candidate.ok && sameCompactIndexes(previous.index, candidateIndex);
+}
+
+function copyAdoptedRecord(target, source) {
+  target.ok = source.ok;
+  if (!target.snapshot) {
+    target.signature = source.signature;
+    target.snapshot = source.snapshot;
+  }
+  target.source = null;
+  target.index = source.index;
+  target.caches = source.caches;
 }
 
 export function adoptRecipeDiscoveryRecord(target, source) {
-  if (!target || !source?.ok || !source.index) return false;
-  target.ok = source.ok;
-  target.signature = source.signature;
-  target.snapshot = source.snapshot;
-  target.source = null;
-  target.index = source.index;
+  if (!target || !source) return false;
+  if (source.index) {
+    copyAdoptedRecord(target, source);
+    return true;
+  }
+  const linked = prepareRecipeDiscoveryIndex(source).then(() => {
+    copyAdoptedRecord(target, source);
+    return target.index;
+  });
+  const tracked = linked.finally(() => {
+    if (target.promise === tracked) target.promise = null;
+  });
+  target.promise = tracked;
   return true;
 }
 
@@ -307,12 +447,11 @@ function effectiveForIndex(item, caches) {
   if (item.effective) return item.effective;
   const records = [];
   for (const raw of item.recipe.recipeIngredient) {
-    let parsed = caches.parsed.get(raw);
-    if (!parsed) {
-      try {
-        parsed = normalizeIngredient(raw);
-        caches.parsed.set(raw, parsed);
-      } catch { parsed = null; }
+    let parsed;
+    if (caches.parsed.has(raw)) parsed = caches.parsed.get(raw);
+    else {
+      try { parsed = normalizeIngredient(raw); } catch { parsed = null; }
+      if (caches.parsed.size < MAX_TOTAL_INGREDIENTS) caches.parsed.set(raw, parsed);
     }
     if (parsed) records.push(parsed);
   }
@@ -326,7 +465,7 @@ function addCompactRecipe(build, item, caches) {
     let identity = caches.identities.get(sourceName);
     if (identity === undefined) {
       identity = canonicalIngredientIdentity(sourceName);
-      caches.identities.set(sourceName, identity);
+      if (caches.identities.size < MAX_TOTAL_INGREDIENTS) caches.identities.set(sourceName, identity);
     }
     if (!identity) continue;
     const raw = typeof ingredient?.raw === 'string' ? ingredient.raw : '';
@@ -363,11 +502,14 @@ function finishIndex(build) {
 export function buildRecipeDiscoveryIndexSync(record) {
   if (record.index) return record.index;
   if (!record.snapshot) {
+    const retainedCaches = record.caches;
     const materialized = makeAuthorityRecord(record.source || []);
     Object.assign(record, materialized);
+    record.caches = retainedCaches || materialized.caches;
   }
   const build = [];
-  const caches = { parsed: new Map(), identities: new Map() };
+  const caches = record.caches || { parsed: new Map(), identities: new Map() };
+  record.caches = caches;
   for (const item of record.snapshot) addCompactRecipe(build, item, caches);
   record.index = finishIndex(build);
   return record.index;
@@ -419,7 +561,8 @@ export function prepareRecipeDiscoveryIndex(record) {
   record.promise = (async () => {
     await prepareAuthoritySnapshot(record);
     const build = [];
-    const caches = { parsed: new Map(), identities: new Map() };
+    const caches = record.caches || { parsed: new Map(), identities: new Map() };
+    record.caches = caches;
     let ingredientBudget = 0;
     for (let index = 0; index < record.snapshot.length; index += 1) {
       if (record.index) return record.index;

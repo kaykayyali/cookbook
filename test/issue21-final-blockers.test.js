@@ -16,7 +16,10 @@ import {
 import { normalizePantryEntry } from '../docs/js/lib/pantry.js';
 import { createPantryRecipeDiscovery } from '../docs/js/lib/pantry-recipe-discovery.js';
 import { publishRecipeAuthority } from '../docs/js/lib/recipe-authority.js';
-import { recipeDiscoveryAuthority } from '../docs/js/lib/recipe-discovery-projection.js';
+import {
+  prepareRecipeDiscoveryIndex,
+  recipeDiscoveryAuthority,
+} from '../docs/js/lib/recipe-discovery-projection.js';
 
 const pantry = (name) => [{ name }];
 const recipe = (id, name, lines, extras = {}) => ({ _id: id, name, recipeIngredient: lines, ...extras });
@@ -162,6 +165,72 @@ test('equivalent warmed large authorities reuse generation and index', async () 
   await changedRecord.promise;
 });
 
+test('large reviewed metadata-only acknowledgements reuse the exact compact discovery index', async () => {
+  const corrected = reviewed(recipe('reviewed', 'Reviewed', ['2 mystery leaves']), basilCorrection);
+  const corpus = [corrected, ...Array.from({ length: 200 }, (_, index) => (
+    recipe(`r-${index}`, `Recipe ${index}`, ['tomato', `item ${index}`])
+  ))];
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, corpus);
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  await firstRecord.promise;
+  const firstIndex = firstRecord.index;
+  const version = state.recipeAuthorityVersion;
+  const acknowledgement = structuredClone(corpus);
+  acknowledgement[0].ingredientNormalizations[0].reviewedBy = { sub: 'server', name: 'Server metadata' };
+  acknowledgement[0]._updatedAt = 99;
+
+  publishRecipeAuthority(state, acknowledgement);
+
+  assert.equal(state.recipeAuthorityVersion, version);
+  assert.equal(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
+  const oracleRecord = recipeDiscoveryAuthority(structuredClone(acknowledgement));
+  const oracle = await prepareRecipeDiscoveryIndex(oracleRecord);
+  assert.deepEqual(firstIndex.recipes, oracle.recipes);
+});
+
+test('large raw acknowledgement reuses an in-flight equivalent preparation', async () => {
+  const corpus = Array.from({ length: 201 }, (_, index) => (
+    recipe(`r-${index}`, `Recipe ${index}`, ['basil', `item ${index}`])
+  ));
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, corpus);
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  const firstVersion = state.recipeAuthorityVersion;
+  const acknowledgement = corpus.map((item) => ({
+    ...item,
+    recipeIngredient: [...item.recipeIngredient].reverse(),
+    _updatedAt: 50,
+  }));
+
+  publishRecipeAuthority(state, acknowledgement);
+
+  const acknowledgementRecord = recipeDiscoveryAuthority(state.recipes);
+  assert.equal(state.recipeAuthorityVersion, firstVersion);
+  await Promise.all([firstRecord.promise, acknowledgementRecord.promise]);
+  assert.equal(acknowledgementRecord.index, firstRecord.index);
+});
+
+test('raw semantic signatures ignore losing canonical variants but detect winner changes', async () => {
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, [recipe('r', 'Pesto', ['basil'])]);
+  const firstRecord = recipeDiscoveryAuthority(state.recipes);
+  await firstRecord.promise;
+  const firstIndex = firstRecord.index;
+  const version = state.recipeAuthorityVersion;
+
+  publishRecipeAuthority(state, [recipe('r', 'Pesto', ['basil', 'fresh basil'])]);
+  assert.equal(state.recipeAuthorityVersion, version, 'the discarded raw variant is semantically irrelevant');
+  assert.equal(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
+
+  const winnerState = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(winnerState, [recipe('r', 'Pesto', ['fresh basil'])]);
+  await recipeDiscoveryAuthority(winnerState.recipes).promise;
+  const winnerVersion = winnerState.recipeAuthorityVersion;
+  publishRecipeAuthority(winnerState, [recipe('r', 'Pesto', ['fresh basil', 'basil'])]);
+  assert.equal(winnerState.recipeAuthorityVersion, winnerVersion + 1, 'a new compact raw winner invalidates discovery');
+});
+
 test('missing-ID derived identities are collision-free for distinct recipes', () => {
   const recipes = [
     { name: 'Missing 39494', recipeIngredient: ['basil'] },
@@ -224,6 +293,39 @@ test('authority publication is bounded, getter-safe, cycle-safe, BigInt-safe, an
   assert.ok(state.recipeAuthorityVersion > previousVersion, 'unsafe top-level publication invalidates stale discovery');
 });
 
+test('revoked top-level authority fails closed without retaining stale publication', () => {
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, [recipe('stale', 'Stale', ['basil'])]);
+  const version = state.recipeAuthorityVersion;
+  const { proxy, revoke } = Proxy.revocable([], {});
+  revoke();
+
+  assert.doesNotThrow(() => publishRecipeAuthority(state, proxy));
+  assert.deepEqual(state.recipes, []);
+  assert.equal(state.recipeAuthorityVersion, version + 1);
+});
+
+test('hostile ingredient length during warmed large equivalence fails closed and publishes the new authority', async () => {
+  const corpus = Array.from({ length: 201 }, (_, index) => recipe(`r-${index}`, `Recipe ${index}`, ['basil']));
+  const state = { recipes: [], recipeAuthorityVersion: 0 };
+  publishRecipeAuthority(state, corpus);
+  await recipeDiscoveryAuthority(state.recipes).promise;
+  const version = state.recipeAuthorityVersion;
+  const hostileIngredients = new Proxy(['basil'], {
+    get(target, key, receiver) {
+      if (key === 'length') throw new Error('hostile ingredient length');
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const acknowledgement = corpus.map((item, index) => (
+    index ? { ...item } : { ...item, recipeIngredient: hostileIngredients }
+  ));
+
+  assert.doesNotThrow(() => publishRecipeAuthority(state, acknowledgement));
+  assert.equal(state.recipes[0].recipeIngredient, hostileIngredients);
+  assert.equal(state.recipeAuthorityVersion, version + 1);
+});
+
 test('large-corpus publication and paged discovery stay bounded, responsive, and linear', { timeout: 20_000 }, async (t) => {
   const corpus = Array.from({ length: 5_000 }, (_, recipeIndex) => recipe(
     `recipe-${recipeIndex}`,
@@ -274,6 +376,21 @@ test('large-corpus publication and paged discovery stay bounded, responsive, and
   const acknowledgementCpuMs = (acknowledgementCpu.user + acknowledgementCpu.system) / 1_000;
   assert.ok(acknowledgementCpuMs < 100, `equivalent 5k acknowledgement used ${acknowledgementCpuMs}ms CPU`);
   assert.ok(acknowledgementMs < 150, `equivalent 5k acknowledgement blocked for ${acknowledgementMs}ms`);
+  assert.equal(state.recipeAuthorityVersion, authorityVersion);
+  assert.equal(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
+
+  const losingVariant = equivalent.map((item, index) => index ? item : {
+    ...item,
+    recipeIngredient: [...item.recipeIngredient, 'fresh basil'],
+  });
+  const variantStarted = performance.now();
+  const variantCpuStarted = process.cpuUsage();
+  publishRecipeAuthority(state, losingVariant);
+  const variantMs = performance.now() - variantStarted;
+  const variantCpu = process.cpuUsage(variantCpuStarted);
+  const variantCpuMs = (variantCpu.user + variantCpu.system) / 1_000;
+  assert.ok(variantCpuMs < 100, `canonical 5k acknowledgement used ${variantCpuMs}ms CPU`);
+  assert.ok(variantMs < 150, `canonical 5k acknowledgement blocked for ${variantMs}ms`);
   assert.equal(state.recipeAuthorityVersion, authorityVersion);
   assert.equal(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
 
