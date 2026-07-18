@@ -72,9 +72,15 @@ function cleanNameText(value) {
   let text = String(value || '').replace(/[–—]/g, '-').trim();
   text = text.replace(/^(?:as desired|to serve|for serving)\s*[,;:\-]?\s*/i, '');
   text = text.replace(/^\d+(?:\.\d+)?\s+(?:servings?|portions?)\s+(?:of\s+)?/i, '');
-  text = text.replace(/^(?:cloves?|slices?|sheets?|servings?|portions?|cans?|jars?|bottles?|packages?|pieces?)\s+(?:of\s+)?/i, '');
   const opens = (text.match(/\(/g) || []).length;
   const closes = (text.match(/\)/g) || []).length;
+  // Without “of”, these words can be intrinsic ingredient identity (for
+  // example bottle gourd). Only malformed, unbalanced legacy values retain the
+  // older broad cleanup needed for leaked count labels such as “sheet nori )”.
+  const countPrefix = /^(?:cloves?|slices?|sheets?|servings?|portions?|cans?|jars?|bottles?|packages?|pieces?)\s+(?:of\s+)?/i;
+  text = opens !== closes
+    ? text.replace(countPrefix, '')
+    : text.replace(/^(?:cloves?|slices?|sheets?|servings?|portions?|cans?|jars?|bottles?|packages?|pieces?)\s+of\s+/i, '');
   if (opens !== closes) text = text.replace(/\s*\([^)]*$/, '');
   return text.replace(/\s*\)+\s*$/, '').replace(/\s+/g, ' ').trim();
 }

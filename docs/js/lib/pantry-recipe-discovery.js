@@ -112,7 +112,8 @@ function discoverWithIndex(index, pantry, ingredientName) {
 /**
  * Create a bounded one-entry recipe index cache. Pantry coverage is intentionally
  * recomputed on every call, while recipe parsing/indexing is reused until the
- * authority array reference or explicit authority version changes.
+ * explicit discovery-authority version changes. Callers without a version fall
+ * back to array identity for backwards compatibility.
  */
 export function createPantryRecipeDiscovery({ onIndexBuild = () => {} } = {}) {
   let authority = null;
@@ -120,12 +121,16 @@ export function createPantryRecipeDiscovery({ onIndexBuild = () => {} } = {}) {
   let index = null;
   return function discover({ recipes, pantry, ingredientName, recipeAuthorityVersion } = {}) {
     const allRecipes = Array.isArray(recipes) ? recipes : [];
-    if (!index || authority !== allRecipes || authorityVersion !== recipeAuthorityVersion) {
-      authority = allRecipes;
-      authorityVersion = recipeAuthorityVersion;
+    const hasVersion = recipeAuthorityVersion !== undefined && recipeAuthorityVersion !== null;
+    const changed = hasVersion
+      ? authorityVersion !== recipeAuthorityVersion
+      : authority !== allRecipes;
+    if (!index || changed) {
       index = buildDiscoveryIndex(allRecipes);
       onIndexBuild(allRecipes);
     }
+    authority = allRecipes;
+    authorityVersion = recipeAuthorityVersion;
     return discoverWithIndex(index, pantry, ingredientName);
   };
 }
