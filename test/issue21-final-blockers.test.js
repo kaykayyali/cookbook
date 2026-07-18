@@ -157,7 +157,9 @@ test('equivalent warmed large authorities reuse generation and index', async () 
   const changed = equivalent.map((item, index) => index ? item : { ...item, recipeIngredient: ['parsley'] });
   publishRecipeAuthority(state, changed);
   assert.equal(state.recipeAuthorityVersion, version + 1);
-  assert.notEqual(recipeDiscoveryAuthority(state.recipes).index, firstIndex);
+  const changedRecord = recipeDiscoveryAuthority(state.recipes);
+  assert.notEqual(changedRecord.index, firstIndex);
+  await changedRecord.promise;
 });
 
 test('missing-ID derived identities are collision-free for distinct recipes', () => {
