@@ -8,7 +8,8 @@ import { esc, pluralize } from '../lib/format.js';
 import { toSchema, parseImport } from '../lib/schema.js';
 import { save as persist } from '../lib/store.js';
 import { theme as defaultTheme } from '../lib/theme.js';
-import { importRecipes as importToServer } from '../lib/api.js';
+import { importRecipes as importToServer, fetchRecipes } from '../lib/api.js';
+import { publishRecipeAuthority } from '../lib/recipe-authority.js';
 import { interactionFeedback as defaultFeedback } from '../lib/interaction-feedback.js';
 
 const THEME_PALETTES = {
@@ -48,6 +49,8 @@ export function initSettings({
   initGoogleSignIn: initGoogleSignInDep = initGoogleSignIn,
   toast: toastDep = toast,
   exportRecipes: exportRecipesDep = defaultExportRecipes,
+  importToServer: importToServerDep = importToServer,
+  fetchRecipes: fetchRecipesDep = fetchRecipes,
   onChange = null,
   getStoredTheme = defaultTheme.getStored,
   theme: themeDep = defaultTheme,
@@ -93,12 +96,12 @@ export function initSettings({
         if (!imported.length) { toastDep('No valid recipes found in file'); return; }
         // Send canonical JSON-LD to server
         const canonicals = imported.map(toSchema);
-        const res = await importToServer(canonicals);
+        const res = await importToServerDep(canonicals);
         if (!res.ok) { toastDep('Could not import recipes'); return; }
-        // Reload recipes from server to get server-assigned ids
-        const { fetchRecipes } = await import('../lib/api.js');
-        const fres = await fetchRecipes();
-        if (fres.ok) state.recipes = fres.recipes;
+        // Reload recipes from server to get server-assigned ids and publish the
+        // one authoritative replacement before the existing render callback.
+        const fres = await fetchRecipesDep();
+        if (fres.ok) publishRecipeAuthority(state, fres.recipes);
         if (onChange) onChange();
         toastDep(`Imported ${pluralize(res.imported || imported.length, 'recipe')}`);
       } catch { toastDep('Could not read file — expected JSON-LD'); }

@@ -8,11 +8,13 @@
 import { STORAGE_KEYS } from './constants.js';
 import { ensureHouseholdMembership, fetchRecipes, fetchWorkspace } from './api.js';
 import { normalizePantry, normalizePantryEntry } from './pantry.js';
+import { publishRecipeAuthority } from './recipe-authority.js';
 
 export const state = {
   household: null,
   householdEligible: false,
   recipes: [],
+  recipeAuthorityVersion: 0,
   pantry: [],
   cart: [],
   normalizations: {},
@@ -80,7 +82,7 @@ export async function loadRecipes({ onUnauthorized } = {}) {
     state.recipesLoaded = false;
     return false;
   }
-  state.recipes = res.recipes || [];
+  publishRecipeAuthority(state, res.recipes || []);
   state.recipesLoaded = true;
   return true;
 }

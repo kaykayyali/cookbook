@@ -144,6 +144,50 @@ test('renderSettings wires export button to exportRecipes', () => {
   assert.equal(exported, true, 'export button click should call exportRecipes');
 });
 
+test('Settings import publishes fetched recipe authority once and preserves an open Pantry draft', async () => {
+  const { document } = makeDom();
+  const originalFileReader = globalThis.FileReader;
+  const importedRecipe = {
+    '@context': 'https://schema.org', '@type': 'Recipe', name: 'Imported Pesto',
+    recipeIngredient: ['basil'], recipeInstructions: ['Blend'],
+  };
+  globalThis.FileReader = class {
+    readAsText() {
+      queueMicrotask(() => this.onload({ target: { result: JSON.stringify([importedRecipe]) } }));
+    }
+  };
+  const state = {
+    recipes: [{ _id: 'removed', name: 'Removed', recipeIngredient: ['parsley'] }],
+    recipeAuthorityVersion: 0,
+  };
+  let draft = 'Unsaved basil draft';
+  let changes = 0;
+  let resolveChanged;
+  const changed = new Promise((resolve) => { resolveChanged = resolve; });
+  const ctrl = mod.initSettings({
+    state,
+    document,
+    importToServer: async () => ({ ok: true, imported: 1 }),
+    fetchRecipes: async () => ({
+      ok: true,
+      recipes: [{ _id: 'imported', name: 'Imported Pesto', recipeIngredient: ['basil'] }],
+    }),
+    onChange: () => { changes += 1; resolveChanged(); },
+    toast: () => {},
+  });
+  try {
+    ctrl._importRecipes({});
+    await changed;
+    assert.equal(changes, 1, 'one import acknowledgement publishes and renders once');
+    assert.equal(state.recipeAuthorityVersion, 1);
+    assert.deepEqual(state.recipes.map(({ _id }) => _id), ['imported']);
+    assert.equal(draft, 'Unsaved basil draft');
+  } finally {
+    globalThis.FileReader = originalFileReader;
+    draft = '';
+  }
+});
+
 test('renderSettings keeps sound and haptic preferences independent and hides unsupported haptics', () => {
   const { document, elements } = makeDom();
   let soundEnabled = true;

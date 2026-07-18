@@ -77,7 +77,9 @@ export function initPantry({
   let editorReturnId = null;
   let lastEditorUnit = '';
   let editorPending = false;
-  let recipeExpanded = false;
+  let recipeVisibleLimit = 3;
+  let discoveryHasMore = false;
+  let discoveryRequest = 0;
   let editorSuspended = false;
   let suspendedRecipeId = '';
   let editorBodyOverflow = '';
@@ -115,13 +117,39 @@ export function initPantry({
     const focusedRecipeId = document.activeElement?.dataset?.pantryRecipeId || '';
     const ingredientLabel = record.displayName || record.name;
     setText('pantry-recipe-title', `Recipes using ${ingredientLabel}`);
-    const discovered = discoverRecipes({
+    const request = ++discoveryRequest;
+    const discoveryOptions = {
       recipes: state.recipes,
       recipeAuthorityVersion: state.recipeAuthorityVersion,
       pantry: state.pantry,
       ingredientName: record.name,
-    });
-    const visible = recipeExpanded ? discovered : discovered.slice(0, 3);
+    };
+    let page;
+    if ((Array.isArray(state.recipes) ? state.recipes.length : 0) <= 200) {
+      const all = discoverRecipes(discoveryOptions);
+      page = {
+        results: all.slice(0, recipeVisibleLimit), total: all.length,
+        hasMore: recipeVisibleLimit < all.length, pending: false,
+      };
+    } else {
+      page = discoverRecipes.page({ ...discoveryOptions, offset: 0, limit: recipeVisibleLimit });
+    }
+    if (page.pending) {
+      resultsNode.innerHTML = '<div class="pantry-recipe-empty" role="status"><strong>Finding recipes…</strong><p>You can keep editing while recipe discovery refreshes.</p></div>';
+      section.hidden = false;
+      toggle.hidden = true;
+      const authority = state.recipes;
+      const version = state.recipeAuthorityVersion;
+      void page.ready.then(() => {
+        if (request === discoveryRequest && editorId === record.id
+            && state.recipes === authority && state.recipeAuthorityVersion === version && modalOpen()) {
+          renderRecipeDiscovery();
+        }
+      }).catch(() => {});
+      return;
+    }
+    const visible = page.results;
+    discoveryHasMore = page.hasMore;
     if (!visible.length) {
       resultsNode.innerHTML = '<div class="pantry-recipe-empty" role="status"><strong>No recipes use this item yet.</strong><p>Correct recipe ingredients or try another Pantry item. Saving this item still works normally.</p></div>';
     } else {
@@ -138,10 +166,13 @@ export function initPantry({
       }).join('');
     }
     section.hidden = false;
-    toggle.hidden = discovered.length <= 3;
-    toggle.textContent = recipeExpanded ? 'View fewer recipes' : 'View all recipes';
-    toggle.setAttribute?.('aria-expanded', String(recipeExpanded));
-    toggle.dataset.feedback = recipeExpanded ? 'toggle-off' : 'toggle-on';
+    toggle.hidden = page.total <= 3;
+    const expanded = recipeVisibleLimit > 3;
+    toggle.textContent = discoveryHasMore
+      ? (expanded ? 'View more recipes' : 'View all recipes')
+      : 'View fewer recipes';
+    toggle.setAttribute?.('aria-expanded', String(expanded));
+    toggle.dataset.feedback = expanded && !discoveryHasMore ? 'toggle-off' : 'toggle-on';
     if (body) body.scrollTop = scrollTop;
     if (focusToggle) toggle.focus?.();
     else if (focusedRecipeId) {
@@ -335,7 +366,9 @@ export function initPantry({
     editorReturnFocus = document.activeElement || null;
     editorReturnId = recordId;
     editorPending = false;
-    recipeExpanded = false;
+    recipeVisibleLimit = 3;
+    discoveryHasMore = false;
+    discoveryRequest += 1;
     editorSuspended = false;
     suspendedRecipeId = '';
     editorBodyOverflow = document.body?.style?.overflow || '';
@@ -391,7 +424,9 @@ export function initPantry({
     editorBaseFingerprint = '';
     editorReturnId = null;
     editorPending = false;
-    recipeExpanded = false;
+    recipeVisibleLimit = 3;
+    discoveryHasMore = false;
+    discoveryRequest += 1;
     editorSuspended = false;
     suspendedRecipeId = '';
     editorBodyOverflow = '';
@@ -738,7 +773,9 @@ export function initPantry({
     get('pantry-recipe-results')?.addEventListener?.('click', openDiscoveredRecipe);
     get('pantry-recipe-results')?.addEventListener?.('error', fallbackRecipeImage, true);
     get('pantry-recipe-toggle')?.addEventListener?.('click', () => {
-      recipeExpanded = !recipeExpanded;
+      if (recipeVisibleLimit === 3) recipeVisibleLimit = 50;
+      else if (discoveryHasMore) recipeVisibleLimit += 50;
+      else recipeVisibleLimit = 3;
       renderRecipeDiscovery({ focusToggle: true });
     });
     get('pantry-item-form')?.addEventListener?.('submit', saveEditor);

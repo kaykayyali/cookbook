@@ -8,7 +8,7 @@ import { openOfflineDb } from './lib/offline-db.js';
 import { hydrateOfflineState } from './lib/offline-bootstrap.js';
 import { wireAuthenticatedUi } from './lib/authenticated-ui.js';
 import { initCookRuntime } from './lib/cook-runtime.js';
-import { requiresSessionReload } from './lib/session-boundary.js';
+import { requiresSessionReload } from './lib/session-boundary.js'; import { publishRecipeAuthority } from './lib/recipe-authority.js';
 const readSub = (t) => { try { return JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).sub || null; } catch { return null; } };
 const MAIN = $('main-content');
 const LOGIN_GATE = $('login-gate');
@@ -75,7 +75,7 @@ async function bootAfterAuth() {
     showLoginGate();
     return false;
   }
-  if (recipesOk && recipeRuntime && !await recipeRuntime.setAuthority(state.recipes, { mutationVersion: recipeMutationVersion }).catch(() => false)) state.recipes = recipeRuntime.current();
+  if (recipesOk && recipeRuntime && !await recipeRuntime.setAuthority(state.recipes, { mutationVersion: recipeMutationVersion }).catch(() => false)) publishRecipeAuthority(state, recipeRuntime.current());
   if (recipesOk && !recipeRuntime) await repo?.putRecipes(state.auth.sub, state.household.household.id, state.recipes);
   if (runtime) {
     await runtime.refresh();
