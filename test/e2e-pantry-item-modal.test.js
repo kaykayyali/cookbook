@@ -393,6 +393,7 @@ test('online-only recipe fallback refreshes every field in an already-open detai
     await responsePromise;
 
     assert.equal(await detail.count(), 1, 'fallback save keeps the existing detail modal open');
+    await page.waitForFunction(() => document.getElementById('dm-title')?.textContent === 'Parsley Starter');
     assert.equal(await page.locator('#dm-title').textContent(), 'Parsley Starter');
     assert.equal(await page.locator('#dm-eyebrow').textContent(), 'Side Dish · French');
     assert.match(await page.locator('#dm-meta').innerText(), /Prep\s*20m[\s\S]*Cook\s*25m[\s\S]*Total\s*45m[\s\S]*Serves\s*6[\s\S]*Method\s*Roasting/i);
